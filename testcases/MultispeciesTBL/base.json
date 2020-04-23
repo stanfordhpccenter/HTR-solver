@@ -1,0 +1,194 @@
+{
+   "Case" : {
+      "ReInlet"     : 4000,
+      "MaInf"       : 6.0,
+      "TInf"        : 450.0,
+      "PInf"        : 101325.0,
+      "TwOvTInf"    : 6.5,
+      "xTurb"       : 375.7,
+      "yPlus"       : 0.32,
+      "FlowThroughTimesNoStat" : 5,
+      "FlowThroughTimesStat" : 10
+   },
+
+   "Mapping" : {
+      "tiles" : [128,1,1],
+      "tilesPerRank" : [4,1,1],
+      "sampleId" : -1,
+      "outDir" : "",
+      "wallTime" : 720
+   },
+
+   "Grid" : {
+      "xNum" : 4096,
+      "yNum" : 250,
+      "zNum" : 288,
+      "origin" : [0.0, 0.0, 0.0],
+      "xWidth" : 1000.0,
+      "yWidth" : 75.0,
+      "zWidth" : 62.83,
+      "xType" : "Uniform",
+      "yType" : "TanhMinus",
+      "zType" : "Uniform",
+      "xStretching" : 1.0,
+      "yStretching" : 1.0,
+      "zStretching" : 1.0
+   },
+
+   "Integrator" : {
+      "startIter" : 0,
+      "startTime" : 0.0,
+      "resetTime" : false,
+      "maxIter" : 1000000,
+      "maxTime" : 20.0,
+      "cfl" : 0.8,
+      "fixedDeltaTime" : 4.0e-3,
+      "implicitChemistry" : false
+   },
+
+   "BC" : {
+      "xBCLeft" : "NSCBC_Inflow",
+      "xBCLeftInflowProfile" : {
+         "type" : "File",
+         "FileDir" : ""
+      },
+      "xBCLeftP" : -1.0,
+      "xBCLeftHeat" : {
+         "type" : "File",
+         "FileDir" : ""
+      },
+      "xBCLeftMixture" : {
+         "type" : "File",
+         "FileDir" : ""
+      },
+      "xBCRight" : "NSCBC_Outflow",
+      "xBCRightInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "xBCRightP" : -1.0,
+      "xBCRightHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "xBCRightMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         }
+      },
+      "yBCLeft" : "SuctionAndBlowingWall",
+      "yBCLeftInflowProfile" : {
+         "type" : "SuctionAndBlowing",
+         "Xmin" : 0.0,
+         "Xmax" : 0.0,
+         "X0" : 0.0,
+         "sigma" : 0.0,
+         "A" : [0.0, 0.0, 0.0],
+         "omega" : [0.0, 0.0, 0.0],
+         "beta" : [0.0, 0.0, 0.0]
+      },
+      "yBCLeftP" : -1.0,
+      "yBCLeftHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "yBCLeftMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         }
+      },
+      "yBCRight" : "NSCBC_Outflow",
+      "yBCRightInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "yBCRightP" : -1.0,
+      "yBCRightHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "yBCRightMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         }
+      },
+      "zBCLeft" : "Periodic",
+      "zBCLeftInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "zBCLeftP" : 0.0,
+      "zBCLeftHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "zBCLeftMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         }
+      },
+      "zBCRight" : "Periodic",
+      "zBCRightInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "zBCRightP" : 0.0,
+      "zBCRightHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "zBCRightMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         }
+      }
+   },
+
+   "Flow" : {
+      "mixture": "AirMix",
+      "gasConstant" : 287.15,
+      "gamma" : 1.4,
+      "prandtl" : 0.71,
+      "viscosityModel" : "PowerLaw",
+      "constantVisc" : -1.0,
+      "powerlawViscRef" : 1.716e-5,
+      "powerlawTempRef" : 273.0,
+      "sutherlandViscRef" : 1.81e-5,
+      "sutherlandTempRef" : 300.0,
+      "sutherlandSRef" : 110.4,
+      "initCase" : "Restart",
+      "restartDir" : "",
+      "initParams" : [1.01325e5, 300.0, 0.0, 0.1, 0.05],
+      "resetMixture" : false,
+      "initMixture" : {
+         "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                      {"Name" : "O2", "MolarFrac" : 0.21 }]
+      },
+      "bodyForce" : [0.0, 0.0, 0.0],
+      "turbForcing" : {
+         "type" : "OFF"
+      }
+   },
+
+   "IO" : {
+      "wrtRestart" : true,
+      "restartEveryTimeSteps" : 5000,
+      "probes" : [],
+      "AveragesSamplingInterval": 10,
+      "ResetAverages": false,
+      "YZAverages": [],
+      "XZAverages": [],
+      "XYAverages": []
+   }
+
+}

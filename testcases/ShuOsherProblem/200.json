@@ -1,0 +1,169 @@
+{
+   "Mapping" : {
+      "tiles" : [1,1,1],
+      "tilesPerRank" : [1,1,1],
+      "sampleId" : -1,
+      "outDir" : "100",
+      "wallTime" : 10000
+   },
+
+   "Grid" : {
+      "xNum" : 200,
+      "yNum" : 1,
+      "zNum" : 1,
+      "origin" : [0.0, 0.0, 0.0],
+      "xWidth" : 10.0,
+      "yWidth" : 1.0,
+      "zWidth" : 1.0,
+      "xType" : "Uniform",
+      "yType" : "Uniform",
+      "zType" : "Uniform",
+      "xStretching" : 1.0,
+      "yStretching" : 1.0,
+      "zStretching" : 1.0
+   },
+
+   "Integrator" : {
+      "startIter" : 0,
+      "startTime" : 0.0,
+      "resetTime" : false,
+      "maxIter" : 450,
+      "maxTime" : 1.8,
+      "cfl" : -0.4,
+      "fixedDeltaTime" : 4.0e-3,
+      "implicitChemistry" : false
+   },
+
+   "BC" : {
+      "xBCLeft" : "Dirichlet",
+      "xBCLeftInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [2.629, 0.0, 0.0]
+      },
+      "xBCLeftP" : 10.333,
+      "xBCLeftHeat" : {
+         "type" : "Constant",
+         "temperature" : 2.67902514908
+      },
+      "xBCLeftMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      },
+      "xBCRight" : "NSCBC_Outflow",
+      "xBCRightInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "xBCRightP" : 1.0,
+      "xBCRightHeat" : {
+         "type" : "Constant",
+         "temperature" : 1.02719008098016
+      },
+      "xBCRightMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      },
+      "yBCLeft" : "Periodic",
+      "yBCLeftInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "yBCLeftP" : 0.0,
+      "yBCLeftHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "yBCLeftMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      },
+      "yBCRight" : "Periodic",
+      "yBCRightInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "yBCRightP" : 0.0,
+      "yBCRightHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "yBCRightMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      },
+      "zBCLeft" : "Periodic",
+      "zBCLeftInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "zBCLeftP" : 0.0,
+      "zBCLeftHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "zBCLeftMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      },
+      "zBCRight" : "Periodic",
+      "zBCRightInflowProfile" : {
+         "type" : "Constant",
+         "velocity" : [0.0, 0.0, 0.0]
+      },
+      "zBCRightP" : 0.0,
+      "zBCRightHeat" : {
+         "type" : "Constant",
+         "temperature" : -1.0
+      },
+      "zBCRightMixture" : {
+         "type" : "Constant",
+         "Mixture" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      }
+   },
+
+   "Flow" : {
+      "mixture": "ConstPropMix",
+      "gasConstant" : 1.0,
+      "gamma" : 1.4,
+      "prandtl" : 0.71,
+      "viscosityModel" : "Constant",
+      "constantVisc" : 0.0,
+      "powerlawViscRef" : -1.0,
+      "powerlawTempRef" : -1.0,
+      "sutherlandViscRef" : -1.0,
+      "sutherlandTempRef" : -1.0,
+      "sutherlandSRef" : -1.0,
+      "initCase" : "ShuOsherProblem",
+      "restartDir" : "",
+      "initParams" : [1.0, 1.0, 0.80, 0.0, 0.0],
+      "resetMixture" : false,
+      "initMixture" : {
+         "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+      },
+      "bodyForce" : [0.0, 0.0, 0.0],
+      "turbForcing" : { "type" : "OFF" }
+   },
+
+   "IO" : {
+      "wrtRestart" : true,
+      "restartEveryTimeSteps" : 10,
+      "probes" : [],
+      "AveragesSamplingInterval": 10,
+      "ResetAverages": false,
+      "YZAverages": [],
+      "XZAverages": [],
+      "XYAverages": []
+   }
+}
