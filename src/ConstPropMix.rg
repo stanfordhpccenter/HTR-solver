@@ -57,15 +57,18 @@ struct Exports.Mixture {
    gamma : double
 
    -- Viscosisity model
-   viscosityModel : SCHEMA.ViscosityModel
+   viscosityModel : int
    -- Viscosity parameters
+   -- Constant model
    constantVisc      : double
+   -- Power law model
    powerlawTempRef   : double
    powerlawViscRef   : double
    -- Sutherland model
    sutherlandSRef    : double
    sutherlandTempRef : double
    sutherlandViscRef : double
+
    -- Prandtl number
    Prandtl           : double
 }
@@ -78,15 +81,16 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.R     = config.Flow.gasConstant
    Mix.gamma = config.Flow.gamma
 
-   Mix.viscosityModel  = config.Flow.viscosityModel
+   Mix.viscosityModel  = config.Flow.viscosityModel.type
 
-   Mix.constantVisc    = config.Flow.constantVisc
-   Mix.powerlawTempRef = config.Flow.powerlawTempRef
-   Mix.powerlawViscRef = config.Flow.powerlawViscRef
+   Mix.constantVisc    = config.Flow.viscosityModel.u.Constant.Visc
 
-   Mix.sutherlandSRef    = config.Flow.sutherlandSRef
-   Mix.sutherlandTempRef = config.Flow.sutherlandTempRef
-   Mix.sutherlandViscRef = config.Flow.sutherlandViscRef
+   Mix.powerlawTempRef = config.Flow.viscosityModel.u.PowerLaw.TempRef
+   Mix.powerlawViscRef = config.Flow.viscosityModel.u.PowerLaw.ViscRef
+
+   Mix.sutherlandSRef    = config.Flow.viscosityModel.u.Sutherland.SRef
+   Mix.sutherlandTempRef = config.Flow.viscosityModel.u.Sutherland.TempRef
+   Mix.sutherlandViscRef = config.Flow.viscosityModel.u.Sutherland.ViscRef
 
    Mix.Prandtl = config.Flow.prandtl
 

@@ -29,7 +29,7 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
+return function(SCHEMA, MIX, Fluid_columns, ATOMIC) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -53,6 +53,15 @@ local ImplicitVars = terralib.newlist({
    'Conserved_t_old',
    'temperature'
 })
+
+-- Atomic switch
+local Fluid = regentlib.newsymbol(region(ispace(int3d), Fluid_columns), "Fluid")
+local coherence_mode
+if ATOMIC then
+   coherence_mode = regentlib.coherence(regentlib.atomic,    Fluid, "Conserved_t")
+else
+   coherence_mode = regentlib.coherence(regentlib.exclusive, Fluid, "Conserved_t")
+end
 
 -------------------------------------------------------------------------------
 -- CHEMISTRY ROUTINES
@@ -143,12 +152,13 @@ do
 end
 
 __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.AddChemistrySources(Fluid    : region(ispace(int3d), Fluid_columns),
+task Exports.AddChemistrySources([Fluid],
                                  ModCells : region(ispace(int3d), Fluid_columns),
                                  mix : MIX.Mixture)
 where
    reads(Fluid.{rho, MolarFracs, pressure, temperature}),
-   reads writes atomic(Fluid.Conserved_t)
+   reads writes (Fluid.Conserved_t),
+   [coherence_mode]
 do
    __demand(__openmp)
    for c in ModCells do

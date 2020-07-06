@@ -751,7 +751,7 @@ local function emitAddDiffusionFlux(dir, r, Flux, c, cp1, mix)
 
          sigma = array(muFace*(dUdZFace+dWdXFace),
                        muFace*(dVdZFace+dWdYFace),
-                       muFace*(4.0*dWdZFace-2.0*dUdXFace-2.0*dWdZFace)/3.0)
+                       muFace*(4.0*dWdZFace-2.0*dUdXFace-2.0*dVdYFace)/3.0)
       end
    else assert(false) end
 

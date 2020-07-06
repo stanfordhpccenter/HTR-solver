@@ -29,7 +29,7 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
+return function(SCHEMA, MIX, CHEM, Fluid_columns) local Exports = {}
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -47,7 +47,6 @@ local pow  = regentlib.pow(double)
 
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
-local CHEM = (require 'prometeo_chem')(SCHEMA, MIX, Fluid_columns)
 
 local PI = CONST.PI
 local Primitives = CONST.Primitives

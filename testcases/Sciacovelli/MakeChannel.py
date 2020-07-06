@@ -26,12 +26,12 @@ dTplusStat = config["Case"]["DeltaTStat"]
 del config["Case"]
 
 # Read boundary conditions
-assert config["BC"]["yBCLeft"] == "IsothermalWall"
-assert config["BC"]["yBCLeftHeat"]["type"] == "Constant"
-assert config["BC"]["yBCRight"] == "IsothermalWall"
-assert config["BC"]["yBCRightHeat"]["type"] == "Constant"
-assert config["BC"]["yBCLeftHeat"]["temperature"] == config["BC"]["yBCRightHeat"]["temperature"]
-Tw = config["BC"]["yBCLeftHeat"]["temperature"]
+assert config["BC"]["yBCLeft"]["type"] == "IsothermalWall"
+assert config["BC"]["yBCLeft"]["TemperatureProfile"]["type"] == "Constant"
+assert config["BC"]["yBCRight"]["type"] == "IsothermalWall"
+assert config["BC"]["yBCRight"]["TemperatureProfile"]["type"] == "Constant"
+assert config["BC"]["yBCLeft"]["TemperatureProfile"]["temperature"] == config["BC"]["yBCRight"]["TemperatureProfile"]["temperature"]
+Tw = config["BC"]["yBCLeft"]["TemperatureProfile"]["temperature"]
 
 # Read properties
 Pb              = config["Flow"]["initParams"][0]

@@ -20,3 +20,7 @@ __pycache__
 
 src/config_schema.h
 src/*-desugared.rg
+src/version.h
+src/version.rg
+test/*.h
+test/*-desugared.rg

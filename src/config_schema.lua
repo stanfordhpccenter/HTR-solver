@@ -30,65 +30,102 @@ local Exports = {}
 
 -- Helper definitions
 Exports.Volume = {
-  fromCell = Array(3,int),
-  uptoCell = Array(3,int),
+   fromCell = Array(3,int),
+   uptoCell = Array(3,int),
 }
 Exports.Window = {
-  fromCell = Array(2,int),
-  uptoCell = Array(2,int),
+   fromCell = Array(2,int),
+   uptoCell = Array(2,int),
 }
 Exports.Species = {
-  Name = String(10),
-  MolarFrac = double,
+   Name = String(10),
+   MolarFrac = double,
 }
 Exports.Mixture = {
-  Species = UpTo(10, Exports.Species),
+   Species = UpTo(10, Exports.Species),
 }
 
 -- Unions & enumeration constants
-Exports.FlowBC = Enum('Dirichlet','Periodic','Symmetry','AdiabaticWall','IsothermalWall','NSCBC_Inflow','NSCBC_Outflow','SuctionAndBlowingWall')
-Exports.ViscosityModel = Enum('Constant','PowerLaw','Sutherland')
-Exports.FlowInitCase = Enum('Uniform','Random','Restart','Perturbed','TaylorGreen2DVortex','TaylorGreen3DVortex','RiemannTestOne','RiemannTestTwo','SodProblem','LaxProblem','ShuOsherProblem','VortexAdvection2D','GrossmanCinnellaProblem','ChannelFlow')
-Exports.GridType = Enum('Uniform','Cosine','TanhMinus','TanhPlus','Tanh')
 Exports.MixtureProfile = Union{
-  Constant = {
-    Mixture = Exports.Mixture,
-  },
-  File = {
-    FileDir = String(256),
-  },
-  Incoming = {},
+   Constant = {
+      Mixture = Exports.Mixture,
+   },
+   File = {
+      FileDir = String(256),
+   },
+   Incoming = {},
 }
 Exports.TempProfile = Union{
-  Constant = {
-    temperature = double,
-  },
-  File = {
-    FileDir = String(256),
-  },
-  Incoming = {},
+   Constant = {
+      temperature = double,
+   },
+   File = {
+      FileDir = String(256),
+   },
+   Incoming = {},
 }
 Exports.InflowProfile = Union{
-  Constant = {
-    velocity = Array(3,double),
-  },
-  File = {
-    FileDir = String(256),
-  },
-  Incoming = {
-    addedVelocity = double,
-  },
-  SuctionAndBlowing = {
-    Xmin  = double,
-    Xmax  = double,
-    X0    = double,
-    sigma = double,
-    Zw    = double,
-    A     = UpTo(20, double),
-    omega = UpTo(20, double),
-    beta  = UpTo(20, double),
-  },
+   Constant = {
+      velocity = Array(3,double),
+   },
+   File = {
+      FileDir = String(256),
+   },
+   Incoming = {
+      addedVelocity = double,
+   },
 }
+
+Exports.FlowBC = Union{
+   Dirichlet = {
+      VelocityProfile = Exports.InflowProfile,
+      TemperatureProfile = Exports.TempProfile,
+      MixtureProfile = Exports.MixtureProfile,
+      P = double,
+   },
+   Periodic = {},
+   Symmetry = {},
+   AdiabaticWall = {},
+   IsothermalWall = {
+      TemperatureProfile = Exports.TempProfile,
+   },
+   NSCBC_Inflow = {
+      VelocityProfile = Exports.InflowProfile,
+      TemperatureProfile = Exports.TempProfile,
+      MixtureProfile = Exports.MixtureProfile,
+      P = double,
+   },
+   NSCBC_Outflow = {
+      P = double,
+   },
+   SuctionAndBlowingWall = {
+      TemperatureProfile = Exports.TempProfile,
+      Xmin  = double,
+      Xmax  = double,
+      X0    = double,
+      sigma = double,
+      Zw    = double,
+      A     = UpTo(20, double),
+      omega = UpTo(20, double),
+      beta  = UpTo(20, double),
+   },
+}
+
+Exports.ViscosityModel = Union{
+   Constant = {
+      Visc = double,
+   },
+   PowerLaw = {
+      ViscRef = double,
+      TempRef = double,
+   },
+   Sutherland = {
+      ViscRef = double,
+      TempRef = double,
+      SRef = double,
+   },
+}
+
 Exports.TurbForcingModel = Union{
   OFF = {},
   CHANNEL = {
@@ -96,6 +133,9 @@ Exports.TurbForcingModel = Union{
      Forcing = double,
   },
 }
+
+Exports.FlowInitCase = Enum('Uniform','Random','Restart','Perturbed','TaylorGreen2DVortex','TaylorGreen3DVortex','RiemannTestOne','RiemannTestTwo','SodProblem','LaxProblem','ShuOsherProblem','VortexAdvection2D','GrossmanCinnellaProblem','ChannelFlow')
+Exports.GridType = Enum('Uniform','Cosine','TanhMinus','TanhPlus','Tanh','SinhMinus','SinhPlus','Sinh')
 
 -- Sections of config struct
 Exports.MappingStruct = {
@@ -136,36 +176,12 @@ Exports.GridStruct = {
 }
 
 Exports.BCStruct = {
-   xBCLeft = Exports.FlowBC,
-   xBCLeftInflowProfile = Exports.InflowProfile,
-   xBCLeftP = double,
-   xBCLeftHeat = Exports.TempProfile,
-   xBCLeftMixture = Exports.MixtureProfile,
+   xBCLeft  = Exports.FlowBC,
    xBCRight = Exports.FlowBC,
-   xBCRightInflowProfile = Exports.InflowProfile,
-   xBCRightP = double,
-   xBCRightHeat = Exports.TempProfile,
-   xBCRightMixture = Exports.MixtureProfile,
-   yBCLeft = Exports.FlowBC,
-   yBCLeftInflowProfile = Exports.InflowProfile,
-   yBCLeftP = double,
-   yBCLeftHeat = Exports.TempProfile,
-   yBCLeftMixture = Exports.MixtureProfile,
+   yBCLeft  = Exports.FlowBC,
    yBCRight = Exports.FlowBC,
-   yBCRightInflowProfile = Exports.InflowProfile,
-   yBCRightP = double,
-   yBCRightHeat = Exports.TempProfile,
-   yBCRightMixture = Exports.MixtureProfile,
-   zBCLeft = Exports.FlowBC,
-   zBCLeftInflowProfile = Exports.InflowProfile,
-   zBCLeftP = double,
-   zBCLeftHeat = Exports.TempProfile,
-   zBCLeftMixture = Exports.MixtureProfile,
+   zBCLeft  = Exports.FlowBC,
    zBCRight = Exports.FlowBC,
-   zBCRightInflowProfile = Exports.InflowProfile,
-   zBCRightP = double,
-   zBCRightHeat = Exports.TempProfile,
-   zBCRightMixture = Exports.MixtureProfile,
 }
 
 Exports.IntegratorStruct = {
@@ -186,12 +202,6 @@ Exports.FlowStruct = {
    gamma = double,
    prandtl = double,
    viscosityModel = Exports.ViscosityModel,
-   constantVisc = double,
-   powerlawViscRef = double,
-   powerlawTempRef = double,
-   sutherlandViscRef = double,
-   sutherlandTempRef = double,
-   sutherlandSRef = double,
    initCase = Exports.FlowInitCase,
    restartDir = String(256),
    initParams = Array(5,double),
@@ -211,9 +221,9 @@ Exports.IOStruct = {
    -- One-diemnsional averages
    AveragesSamplingInterval = int,
    ResetAverages = bool,
-   YZAverages = UpTo(5, Exports.Volume),
-   XZAverages = UpTo(5, Exports.Volume),
-   XYAverages = UpTo(5, Exports.Volume),
+   YZAverages = UpTo(10, Exports.Volume),
+   XZAverages = UpTo(10, Exports.Volume),
+   XYAverages = UpTo(10, Exports.Volume),
 }
 
 -- Main config struct

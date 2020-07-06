@@ -7,7 +7,10 @@ import h5py
 from scipy.integrate import odeint
 from scipy.optimize import fsolve
 
-muExp = 0.75
+# load local modules
+sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
+import gridGen
+import ConstPropMix
 
 ##############################################################################
 #                         Read Prometeo Input File                           #
@@ -33,42 +36,20 @@ yStretching  = data["Grid"]["yStretching"]
 
 gamma = data["Flow"]["gamma"]
 R = data["Flow"]["gasConstant"]
-muRef = data["Flow"]["powerlawViscRef"]
-TRef  = data["Flow"]["powerlawTempRef"]
 Pr    = data["Flow"]["prandtl"]
 
-TInf = data["BC"]["xBCLeftHeat"]["temperature"]
-Tw = data["BC"]["xBCLeftHeat"]["temperature"]
-P = data["BC"]["xBCLeftP"]
-U = data["BC"]["xBCLeftInflowProfile"]["velocity"]
-Re = data["BC"]["xBCLeftInflowProfile"]["Reynolds"]
+TInf = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
+Tw   = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
+P    = data["BC"]["xBCLeft"]["P"]
+U    = data["BC"]["xBCLeft"]["VelocityProfile"]["velocity"]
+Re   = data["BC"]["xBCLeft"]["VelocityProfile"]["Reynolds"]
  
 aInf = np.sqrt(gamma*R*TInf)
 MaInf = U/aInf
 
-RhoInf = P/(R*TInf)
-nuInf = muRef*(TInf/TRef)**muExp/RhoInf
-
-##############################################################################
-#                                 Compute grid                               #
-##############################################################################
-def GetGrid(Origin, Width, Num, Type, stretching):
-   if (Type == 'Uniform'):
-      x = np.linspace(0.0, 1.0, Num+1)
-      x *= Width
-      x += Origin
-   elif (Type == 'TanhMinus'):
-      x = np.linspace(-1.0, 0.0, Num+1)
-      x = np.tanh(stretching*x)/np.tanh(stretching)
-      x = Width*(x+1.0)+Origin
-
-   xc = np.zeros(Num+2)
-   for i in range(1,Num+1):
-      xc[i] = 0.5*(x[i-1]+x[i])
-   xc[0] = Origin - xc[1]
-   xc[Num+1] = 2.0*(Origin+Width)-xc[Num]
-
-   return xc
+RhoInf = ConstPropMix.GetDensity(TInf, P, data)
+muInf = ConstPropMix.GetViscosity(TInf, data)
+nuInf = muInf/RhoInf
 
 ##############################################################################
 #                           Compute Blasius Solution                         #
@@ -77,7 +58,7 @@ def GetCBL():
    def CBLFun(U, y):
       u, F, h, G, g = U.T
       T = 1.0 + 0.5*h*(gamma - 1.0)*MaInf**2
-      mu = T**muExp
+      mu = T**0.7
       return [ F/mu,
                -0.5*g*F/mu,
                Pr*G/mu,
@@ -110,7 +91,12 @@ def GetCBL():
 ##############################################################################
 #               Generate y grid that will be used in the solver              #
 ##############################################################################
-y = GetGrid(yOrigin, yWidth, yNum, yType, yStretching)
+y, dy = gridGen.GetGrid(data["Grid"]["origin"][1],
+                        data["Grid"]["yWidth"],
+                        data["Grid"]["yNum"],
+                        data["Grid"]["yType"],
+                        data["Grid"]["yStretching"],
+                        False)
 
 ##############################################################################
 #                     Compute the profile on this grid                       #

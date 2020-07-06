@@ -54,10 +54,15 @@ echo "Sending output to $OUT_DIR"
 CORES_PER_RANK=$(( CORES_PER_NODE / RANKS_PER_NODE ))
 RAM_PER_RANK=$(( RAM_PER_NODE / RANKS_PER_NODE ))
 THREADS_PER_RANK=$(( CORES_PER_RANK - RESERVED_CORES ))
+THREADS_PER_NUMA=$(( THREADS_PER_RANK / NUMA_PER_RANK ))
 if (( CORES_PER_NODE < RANKS_PER_NODE ||
       CORES_PER_NODE % RANKS_PER_NODE != 0 ||
       RESERVED_CORES >= CORES_PER_RANK )); then
     quit "Cannot split $CORES_PER_NODE core(s) into $RANKS_PER_NODE rank(s)"
+fi
+if (( THREADS_PER_RANK < NUMA_PER_RANK ||
+      THREADS_PER_RANK % NUMA_PER_RANK != 0)); then
+    quit "Cannot split $THREADS_PER_RANK thread(s) into $NUMA_PER_RANK openmp proc(s)"
 fi
 if [[ "$USE_CUDA" == 1 ]]; then
     GPUS_PER_RANK=$(( GPUS_PER_NODE / RANKS_PER_NODE ))
@@ -90,7 +95,7 @@ fi
 # Synthesize final command
 COMMAND="$EXECUTABLE $ARGS \
   $DEBUG_OPTS $PROFILER_OPTS \
-  -ll:cpu 0 -ll:ocpu 1 -ll:onuma 0 -ll:okindhack -ll:othr $THREADS_PER_RANK \
+  -ll:cpu 0 -ll:ocpu $NUMA_PER_RANK -ll:onuma 0 -ll:okindhack -ll:othr $THREADS_PER_NUMA \
   $GPU_OPTS \
   -ll:util 4 -ll:io 1 -ll:dma 2 \
   -ll:csize $RAM_PER_RANK \

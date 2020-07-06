@@ -40,6 +40,7 @@ Organization of the repository
    >  > [certainty.slurm](src/certainty.slurm): Submission script for Certainty (@ Stanford) (use as a template script for slurm system)  
    >  > [quartz.slurm](src/quartz.slurm): Submission script for Quartz (@ LLNL) (use as a template script for slurm system)  
    >  > [lassen.lsf](src/lassen.lsf): Submission script for Lassen (@ LLNL) (use as a template script for IBM Spectrum LSF system)  
+   >  > [galileo.slurm](src/galileo.slurm): Submission script for Galileo (@ Cineca) (use as a template script for slurm system)  
    >  > [blacklist](src/blacklist): Folder containing potential blacklists of nodes that should not be used
 
    > [scripts/](scripts/)  
@@ -52,7 +53,7 @@ Organization of the repository
    >  > [modules/](scripts/modules/): Various utility modules used by the python scripts
 
    > [testcases/](testcases/)  
-   >  > [README.md](testcases/README.md): Instructions on how to run the provided testcases
+   >  > [README.md](testcases/README.md): Instructions on how to run the provided testcases  
    >  > [SodProblem/](testcases/SodProblem/): Contains the setup and postporcessing files needed to run Sod's shock tube  
    >  > [LaxProblem/](testcases/LaxProblem/): Contains the setup and postporcessing files needed to run Lax's shock tube  
    >  > [ShuOsherProblem/](testcases/ShuOsherProblem/): Contains the setup and postporcessing files needed to run Shu-Osher's shock tube  
@@ -66,6 +67,23 @@ Organization of the repository
    >  > [Franko/](testcases/Franko/): Contains the setup and postporcessing files needed to run Franko's boundary layer  
    >  > [MultispeciesTBL/](testcases/MultispeciesTBL/): Contains the setup and postporcessing files needed to run Multispecies hypersonic boundary layer  
    >  > [scalingTest/WS](testcases/scalingTest/WS): Contains the setup and postporcessing files needed to run the weak saling test
+
+   > [unitTests/](unitTests/)  
+   >  > [cflTest/](unitTests/cflTest/): Contains the unit test for the cfl module  
+   >  > [chemTest/](unitTests/chemTest/): Contains the unit test for the chemistry module  
+   >  > [configTest/](unitTests/configTest/): Contains the unit test for the config schema module  
+   >  > [geometryTest/](unitTests/geometryTest/): Contains the unit test for the geometry module  
+   >  > [hdfTest/](unitTests/hdfTest/): Contains the unit test for the hdf helper module  
+   >  > [mathUtilsTest/](unitTests/mathUtilsTest/): Contains the unit test for the mathUtils module  
+   >  > [metricTest/](unitTests/metricTest/): Contains the unit test for the metric module  
+   >  > [mixTest/](unitTests/mixTest/): Contains the unit test for the mixture modules  
+   >  > [variablesTest/](unitTests/variablesTest/): Contains the unit test for the variables module  
+
+   > [solverTests/](solverTests/)  
+   >  > [3DPeriodic/](solverTests/3DPeriodic/): Contains the solver test for the tri-periodic 3D testcase  
+   >  > [3DPeriodic_Air/](solverTests/3DPeriodic_Air): Contains the solver test for the tri-periodic 3D testcase with AirMix  
+   >  > [ChannelFlow/](solverTests/ChannelFlow): Contains the solver test for the bi-periodic ChannelFlow testcase  
+   >  > [BoundaryLayer/](solverTests/BoundaryLayer): Contains the solver test for a compressible boundary layer  
 
 
 Setup (generic)
@@ -347,6 +365,8 @@ export CUDA_HOME=/usr/tce/packages/cuda/cuda-9.2.148
 export CUDA="$CUDA_HOME"
 export GPU_ARCH=volta
 
+export GROUP=???
+
 export USE_CUDA=1
 export USE_OPENMP=1
 export USE_GASNET=1
@@ -375,4 +395,60 @@ lalloc 1 scripts/setup_env.py --llvm-version 38 --terra-branch 'puc_lua_master'
 ```
 cd "$HTR_DIR"/src
 lalloc 1 -W 120 make
+```
+
+Setup (Galileo @ Cineca)
+============================
+
+### Add to shell startup
+
+```
+# Module loads
+module load gnu
+module load openmpi/3.1.1--gnu--6.1.0
+module load cuda/9.0
+module load python
+# Build config
+export CC=gcc
+export CXX=g++
+export CONDUIT=ibv
+# Path setup
+export LEGION_DIR=???
+export HDF_ROOT="$LEGION_DIR"/language/hdf/install
+export HTR_DIR=???
+export SCRATCH=???
+# CUDA config
+export CUDA_HOME="/cineca/prod/compilers/cuda/9.0/none"
+export CUDA="$CUDA_HOME"
+export GPU_ARCH=kepler
+
+export ACCOUNT=[ACCOUNT TO BE CHARGED]
+
+export USE_CUDA=1
+export USE_OPENMP=1
+export USE_GASNET=1
+export USE_HDF=1
+export MAX_DIM=4
+
+```
+
+### Download software
+
+```
+git clone -b htr-release https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone https://mdirenzo@bitbucket.org/mdirenzo/prometeo.git "$HTR_DIR"
+```
+
+### Install Legion
+
+```
+cd "$LEGION_DIR"/language
+scripts/setup_env.py --llvm-version 38 --terra-url 'https://github.com/StanfordLegion/terra.git' --terra-branch 'luajit2.1'
+```
+
+### Compile Prometeo
+
+```
+cd "$HTR_DIR"/src
+srun --cpus-per-task=3 --mem 30000 -p gll_usr_gpuprod -t 0:50:00 make -j &
 ```

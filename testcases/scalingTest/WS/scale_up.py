@@ -22,7 +22,7 @@ if not os.path.exists(baseDir): os.makedirs(baseDir)
 
 # Scale up
 for i in range(0,args.num_times):
-   nodes = config["Mapping"]["tiles"][0]/config["Mapping"]["tilesPerRank"][0]
+   nodes = int(config["Mapping"]["tiles"][0]/config["Mapping"]["tilesPerRank"][0])
 
    with open(baseDir + "/" + str(nodes) + ".json", "w") as fout:
       json.dump(config, fout, indent=3)

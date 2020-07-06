@@ -37,27 +37,25 @@ config = json.load(args.base_json)
 
 gamma = config["Flow"]["gamma"]
 R     = config["Flow"]["gasConstant"]
-muRef = config["Flow"]["powerlawViscRef"]
-TRef  = config["Flow"]["powerlawTempRef"]
 Pr    = config["Flow"]["prandtl"]
 
 assert config["Flow"]["initCase"] == "Restart"
 restartDir = config["Flow"]["restartDir"]
 
-config["BC"]["xBCLeftInflowProfile"]["FileDir"] = restartDir
-config["BC"]["xBCLeftHeat"]["FileDir"] = restartDir
-TInf = config["BC"]["xBCLeftHeat"]["temperature"]
-Tw   = config["BC"]["xBCLeftHeat"]["temperature"]
-P    = config["BC"]["xBCLeftP"]
-UInf = config["BC"]["xBCLeftInflowProfile"]["velocity"]
-Rex0 = config["BC"]["xBCLeftInflowProfile"]["Reynolds"]
+config["BC"]["xBCLeft"]["VelocityProfile"]["FileDir"] = restartDir
+config["BC"]["xBCLeft"]["TemperatureProfile"]["FileDir"] = restartDir
+TInf = config["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
+Tw   = config["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
+P    = config["BC"]["xBCLeft"]["P"]
+UInf = config["BC"]["xBCLeft"]["VelocityProfile"]["velocity"]
+Rex0 = config["BC"]["xBCLeft"]["VelocityProfile"]["Reynolds"]
  
 aInf = np.sqrt(gamma*R*TInf)
 MaInf = UInf/aInf
 
 RhoInf = ConstPropMix.GetDensity(TInf, P, config)
 muInf = ConstPropMix.GetViscosity(TInf, config)
-nuInf = ConstPropMix.GetViscosity(TInf, config)/RhoInf
+nuInf = muInf/RhoInf
 
 ##############################################################################
 #                              Generate Grid                                 #
@@ -149,9 +147,11 @@ for xt in range(0, Ntiles[0]):
          temperature       = np.ndarray(shape)
          MolarFracs        = np.ndarray(shape, dtype=np.dtype('(1,)f8'))
          velocity          = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-         dudtBoundary      = np.ndarray(shape)
+         dudtBoundary      = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
          dTdtBoundary      = np.ndarray(shape)
          pressure[:] = P
+         dudtBoundary[:] = [0.0, 0.0, 0.0]
+         dTdtBoundary[:] = 0.0
          for (k,kc) in enumerate(centerCoordinates):
             for (j,jc) in enumerate(kc):
                for (i,ic) in enumerate(jc):
@@ -183,10 +183,8 @@ for xt in range(0, Ntiles[0]):
             fout.create_dataset("temperature",           shape=shape, dtype = np.dtype("f8"))
             fout.create_dataset("MolarFracs",            shape=shape, dtype = np.dtype("(1,)f8"))
             fout.create_dataset("velocity",              shape=shape, dtype = np.dtype("(3,)f8"))
-            fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("f8"))
+            fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("(3,)f8"))
             fout.create_dataset("dTdtBoundary",          shape=shape, dtype = np.dtype("f8"))
-            fout.create_dataset("velocity_old_NSCBC",    shape=shape, dtype = np.dtype("(3,)f8"))
-            fout.create_dataset("temperature_old_NSCBC", shape=shape, dtype = np.dtype("f8"))
             fout.create_dataset("MolarFracs_profile",    shape=shape, dtype = np.dtype("(1,)f8"))
             fout.create_dataset("velocity_profile",      shape=shape, dtype = np.dtype("(3,)f8"))
             fout.create_dataset("temperature_profile",   shape=shape, dtype = np.dtype("f8"))
@@ -200,8 +198,6 @@ for xt in range(0, Ntiles[0]):
             fout["velocity"][:] = velocity
             fout["dudtBoundary"][:] = dudtBoundary
             fout["dTdtBoundary"][:] = dTdtBoundary
-            fout["velocity_old_NSCBC"][:] = velocity
-            fout["temperature_old_NSCBC"][:] = temperature
             fout["MolarFracs_profile"][:] = MolarFracs
             fout["velocity_profile"][:] = velocity
             fout["temperature_profile"][:] = temperature

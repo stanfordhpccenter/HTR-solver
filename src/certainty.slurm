@@ -5,10 +5,12 @@ GPU_OPTS=
 if [[ "$QUEUE" == "all" ]]; then
     USE_CUDA=0
     CORES_PER_NODE=24
+    NUMA_PER_RANK=2
     RAM_PER_NODE=25000
 elif [[ "$QUEUE" == "32core" ]]; then
     USE_CUDA=0
     CORES_PER_NODE=32
+    OMPPROCS_PER_RANK=2
     RAM_PER_NODE=50000
     # 64GB RAM per node
     # 2 NUMA domains per node
@@ -17,6 +19,7 @@ elif [[ "$QUEUE" == "32core" ]]; then
 elif [[ "$QUEUE" == "24core" ]]; then
     USE_CUDA=0
     CORES_PER_NODE=24
+    NUMA_PER_RANK=2
     RAM_PER_NODE=25000
     # 36GB RAM per node
     # 2 NUMA domains per node
@@ -25,6 +28,7 @@ elif [[ "$QUEUE" == "24core" ]]; then
 elif [[ "$QUEUE" == "largemem" ]]; then
     USE_CUDA=0
     CORES_PER_NODE=24
+    NUMA_PER_RANK=2
     RAM_PER_NODE=120000
     # 144GB RAM per node
     # 2 NUMA domains per node
@@ -33,6 +37,7 @@ elif [[ "$QUEUE" == "largemem" ]]; then
 elif [[ "$QUEUE" == "gpu" ]]; then
     USE_CUDA=1
     CORES_PER_NODE=16
+    NUMA_PER_RANK=2
     RAM_PER_NODE=25000
     GPUS_PER_NODE=4
     FB_PER_GPU=1024

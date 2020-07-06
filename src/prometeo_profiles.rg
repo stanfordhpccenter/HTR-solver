@@ -66,38 +66,42 @@ function Exports.mkInitializeProfilesField(Side)
   where
      reads writes(BC.[ProfilesVars])
   do
-     if (config.BC.[Side] == SCHEMA.FlowBC_Dirichlet) then
-        if config.BC.[Side .. "Mixture"].type == SCHEMA.MixtureProfile_Constant then
-           var BC_Mixture = CHEM.ParseConfigMixture(config.BC.[Side .. "Mixture"].u.Constant.Mixture,  mix)
+     if (config.BC.[Side].type == SCHEMA.FlowBC_Dirichlet) then
+        var Dirichlet = config.BC.[Side].u.Dirichlet
+        if Dirichlet.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
+           var BC_Mixture = CHEM.ParseConfigMixture(Dirichlet.MixtureProfile.u.Constant.Mixture,  mix)
            fill(BC.MolarFracs_profile, BC_Mixture)
         end
-        if config.BC.[Side .. "InflowProfile"].type == SCHEMA.InflowProfile_Constant then
-           fill(BC.velocity_profile, config.BC.[Side .. "InflowProfile"].u.Constant.velocity)
+        if Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
+           fill(BC.velocity_profile, Dirichlet.VelocityProfile.u.Constant.velocity)
         end
-        if config.BC.[Side .. "Heat"].type == SCHEMA.TempProfile_Constant then
-           fill(BC.temperature_profile, config.BC.[Side .. "Heat"].u.Constant.temperature)
+        if Dirichlet.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+           fill(BC.temperature_profile, Dirichlet.TemperatureProfile.u.Constant.temperature)
         end
 
-     elseif (config.BC.[Side] == SCHEMA.FlowBC_NSCBC_Inflow) then
-         if config.BC.[Side .. "Mixture"].type == SCHEMA.MixtureProfile_Constant then
-            var BC_Mixture = CHEM.ParseConfigMixture(config.BC.[Side .. "Mixture"].u.Constant.Mixture,  mix)
+     elseif (config.BC.[Side].type == SCHEMA.FlowBC_NSCBC_Inflow) then
+         var NSCBC_Inflow = config.BC.[Side].u.NSCBC_Inflow
+         if NSCBC_Inflow.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
+            var BC_Mixture = CHEM.ParseConfigMixture(NSCBC_Inflow.MixtureProfile.u.Constant.Mixture,  mix)
             fill(BC.MolarFracs_profile, BC_Mixture)
          end
-         if config.BC.[Side .. "InflowProfile"].type == SCHEMA.InflowProfile_Constant then
-            fill(BC.velocity_profile, config.BC.[Side .. "InflowProfile"].u.Constant.velocity)
+         if NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
+            fill(BC.velocity_profile, NSCBC_Inflow.VelocityProfile.u.Constant.velocity)
          end
-         if config.BC.[Side .. "Heat"].type == SCHEMA.TempProfile_Constant then
-            fill(BC.temperature_profile, config.BC.[Side .. "Heat"].u.Constant.temperature)
-         end
-
-      elseif (config.BC.[Side] == SCHEMA.FlowBC_IsothermalWall) then
-         if config.BC.[Side .. "Heat"].type == SCHEMA.TempProfile_Constant then
-            fill(BC.temperature_profile, config.BC.[Side .. "Heat"].u.Constant.temperature)
+         if NSCBC_Inflow.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+            fill(BC.temperature_profile, NSCBC_Inflow.TemperatureProfile.u.Constant.temperature)
          end
 
-      elseif (config.BC.[Side] == SCHEMA.FlowBC_SuctionAndBlowingWall) then
-         if config.BC.[Side .. "Heat"].type == SCHEMA.TempProfile_Constant then
-            fill(BC.temperature_profile, config.BC.[Side .. "Heat"].u.Constant.temperature)
+      elseif (config.BC.[Side].type == SCHEMA.FlowBC_IsothermalWall) then
+         var IsothermalWall = config.BC.[Side].u.IsothermalWall
+         if IsothermalWall.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+            fill(BC.temperature_profile, IsothermalWall.TemperatureProfile.u.Constant.temperature)
+         end
+
+      elseif (config.BC.[Side].type == SCHEMA.FlowBC_SuctionAndBlowingWall) then
+         var SuctionAndBlowingWall = config.BC.[Side].u.SuctionAndBlowingWall
+         if SuctionAndBlowingWall.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+            fill(BC.temperature_profile, SuctionAndBlowingWall.TemperatureProfile.u.Constant.temperature)
          end
 
       end

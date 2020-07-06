@@ -29,7 +29,7 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
+return function(SCHEMA, MIX, Fluid_columns, ATOMIC) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -47,6 +47,15 @@ local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solve
 
 local Primitives = CONST.Primitives
 local Properties = CONST.Properties
+
+-- Atomic switch
+local Fluid = regentlib.newsymbol(region(ispace(int3d), Fluid_columns), "Fluid")
+local coherence_mode
+if ATOMIC then
+   coherence_mode = regentlib.coherence(regentlib.atomic,    Fluid, "Conserved_t")
+else
+   coherence_mode = regentlib.coherence(regentlib.exclusive, Fluid, "Conserved_t")
+end
 
 -------------------------------------------------------------------------------
 -- FLUX-DIVERGENCE ROUTINES
@@ -73,14 +82,15 @@ Exports.mkUpdateUsingFlux = terralib.memoize(function(dir)
    else assert(false) end
 
    local __demand(__parallel, __cuda, __leaf)
-   task UpdateUsingFlux(Fluid    : region(ispace(int3d), Fluid_columns),
+   task UpdateUsingFlux([Fluid],
                         ModCells : region(ispace(int3d), Fluid_columns),
                         Fluid_bounds : rect3d)
    where
       ModCells <= Fluid,
       reads(Fluid.cellWidth),
       reads(Fluid.[Flux]),
-      reads writes atomic(Fluid.Conserved_t)
+      reads writes(Fluid.Conserved_t),
+      [coherence_mode]
    do
       __demand(__openmp)
       for c in ModCells do
@@ -152,7 +162,7 @@ do
          for i=0, nSpec do
             LS[i] = lambda*(dY_dx[i])
          end
-         var LN = L1 - 2*BC[c].rho*BC[c].SoS*BC[c].dudtBoundary
+         var LN = L1 - 2*BC[c].rho*BC[c].SoS*BC[c].dudtBoundary[0]
 
          var L2 = BC[c].dTdtBoundary/BC[c].temperature
                   +(LN+L1)/(2.0*BC[c].rho*Cp_bnd*BC[c].temperature)
@@ -181,7 +191,7 @@ function Exports.mkUpdateUsingFluxNSCBCOutflow(dir)
    if dir == "xPos" then
 
       __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-      task UpdateUsingFluxNSCBCOutflow(Fluid    : region(ispace(int3d), Fluid_columns),
+      task UpdateUsingFluxNSCBCOutflow([Fluid],
                                        Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
                                        mix : MIX.Mixture,
                                        MaxMach : double,
@@ -196,7 +206,8 @@ function Exports.mkUpdateUsingFluxNSCBCOutflow(dir)
          reads(Fluid.{MolarFracs, pressure, velocity}),
          reads(Fluid.{rho, mu}),
          reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads writes atomic(Fluid.Conserved_t)
+         reads writes(Fluid.Conserved_t),
+         [coherence_mode]
       do
          var BC   = Fluid_BC[0]
          var BCst = Fluid_BC[1]
@@ -300,10 +311,10 @@ function Exports.mkUpdateUsingFluxNSCBCOutflow(dir)
          end
       end
 
-   elseif dir == "yPos" then
+   elseif dir == "yNeg" then
 
       __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-      task UpdateUsingFluxNSCBCOutflow(Fluid    : region(ispace(int3d), Fluid_columns),
+      task UpdateUsingFluxNSCBCOutflow([Fluid],
                                        Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
                                        mix : MIX.Mixture,
                                        MaxMach : double,
@@ -318,14 +329,139 @@ function Exports.mkUpdateUsingFluxNSCBCOutflow(dir)
          reads(Fluid.{MolarFracs, pressure, velocity}),
          reads(Fluid.{rho, mu}),
          reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads writes atomic(Fluid.Conserved_t)
+         reads writes(Fluid.Conserved_t),
+         [coherence_mode]
       do
          var BC   = Fluid_BC[0]
          var BCst = Fluid_BC[1]
 
          __demand(__openmp)
          for c in BC do
-            -- Add in the x fluxes using NSCBC for outflow
+            var c_int = c + int3d{ 0, 1, 0}
+
+            -- Thermo-chemical quantities
+            var MixW_bnd = MIX.GetMolarWeightFromXi(      BC  [c    ].MolarFracs, mix)
+            var Yi_bnd   = MIX.GetMassFractions(MixW_bnd, BC  [c    ].MolarFracs, mix)
+            var MixW_int = MIX.GetMolarWeightFromXi(      BCst[c_int].MolarFracs, mix)
+            var Yi_int   = MIX.GetMassFractions(MixW_int, BCst[c_int].MolarFracs, mix)
+            var Cp_bnd   = MIX.GetHeatCapacity(BC[c].temperature, Yi_bnd, mix)
+
+            var drho_dy = [OP.emitderivLeftBCBase(rexpr BC  [c    ].gradY end, 
+                                                  rexpr BC  [c    ].rho   end, 
+                                                  rexpr BCst[c_int].rho   end)]
+            var dp_dy   = [OP.emitderivLeftBCBase(rexpr BC  [c    ].gradY    end, 
+                                                  rexpr BC  [c    ].pressure end, 
+                                                  rexpr BCst[c_int].pressure end)]
+            var du_dy   = BC[c].velocityGradientY[0]
+            var dv_dy   = BC[c].velocityGradientY[1]
+            var dw_dy   = BC[c].velocityGradientY[2]
+            var dY_dy : double[nSpec]
+            for i=0, nSpec do
+               dY_dy[i] = [OP.emitderivLeftBCBase(rexpr BC[c].gradY end,
+                                                  rexpr Yi_bnd[i] end,
+                                                  rexpr Yi_int[i] end)]
+            end
+
+            var lambda_1 = BC[c].velocity[1] - BC[c].SoS
+            var lambda   = BC[c].velocity[1]
+            var lambda_N = BC[c].velocity[1] + BC[c].SoS
+
+
+            var L1 = lambda_1*(dp_dy - BC[c].rho*BC[c].SoS*dv_dy)
+            var L2 = lambda*(du_dy)
+            var L3 = lambda*(dp_dy - BC[c].SoS*BC[c].SoS*drho_dy)
+            var L4 = lambda*(dw_dy)
+            var LS : double[nSpec]
+            for i=0, nSpec do
+               LS[i] = lambda*(dY_dy[i])
+            end
+
+            var LN : double
+            if lambda_N > 0 then
+               -- We are supersonic
+               LN = lambda_N*(dp_dy + BC[c].rho*BC[c].SoS*dv_dy)
+            else
+               -- It is either a subsonic or partially subsonic outlet
+               var K = sigma*(1.0-MaxMach*MaxMach)*BC[c].SoS/LengthScale
+               if MaxMach > 0.99 then
+                  -- This means that MaxMach[0] > 1.0
+                  -- Use the local Mach number for partialy supersonic outflows
+                  K = sigma*(BC[c].SoS-(BC[c].velocity[1]*BC[c].velocity[1])/BC[c].SoS)/LengthScale
+               end
+               LN = K*(BC[c].pressure - Pinf)
+            end
+
+            var d1 = (0.5*(LN + L1) - L3)/(BC[c].SoS*BC[c].SoS)
+            var d2 = L2
+            var d3 = (LN - L1)/(2.0*BC[c].rho*BC[c].SoS)
+            var d4 = L4
+            var dS = LS
+            var dN = L3/(BC[c].SoS*BC[c].SoS)
+
+            var tau12_bnd = BC[c].mu*(BC[c].velocityGradientY[0] + BC[c].velocityGradientX[1])
+            var tau22_bnd = BC[c].mu*(4.0*BC[c].velocityGradientY[1] - 2.0*BC[c].velocityGradientX[0] - 2.0*BC[c].velocityGradientZ[2])/3.0
+            var tau32_bnd = BC[c].mu*(BC[c].velocityGradientY[2] + BC[c].velocityGradientZ[1])
+
+            var tau22_int = BCst[c_int].mu*(4.0*BCst[c_int].velocityGradientY[1] - 2.0*BCst[c_int].velocityGradientX[0] - 2.0*BCst[c_int].velocityGradientZ[2])/3.0
+
+            -- Diffusion in momentum equations
+            var dtau22_dy = [OP.emitderivLeftBCBase(rexpr BC[c].gradY end,
+                                                    rexpr tau22_bnd   end, 
+                                                    rexpr tau22_int   end)]
+
+            -- Source in energy equation
+            var energy_term_y = [OP.emitderivLeftBCBase(rexpr BC[c].gradY end, 
+                                                        rexpr BC  [c    ].velocity[1]*tau22_bnd end,
+                                                        rexpr BCst[c_int].velocity[1]*tau22_int end)]
+                                + BC[c].velocityGradientY[0]*tau12_bnd 
+                                + BC[c].velocityGradientY[2]*tau32_bnd
+
+            -- Update the RHS of conservation equations with x fluxes
+            for i=0, nSpec do
+               BC[c].Conserved_t[i] -= d1*Yi_bnd[i] + BC[c].rho*dS[i]
+            end
+            BC[c].Conserved_t[irU+0] -= BC[c].velocity[0]*d1 + BC[c].rho*d2
+            BC[c].Conserved_t[irU+1] -= BC[c].velocity[1]*d1 + BC[c].rho*d3 - dtau22_dy
+            BC[c].Conserved_t[irU+2] -= BC[c].velocity[2]*d1 + BC[c].rho*d4
+            BC[c].Conserved_t[irE] -= (BC[c].Conserved[irE] + BC[c].pressure)*d1/BC[c].rho
+                                     + BC[c].Conserved[irU+0]*d2
+                                     + BC[c].Conserved[irU+1]*d3
+                                     + BC[c].Conserved[irU+2]*d4
+                                     + Cp_bnd*BC[c].temperature*dN
+                                     - energy_term_y
+            for i=0, nSpec do
+               var dedYi = MIX.GetSpecificInternalEnergy(i, BC[c].temperature, mix)
+               BC[c].Conserved_t[irE] -= BC[c].rho*dedYi*dS[i]
+            end
+         end
+      end
+
+   elseif dir == "yPos" then
+
+      __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
+      task UpdateUsingFluxNSCBCOutflow([Fluid],
+                                       Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                       mix : MIX.Mixture,
+                                       MaxMach : double,
+                                       LengthScale : double,
+                                       Pinf : double)
+      where
+         reads(Fluid.gradY),
+         reads(Fluid.{rho, mu, SoS}),
+         reads(Fluid.[Primitives]),
+         reads(Fluid.Conserved),
+         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
+         reads(Fluid.{MolarFracs, pressure, velocity}),
+         reads(Fluid.{rho, mu}),
+         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
+         reads writes(Fluid.Conserved_t),
+         [coherence_mode]
+      do
+         var BC   = Fluid_BC[0]
+         var BCst = Fluid_BC[1]
+
+         __demand(__openmp)
+         for c in BC do
             var c_int = c + int3d{ 0,-1, 0}
 
             -- Thermo-chemical quantities
@@ -421,6 +557,7 @@ function Exports.mkUpdateUsingFluxNSCBCOutflow(dir)
             end
          end
       end
+
    end
    return UpdateUsingFluxNSCBCOutflow
 end
@@ -430,12 +567,13 @@ end
 -------------------------------------------------------------------------------
 
 __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.AddBodyForces(Fluid    : region(ispace(int3d), Fluid_columns),
+task Exports.AddBodyForces([Fluid],
                            ModCells : region(ispace(int3d), Fluid_columns),
                            Flow_bodyForce : double[3])
 where
    reads(Fluid.{rho, velocity}),
-   reads writes atomic(Fluid.Conserved_t)
+   reads writes(Fluid.Conserved_t),
+   [coherence_mode]
 do
    __demand(__openmp)
    for c in ModCells do
@@ -496,7 +634,7 @@ Exports.mkCorrectUsingFlux = terralib.memoize(function(dir)
    else assert(false) end
 
    __demand(__parallel, __cuda, __leaf)
-   task CorrectUsingFlux(Fluid    : region(ispace(int3d), Fluid_columns),
+   task CorrectUsingFlux([Fluid],
                          ModCells : region(ispace(int3d), Fluid_columns),
                          Fluid_bounds : rect3d,
                          mix : MIX.Mixture)
@@ -505,7 +643,8 @@ Exports.mkCorrectUsingFlux = terralib.memoize(function(dir)
       reads(Fluid.cellWidth),
       reads(Fluid.Conserved_hat),
       reads(Fluid.[Flux]),
-      reads writes atomic(Fluid.Conserved_t)
+      reads writes(Fluid.Conserved_t),
+      [coherence_mode]
    do
       __demand(__openmp)
       for c in ModCells do

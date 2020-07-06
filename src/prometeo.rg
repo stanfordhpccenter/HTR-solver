@@ -35,7 +35,61 @@ import "regent"
 local C = regentlib.c
 local MAPPER = terralib.includec("prometeo_mapper.h")
 local SCHEMA = terralib.includec("config_schema.h")
-local UTIL = require 'util-desugared'
+local UTIL = require "util-desugared"
+local VERSION = require "version"
+
+-------------------------------------------------------------------------------
+-- ACTIVATE TIMING
+-------------------------------------------------------------------------------
+
+local T
+local TIMING = false
+if os.getenv("TIMING") == "1" then
+   TIMING = true
+   T = regentlib.newsymbol()
+   print("######################################################################################")
+   print("WARNING: You are compiling with timing tools.")
+   print("         This might affect the performance of the solver.")
+   print("######################################################################################")
+end
+
+-------------------------------------------------------------------------------
+-- ACTIVATE DEBUG_OUTPUT
+-------------------------------------------------------------------------------
+
+local DEBUG_OUTPUT = false
+if os.getenv("DEBUG_OUTPUT") == "1" then
+   DEBUG_OUTPUT = true
+   print("#############################################################################")
+   print("WARNING: You are compiling with debug output.")
+   print("         This might affect the performance of the solver.")
+   print("#############################################################################")
+end
+
+-------------------------------------------------------------------------------
+-- ACTIVATE ATOMIC COHERENCE MODE
+-------------------------------------------------------------------------------
+
+local ATOMIC = true
+if os.getenv("NO_ATOMIC") == "1" then
+   ATOMIC = false
+   print("#############################################################################")
+   print("WARNING: You are compiling without atomic coherence mode.")
+   print("         This might affect the performance of the solver.")
+   print("#############################################################################")
+end
+
+-------------------------------------------------------------------------------
+-- ACTIVATE AVERAGES
+-------------------------------------------------------------------------------
+
+local AVERAGES = true
+if os.getenv("AVERAGES") == "0" then
+   AVERAGES = false
+   print("#############################################################################")
+   print("WARNING: You are compiling without averaging tools.")
+   print("#############################################################################")
+end
 
 -------------------------------------------------------------------------------
 -- IMPORT MIXTURE
@@ -64,7 +118,7 @@ local Config = SCHEMA.Config
 -------------------------------------------------------------------------------
 local CONST = require "prometeo_const"
 
--- Runge-Kutta coeffients 
+-- Runge-Kutta coefficients
 local RK_C = CONST.RK_C
 
 -- Variable indices
@@ -134,7 +188,7 @@ local struct Fluid_columns {
    velocityGradientY   : double[3];
    velocityGradientZ   : double[3];
    temperatureGradient : double[3];
-   -- Conserved varaibles
+   -- Conserved variables
    Conserved       : double[nEq];
    Conserved_old   : double[nEq];
    Conserved_hat   : double[nEq];
@@ -151,7 +205,7 @@ local struct Fluid_columns {
    FluxYCorr  : double[nEq];
    FluxZCorr  : double[nEq];
    -- NSCBC variables
-   dudtBoundary : double;
+   dudtBoundary : double[3];
    dTdtBoundary : double;
    velocity_old_NSCBC : double[3];
    temperature_old_NSCBC : double;
@@ -170,9 +224,21 @@ local IOVars = terralib.newlist({
    'MolarFracs',
    'velocity',
    'dudtBoundary',
-   'dTdtBoundary',
-   'velocity_old_NSCBC',
-   'temperature_old_NSCBC'
+   'dTdtBoundary'
+})
+
+local DebugVars = terralib.newlist({
+   'centerCoordinates',
+   'cellWidth',
+   'rho',
+   'pressure',
+   'temperature',
+   'MolarFracs',
+   'velocity',
+   'Conserved',
+   'FluxX',
+   'FluxY',
+   'FluxZ'
 })
 
 fspace grid_partitions(Fluid  : region(ispace(int3d), Fluid_columns), tiles : ispace(int3d)) {
@@ -230,7 +296,15 @@ fspace grid_partitions(Fluid  : region(ispace(int3d), Fluid_columns), tiles : is
 local HDF = (require 'hdf_helper')(int3d, int3d, Fluid_columns,
                                                  IOVars,
                                                  {timeStep=int,simTime=double,channelForcing=double},
-                                                 {SpeciesNames=nSpec})
+                                                 {SpeciesNames={nSpec, 20}, Versions={2, VERSION.Length}})
+
+local HDF_DEBUG
+if DEBUG_OUTPUT then
+   HDF_DEBUG = (require 'hdf_helper')(int3d, int3d, Fluid_columns,
+                                                 DebugVars,
+                                                 {timeStep=int,simTime=double,channelForcing=double},
+                                                 {SpeciesNames={nSpec, 20}, Versions={2, VERSION.Length}})
+end
 
 -- Macro
 local MACRO = require "prometeo_macro"
@@ -241,111 +315,129 @@ local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns)
 -- Metric routines
 local METRIC = (require 'prometeo_metric')(SCHEMA, Fluid_columns)
 
--- Initialization routines
-local INIT = (require 'prometeo_init')(SCHEMA, MIX, Fluid_columns)
-
--- I/O rutines
+-- I/O routines
 local IO = (require 'prometeo_IO')(SCHEMA)
 
--- Stability conditions rutines
+-- Stability conditions routines
 local CFL = (require 'prometeo_cfl')(MIX, Fluid_columns)
 
--- Chemistry rutines
-local CHEM = (require 'prometeo_chem')(SCHEMA, MIX, Fluid_columns)
+-- Chemistry routines
+local CHEM = (require 'prometeo_chem')(SCHEMA, MIX, Fluid_columns, ATOMIC)
 
--- Conserved->Primitives/Primitives->Conserved and properties rutines
+-- Initialization routines
+local INIT = (require 'prometeo_init')(SCHEMA, MIX, CHEM, Fluid_columns)
+
+-- Conserved->Primitives/Primitives->Conserved and properties routines
 local VARS = (require 'prometeo_variables')(SCHEMA, MIX, Fluid_columns)
 
--- Fluxes rutines
+-- Fluxes routines
 local FLUX = (require 'prometeo_flux')(SCHEMA, MIX, Fluid_columns)
 
--- BCOND rutines
+-- BCOND routines
 local BCOND = (require 'prometeo_bc')(SCHEMA, MIX, Fluid_columns, grid_partitions)
 
--- RK rutines
+-- RK routines
 local RK = (require 'prometeo_rk')(nEq, Fluid_columns)
 
--- RHS rutines
-local RHS = (require 'prometeo_rhs')(SCHEMA, MIX, Fluid_columns)
+-- RHS routines
+local RHS = (require 'prometeo_rhs')(SCHEMA, MIX, Fluid_columns, ATOMIC)
 
--- Volume averages rutines
+-- Volume averages routines
 local STAT = (require 'prometeo_stat')(MIX, Fluid_columns)
 
--- Profiles rutines
+-- Profiles routines
 local PROFILES = (require 'prometeo_profiles')(SCHEMA, MIX, Fluid_columns)
 
--- Averages rutines
-local AVG = (require 'prometeo_average')(SCHEMA, MIX, Fluid_columns)
+-- Averages routines
+local AVG
+if AVERAGES then
+   AVG = (require 'prometeo_average')(SCHEMA, MIX, Fluid_columns)
+end
 
 -------------------------------------------------------------------------------
 -- INITIALIZATION ROUTINES
 -------------------------------------------------------------------------------
 
+local function emitFill(p, t, f, val)
+   return rquote
+      var v = [val]
+      __demand(__index_launch)
+      for c in t do
+         fill(([p][c]).[f], v)
+      end
+   end
+end
+
 __demand(__inline)
-task InitializeCell(Fluid : region(ispace(int3d), Fluid_columns))
+task InitializeCell(Fluid : region(ispace(int3d), Fluid_columns),
+                    tiles : ispace(int3d),
+                    Fluid_Partitions : grid_partitions(Fluid, tiles))
 where
    writes(Fluid)
 do
-   fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth,         array(0.0, 0.0, 0.0))
-   fill(Fluid.reconXFacePlus,  [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconYFacePlus,  [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconZFacePlus,  [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconXFaceMinus, [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconYFaceMinus, [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconZFaceMinus, [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsXPlus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsYPlus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsZPlus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsXMinus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsYMinus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsZMinus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.BCStencilX, false)
-   fill(Fluid.BCStencilY, false)
-   fill(Fluid.BCStencilZ, false)
-   fill(Fluid.interpXFace, array(0.0, 0.0))
-   fill(Fluid.interpYFace, array(0.0, 0.0))
-   fill(Fluid.interpZFace, array(0.0, 0.0))
-   fill(Fluid.derivXFace, 0.0)
-   fill(Fluid.derivYFace, 0.0)
-   fill(Fluid.derivZFace, 0.0)
-   fill(Fluid.gradX, array(0.0, 0.0))
-   fill(Fluid.gradY, array(0.0, 0.0))
-   fill(Fluid.gradZ, array(0.0, 0.0))
-   fill(Fluid.rho, 0.0)
-   fill(Fluid.mu , 0.0)
-   fill(Fluid.lam, 0.0)
-   fill(Fluid.Di , [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
-   fill(Fluid.SoS, 0.0)
-   fill(Fluid.pressure, 0.0)
-   fill(Fluid.temperature, 0.0)
-   fill(Fluid.MolarFracs, [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
-   fill(Fluid.velocity,            array(0.0, 0.0, 0.0))
-   fill(Fluid.velocityGradientX,   array(0.0, 0.0, 0.0))
-   fill(Fluid.velocityGradientY,   array(0.0, 0.0, 0.0))
-   fill(Fluid.velocityGradientZ,   array(0.0, 0.0, 0.0))
-   fill(Fluid.temperatureGradient, array(0.0, 0.0, 0.0))
-   fill(Fluid.Conserved,       [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.Conserved_old,   [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.Conserved_hat,   [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.Conserved_t,     [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.Conserved_t_old, [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.EulerFluxX,      [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.EulerFluxY,      [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.EulerFluxZ,      [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.FluxX,           [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.FluxY,           [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.FluxZ,           [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.FluxXCorr,       [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.FluxYCorr,       [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.FluxZCorr,       [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
-   fill(Fluid.dudtBoundary, 0.0)
-   fill(Fluid.dTdtBoundary, 0.0)
-   fill(Fluid.velocity_old_NSCBC, array(0.0, 0.0, 0.0))
-   fill(Fluid.temperature_old_NSCBC, 0.0)
-   fill(Fluid.MolarFracs_profile, [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
-   fill(Fluid.velocity_profile, array(0.0, 0.0, 0.0))
-   fill(Fluid.temperature_profile, 0.0)
+   -- Unpack the partitions that we are going to need
+   var {p_All} = Fluid_Partitions;
+
+   [emitFill(p_All, tiles, "centerCoordinates", rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "cellWidth",         rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "reconXFacePlus",  UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "reconYFacePlus",  UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "reconZFacePlus",  UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "reconXFaceMinus", UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "reconYFaceMinus", UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "reconZFaceMinus", UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "TENOCoeffsXPlus", UTIL.mkArrayConstant(nStencils,   rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "TENOCoeffsYPlus", UTIL.mkArrayConstant(nStencils,   rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "TENOCoeffsZPlus", UTIL.mkArrayConstant(nStencils,   rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "TENOCoeffsXMinus", UTIL.mkArrayConstant(nStencils,  rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "TENOCoeffsYMinus", UTIL.mkArrayConstant(nStencils,  rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "TENOCoeffsZMinus", UTIL.mkArrayConstant(nStencils,  rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "BCStencilX", rexpr false end)];
+   [emitFill(p_All, tiles, "BCStencilY", rexpr false end)];
+   [emitFill(p_All, tiles, "BCStencilZ", rexpr false end)];
+   [emitFill(p_All, tiles, "interpXFace", rexpr array(0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "interpYFace", rexpr array(0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "interpZFace", rexpr array(0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "derivXFace", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "derivYFace", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "derivZFace", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "gradX", rexpr array(0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "gradY", rexpr array(0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "gradZ", rexpr array(0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "rho", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "mu" , rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "lam", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "Di" , UTIL.mkArrayConstant(nSpec, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "SoS", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "pressure", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "temperature", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "MolarFracs", UTIL.mkArrayConstant(nSpec, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "velocity",            rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "velocityGradientX",   rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "velocityGradientY",   rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "velocityGradientZ",   rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "temperatureGradient", rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "Conserved",       UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "Conserved_old",   UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "Conserved_hat",   UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "Conserved_t",     UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "Conserved_t_old", UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "EulerFluxX",      UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "EulerFluxY",      UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "EulerFluxZ",      UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "FluxX",           UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "FluxY",           UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "FluxZ",           UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "FluxXCorr",       UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "FluxYCorr",       UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "FluxZCorr",       UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "dudtBoundary", rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "dTdtBoundary", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "velocity_old_NSCBC", rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "temperature_old_NSCBC", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "MolarFracs_profile", UTIL.mkArrayConstant(nSpec, rexpr 0.0 end))];
+   [emitFill(p_All, tiles, "velocity_profile", rexpr array(0.0, 0.0, 0.0) end)];
+   [emitFill(p_All, tiles, "temperature_profile", rexpr 0.0 end)];
 end
 
 -------------------------------------------------------------------------------
@@ -371,7 +463,7 @@ do
       [UTIL.mkPartitionByTile(int3d, int3d, Fluid_columns, "p_All")]
       (Fluid, tiles, int3d{Grid_xBnum,Grid_yBnum,Grid_zBnum}, int3d{0,0,0})
 
-   -- This partion accommodates 27 regions, in the order:
+   -- This partition accommodates 27 regions, in the order:
    -- - [ 0]: Interior
    -- (6 faces)
    -- - [ 1]: Faces xNeg
@@ -415,10 +507,10 @@ do
    var p_Fluid_AllGhost = p_Fluid - p_Fluid_Interior
 
    -----------------------------------------------------------------------------------------------
-   -- Boudary conditions regions
+   -- Boundary conditions regions
    -----------------------------------------------------------------------------------------------
    -- !!! We need to be very careful here !!!
-   -- A corner beween two outflow conditions requires the bc conditions to be aliased
+   -- A corner between two outflow conditions requires the bc conditions to be aliased
    -- therefore define one color for each side
    var xNeg_coloring = regentlib.c.legion_multi_domain_point_coloring_create()
    var xPos_coloring = regentlib.c.legion_multi_domain_point_coloring_create()
@@ -446,12 +538,12 @@ do
    -- - Y
    -- - Z
 
-   var BC_xBCLeft  = config.BC.xBCLeft
-   var BC_xBCRight = config.BC.xBCRight
-   var BC_yBCLeft  = config.BC.yBCLeft
-   var BC_yBCRight = config.BC.yBCRight
-   var BC_zBCLeft  = config.BC.zBCLeft
-   var BC_zBCRight = config.BC.zBCRight
+   var BC_xBCLeft  = config.BC.xBCLeft.type
+   var BC_xBCRight = config.BC.xBCRight.type
+   var BC_yBCLeft  = config.BC.yBCLeft.type
+   var BC_yBCRight = config.BC.yBCRight.type
+   var BC_zBCLeft  = config.BC.zBCLeft.type
+   var BC_zBCRight = config.BC.zBCRight.type
 
    ------------------------------------------------------
    -- Break ties with other boundary conditions for edges
@@ -478,6 +570,8 @@ do
       [addToBcColoring(rexpr xNeg_coloring end , rexpr Fluid_regions[7].bounds end, rexpr int3d{ 1, 0, 0} end)]
 
    -- NSCBC_Outflow
+   elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[7].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_xBCLeft == SCHEMA.FlowBC_Periodic) and
@@ -588,8 +682,13 @@ do
    -- NSCBC_Inflow
 
    -- NSCBC_Outflow
+   elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow and BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr xPos_coloring end , rexpr Fluid_regions[11].bounds end, rexpr int3d{-1, 0, 0} end)];
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[11].bounds end, rexpr int3d{ 0, 1, 0} end)]
    elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       [addToBcColoring(rexpr xPos_coloring end , rexpr Fluid_regions[11].bounds end, rexpr int3d{-1, 0, 0} end)]
+   elseif (BC_yBCLeft  == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[11].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_xBCRight == SCHEMA.FlowBC_Periodic) and
@@ -702,6 +801,8 @@ do
    -- NSCBC_Inflow
 
    -- NSCBC_Outflow
+   elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[15].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_yBCLeft == SCHEMA.FlowBC_Periodic) and
@@ -729,6 +830,8 @@ do
    -- NSCBC_Inflow
 
    -- NSCBC_Outflow
+   elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[16].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_yBCLeft  == SCHEMA.FlowBC_Periodic) and
@@ -820,6 +923,8 @@ do
       [addToBcColoring(rexpr xNeg_coloring end , rexpr Fluid_regions[19].bounds end, rexpr int3d{ 1, 0, 0} end)]
 
    -- NSCBC_Outflow
+   elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[19].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_xBCLeft == SCHEMA.FlowBC_Periodic) and
@@ -889,6 +994,8 @@ do
       [addToBcColoring(rexpr xNeg_coloring end , rexpr Fluid_regions[21].bounds end, rexpr int3d{ 1, 0, 0} end)]
 
    -- NSCBC_Outflow
+   elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[21].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_xBCLeft  == SCHEMA.FlowBC_Periodic) and
@@ -955,8 +1062,13 @@ do
    -- NSCBC_Inflow
 
    -- NSCBC_Outflow
+   elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow and BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr xPos_coloring end , rexpr Fluid_regions[23].bounds end, rexpr int3d{-1, 0, 0} end)];
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[23].bounds end, rexpr int3d{ 0, 1, 0} end)]
    elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       [addToBcColoring(rexpr xPos_coloring end , rexpr Fluid_regions[23].bounds end, rexpr int3d{-1, 0, 0} end)]
+   elseif (BC_yBCLeft  == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[23].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_xBCRight == SCHEMA.FlowBC_Periodic) and
@@ -1027,8 +1139,13 @@ do
    -- NSCBC_Inflow
 
    -- NSCBC_Outflow
+   elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow and BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr xPos_coloring end , rexpr Fluid_regions[25].bounds end, rexpr int3d{-1, 0, 0} end)];
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[25].bounds end, rexpr int3d{ 0, 1, 0} end)]
    elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       [addToBcColoring(rexpr xPos_coloring end , rexpr Fluid_regions[25].bounds end, rexpr int3d{-1, 0, 0} end)]
+   elseif (BC_yBCLeft  == SCHEMA.FlowBC_NSCBC_Outflow) then
+      [addToBcColoring(rexpr yNeg_coloring end , rexpr Fluid_regions[25].bounds end, rexpr int3d{ 0, 1, 0} end)]
 
    -- Periodic
    elseif ((BC_xBCRight == SCHEMA.FlowBC_Periodic) and
@@ -1101,7 +1218,7 @@ do
    regentlib.c.legion_multi_domain_point_coloring_destroy(zPos_coloring)
 
    -----------------------------------------------------------------------------------------------
-   -- END - Boudary conditions regions
+   -- END - Boundary conditions regions
    -----------------------------------------------------------------------------------------------
    -----------------------------------------------------------------------------------------------
    -- Regions for RHS functions
@@ -1159,6 +1276,18 @@ do
       regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[11].bounds)
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[12].bounds)
    end
+
+   if (BC_yBCLeft  == SCHEMA.FlowBC_NSCBC_Outflow) then
+      -- yNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[ 3].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zdivg_coloring,  int1d(0), Fluid_regions[ 3].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[ 3].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[ 3].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[ 3].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[ 7].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[15].bounds)
+   end
    if (BC_yBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       -- yPos is an NSCBC
       regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[ 4].bounds)
@@ -1169,6 +1298,25 @@ do
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[ 4].bounds)
       regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[ 9].bounds)
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[17].bounds)
+   end
+
+   if ((BC_xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) and
+       (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow)) then
+      -- Edge xNeg-yNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zdivg_coloring,  int1d(0), Fluid_regions[ 7].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[ 7].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[ 7].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[19].bounds)
+   end
+   if ((BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) and
+       (BC_yBCLeft  == SCHEMA.FlowBC_NSCBC_Outflow)) then
+      -- Edge xPos-yNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zdivg_coloring,  int1d(0), Fluid_regions[11].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[11].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[11].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[23].bounds)
    end
    if ((BC_xBCLeft  == SCHEMA.FlowBC_NSCBC_Inflow) and
        (BC_yBCRight == SCHEMA.FlowBC_NSCBC_Outflow)) then
@@ -1263,6 +1411,72 @@ do
 end
 
 -------------------------------------------------------------------------------
+-- DEBUG ROUTINES
+-------------------------------------------------------------------------------
+
+local DetectNaN
+local CheckDebugOutput
+if DEBUG_OUTPUT then
+
+local isnan = regentlib.isnan(double)
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
+task DetectNaN(Fluid : region(ispace(int3d), Fluid_columns))
+where
+   reads(Fluid.{pressure, temperature})
+do
+   var err = 0
+   __demand(__openmp)
+   for c in Fluid do
+      if ([bool](isnan(Fluid[c].pressure   ))) then err += 1 end
+      if ([bool](isnan(Fluid[c].temperature))) then err += 1 end
+   end
+   return err
+end
+
+__demand(__inline)
+task CheckDebugOutput(Fluid : region(ispace(int3d), Fluid_columns),
+                      Fluid_copy : region(ispace(int3d), Fluid_columns),
+                      Fluid_bounds : rect3d,
+                      tiles : ispace(int3d),
+                      Fluid_Partitions : grid_partitions(Fluid, tiles),
+                      Fluid_Partitions_copy : grid_partitions(Fluid_copy, tiles),
+                      config : Config,
+                      Mix : MIX.Mixture,
+                      Integrator_timeStep : int,
+                      Integrator_simTime : double)
+where
+   reads(Fluid),
+   reads writes(Fluid_copy),
+   Fluid * Fluid_copy
+do
+   -- Unpack the partitions that we are going to need
+   var {p_All} = Fluid_Partitions
+
+   var err = 0
+   __demand(__index_launch)
+   for c in tiles do
+      err += DetectNaN(p_All[c])
+   end
+   if err ~= 0 then
+      var SpeciesNames = MIX.GetSpeciesNames(Mix)
+      var dirname = [&int8](C.malloc(256))
+      C.snprintf(dirname, 256, '%s/debugOut', config.Mapping.outDir)
+      var _1 = IO.createDir(dirname)
+      _1 = HDF_DEBUG.dump(                 _1, tiles, dirname, Fluid, Fluid_copy, p_All, Fluid_Partitions_copy.p_All)
+      _1 = HDF_DEBUG.write.timeStep(       _1, tiles, dirname, Fluid, p_All, Integrator_timeStep)
+      _1 = HDF_DEBUG.write.simTime(        _1, tiles, dirname, Fluid, p_All, Integrator_simTime)
+      _1 = HDF_DEBUG.write.SpeciesNames(   _1, tiles, dirname, Fluid, p_All, SpeciesNames)
+      _1 = HDF_DEBUG.write.Versions(       _1, tiles, dirname, Fluid, p_All, array(regentlib.string([VERSION.SolverVersion]), regentlib.string([VERSION.LegionVersion])))
+      _1 = HDF_DEBUG.write.channelForcing( _1, tiles, dirname, Fluid, p_All, config.Flow.turbForcing.u.CHANNEL.Forcing);
+      C.free(dirname)
+
+      __fence(__execution, __block)
+      regentlib.assert(false, "NaN detected! Debug fields dumped in debugOut")
+   end
+end
+end
+
+-------------------------------------------------------------------------------
 -- RK-LOOP ROUTINES
 -------------------------------------------------------------------------------
 
@@ -1285,7 +1499,11 @@ where
 do
 
    -- Unpack the partitions that we are going to need
-   var {p_All, p_Interior, p_AllGhost, p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos} = Fluid_Partitions
+   var {p_All, p_Interior, p_AllGhost, p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos} = Fluid_Partitions;
+
+@ESCAPE if TIMING then @EMIT
+   var [T] = IO.Console_WriteTiming(0, config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
    -- Update all primitive variables... 
    __demand(__index_launch)
@@ -1293,13 +1511,21 @@ do
       VARS.UpdatePrimitiveFromConserved(p_All[c], p_Interior[c], Mix)
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- ...also in the ghost cells
    BCOND.UpdateGhostPrimitives(Fluid,
                                tiles,
                                Fluid_Partitions,
                                config,
                                Mix,
-                               Integrator_simTime)
+                               Integrator_simTime);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
    -- Update the mixture properties everywhere
    __demand(__index_launch)
@@ -1307,14 +1533,26 @@ do
       VARS.UpdatePropertiesFromPrimitive(p_All[c], p_All[c], Mix)
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- update values of conserved variables in ghost cells
    __demand(__index_launch)
    for c in tiles do
       VARS.UpdateConservedFromPrimitive(p_All[c], p_AllGhost[c], Mix)
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- Compute velocity gradients
-   VARS.GetVelocityGradients(Fluid, Fluid_bounds)
+   VARS.GetVelocityGradients(Fluid, Fluid_bounds);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
    -- Compute local Euler fluxes
    __demand(__index_launch)
@@ -1322,10 +1560,28 @@ do
       FLUX.GetEulerFlux(p_All[c])
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- Compute fluxes
    [FLUX.mkGetFlux("x")](Fluid, x_faces, Fluid_bounds, Mix);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    [FLUX.mkGetFlux("y")](Fluid, y_faces, Fluid_bounds, Mix);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    [FLUX.mkGetFlux("z")](Fluid, z_faces, Fluid_bounds, Mix);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateFluxesFromConserved", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
 end
 
@@ -1348,7 +1604,11 @@ where
 do
 
    -- Unpack the partitions that we are going to need
-   var {p_All, p_Interior, p_solved, p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos} = Fluid_Partitions
+   var {p_All, p_Interior, p_solved, p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos} = Fluid_Partitions;
+
+@ESCAPE if TIMING then @EMIT
+   var [T] = IO.Console_WriteTiming(0, config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
    -- Initialize time derivatives to 0 or minus the old value
    if UseOldDerivatives then
@@ -1363,6 +1623,10 @@ do
       end
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    if (not config.Integrator.implicitChemistry) then
       -- Add chemistry source terms
       __demand(__index_launch)
@@ -1371,11 +1635,19 @@ do
       end
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- Add body forces
    __demand(__index_launch)
    for c in tiles do
       RHS.AddBodyForces(p_All[c], p_solved[c], config.Flow.bodyForce)
    end
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
    -- Add turbulent forcing
    if config.Flow.turbForcing.type == SCHEMA.TurbForcingModel_CHANNEL then
@@ -1387,13 +1659,31 @@ do
       end
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- Use fluxes to update conserved value derivatives
    [RHS.mkUpdateUsingFlux("z")](Fluid, z_divg, Fluid_bounds);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    [RHS.mkUpdateUsingFlux("y")](Fluid, y_divg, Fluid_bounds);
-   [RHS.mkUpdateUsingFlux("x")](Fluid, x_divg, Fluid_bounds)
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+   [RHS.mkUpdateUsingFlux("x")](Fluid, x_divg, Fluid_bounds);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
    -- Update using NSCBC_Outflow bcs
-   if (config.BC.xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
+   if (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
       var MaxMach = 0.0
       __demand(__index_launch)
       for c in tiles do
@@ -1403,30 +1693,54 @@ do
       for c in tiles do
          [RHS.mkUpdateUsingFluxNSCBCOutflow("xPos")](p_All[c],
                                                      p_xPos[c],
-                                                     Mix, MaxMach, config.Grid.xWidth, config.BC.xBCRightP)
+                                                     Mix, MaxMach, config.Grid.xWidth, config.BC.xBCRight.u.NSCBC_Outflow.P)
       end
    end
-   if (config.BC.yBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+   if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow or config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
       var MaxMach = 0.0
       __demand(__index_launch)
       for c in tiles do
          MaxMach max= STAT.CalculateMaxMachNumber(p_All[c], p_Interior[c], 1)
       end
-      __demand(__index_launch)
-      for c in tiles do
-         [RHS.mkUpdateUsingFluxNSCBCOutflow("yPos")](p_All[c],
-                                                     p_yPos[c],
-                                                     Mix, MaxMach, config.Grid.yWidth, config.BC.yBCRightP)
+      if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in tiles do
+            [RHS.mkUpdateUsingFluxNSCBCOutflow("yNeg")](p_All[c],
+                                                        p_yNeg[c],
+                                                        Mix, MaxMach, config.Grid.yWidth, config.BC.yBCLeft.u.NSCBC_Outflow.P)
+         end
+      end
+      if (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in tiles do
+            [RHS.mkUpdateUsingFluxNSCBCOutflow("yPos")](p_All[c],
+                                                        p_yPos[c],
+                                                        Mix, MaxMach, config.Grid.yWidth, config.BC.yBCRight.u.NSCBC_Outflow.P)
+         end
       end
    end
 
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- Update using NSCBC_Inflow bcs
-   if (config.BC.xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) then
+   if (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) then
       __demand(__index_launch)
       for c in tiles do
          RHS.UpdateUsingFluxNSCBCInflow(p_All[c], p_xNeg[c], Mix)
       end
    end
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivativesFromFluxes", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
 end
 
 __demand(__inline)
@@ -1445,9 +1759,29 @@ where
    reads writes(y_divg), y_divg <= Fluid,
    reads writes(z_divg), z_divg <= Fluid
 do
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "CorrectDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    [RHS.mkCorrectUsingFlux("z")](Fluid, z_divg, Fluid_bounds, Mix);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "CorrectDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    [RHS.mkCorrectUsingFlux("y")](Fluid, y_divg, Fluid_bounds, Mix);
-   [RHS.mkCorrectUsingFlux("x")](Fluid, x_divg, Fluid_bounds, Mix)
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "CorrectDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+   [RHS.mkCorrectUsingFlux("x")](Fluid, x_divg, Fluid_bounds, Mix);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "CorrectDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
 end
 
 -------------------------------------------------------------------------------
@@ -1465,15 +1799,15 @@ local function mkInstance() local INSTANCE = {}
       xBnum = regentlib.newsymbol(),
       yBnum = regentlib.newsymbol(),
       zBnum = regentlib.newsymbol(),
+      NX = regentlib.newsymbol(),
+      NY = regentlib.newsymbol(),
+      NZ = regentlib.newsymbol(),
+      numTiles = regentlib.newsymbol(),
    }
    local BC = {
       readProfiles = regentlib.newsymbol(bool),
       ProfilesDir = regentlib.newsymbol(&int8),
    }
-   local NX = regentlib.newsymbol()
-   local NY = regentlib.newsymbol()
-   local NZ = regentlib.newsymbol()
-   local numTiles = regentlib.newsymbol()
 
    local Integrator_deltaTime = regentlib.newsymbol()
    local Integrator_simTime   = regentlib.newsymbol()
@@ -1505,33 +1839,10 @@ local function mkInstance() local INSTANCE = {}
    local p_y_faces = regentlib.newsymbol("p_y_faces")
    local p_z_faces = regentlib.newsymbol("p_z_faces")
 
-   local Averages = {
-      XAverages = regentlib.newsymbol(),
-      YAverages = regentlib.newsymbol(),
-      ZAverages = regentlib.newsymbol(),
-      XAverages_copy = regentlib.newsymbol(),
-      YAverages_copy = regentlib.newsymbol(),
-      ZAverages_copy = regentlib.newsymbol(),
-      is_Xrakes = regentlib.newsymbol(),
-      is_Yrakes = regentlib.newsymbol(),
-      is_Zrakes = regentlib.newsymbol(),
-      Xrakes = regentlib.newsymbol(),
-      Yrakes = regentlib.newsymbol(),
-      Zrakes = regentlib.newsymbol(),
-      Xrakes_copy = regentlib.newsymbol(),
-      Yrakes_copy = regentlib.newsymbol(),
-      Zrakes_copy = regentlib.newsymbol(),
-
-      XAverages_local = regentlib.newsymbol(),
-      YAverages_local = regentlib.newsymbol(),
-      ZAverages_local = regentlib.newsymbol(),
-      is_Xrakes_local = regentlib.newsymbol(),
-      is_Yrakes_local = regentlib.newsymbol(),
-      is_Zrakes_local = regentlib.newsymbol(),
-      p_Xrakes_local = regentlib.newsymbol(),
-      p_Yrakes_local = regentlib.newsymbol(),
-      p_Zrakes_local = regentlib.newsymbol(),
-   }
+   local Averages
+   if AVERAGES then
+      Averages = AVG.AvgList
+   end
 
    -----------------------------------------------------------------------------
    -- Exported symbols
@@ -1603,14 +1914,14 @@ local function mkInstance() local INSTANCE = {}
       var [Grid.xBnum] = 1
       var [Grid.yBnum] = 1
       var [Grid.zBnum] = 1
-      if config.BC.xBCLeft == SCHEMA.FlowBC_Periodic then Grid.xBnum = 0 end
-      if config.BC.yBCLeft == SCHEMA.FlowBC_Periodic then Grid.yBnum = 0 end
-      if config.BC.zBCLeft == SCHEMA.FlowBC_Periodic then Grid.zBnum = 0 end
+      if config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic then Grid.xBnum = 0 end
+      if config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic then Grid.yBnum = 0 end
+      if config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic then Grid.zBnum = 0 end
 
-      var [NX] = config.Mapping.tiles[0]
-      var [NY] = config.Mapping.tiles[1]
-      var [NZ] = config.Mapping.tiles[2]
-      var [numTiles] = NX * NY * NZ
+      var [Grid.NX] = config.Mapping.tiles[0]
+      var [Grid.NY] = config.Mapping.tiles[1]
+      var [Grid.NZ] = config.Mapping.tiles[2]
+      var [Grid.numTiles] = Grid.NX * Grid.NY * Grid.NZ
 
       var [Integrator_exitCond] = true
       var [Integrator_simTime]   = config.Integrator.startTime
@@ -1618,112 +1929,28 @@ local function mkInstance() local INSTANCE = {}
       var [Integrator_deltaTime] = config.Integrator.fixedDeltaTime
 
       -- Set up flow BC's in x direction
-      if (not((config.BC.xBCLeft == SCHEMA.FlowBC_Periodic) and (config.BC.xBCRight == SCHEMA.FlowBC_Periodic))) then
-         if (config.BC.xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) then
-            if config.BC.xBCLeftInflowProfile.type == SCHEMA.InflowProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCLeftInflowProfile.type == SCHEMA.InflowProfile_File then
-               BC.readProfiles = true
-               BC.ProfilesDir = config.BC.xBCLeftInflowProfile.u.File.FileDir
-            elseif config.BC.xBCLeftInflowProfile.type == SCHEMA.InflowProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming InflowProfile not supported')
-            else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
-            if config.BC.xBCLeftHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCLeftHeat.type == SCHEMA.TempProfile_File then
-               if (BC.readProfiles) then
-                  regentlib.assert(C.strcmp(BC.ProfilesDir, config.BC.xBCLeftHeat.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
-               else
-                  BC.readProfiles = true
-                  BC.ProfilesDir = config.BC.xBCLeftHeat.u.File.FileDir
-               end
-            elseif config.BC.xBCLeftHeat.type == SCHEMA.TempProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming heat model not supported')
-            else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
-            if config.BC.xBCLeftMixture.type == SCHEMA.MixtureProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCLeftMixture.type == SCHEMA.MixtureProfile_File then
-               if (BC.readProfiles) then
-                  regentlib.assert(C.strcmp(BC.ProfilesDir, config.BC.xBCLeftMixture.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
-               else
-                  BC.readProfiles = true
-                  BC.ProfilesDir = config.BC.xBCLeftMixture.u.File.FileDir
-               end
-            elseif config.BC.xBCLeftMixture.type == SCHEMA.MixtureProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming mixture model not supported')
-            else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+      if (not((config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.xBCRight.type == SCHEMA.FlowBC_Periodic))) then
 
-         elseif (config.BC.xBCLeft == SCHEMA.FlowBC_Dirichlet) then
-            if config.BC.xBCLeftInflowProfile.type == SCHEMA.InflowProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCLeftInflowProfile.type == SCHEMA.InflowProfile_File then
-               BC.readProfiles = true
-               BC.ProfilesDir = config.BC.xBCLeftInflowProfile.u.File.FileDir
-            elseif config.BC.xBCLeftHeat.type == SCHEMA.InflowProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming InflowProfile not supported')
-            else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
-            if config.BC.xBCLeftHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCLeftHeat.type == SCHEMA.TempProfile_File then
-               if (BC.readProfiles) then
-                  regentlib.assert(C.strcmp(BC.ProfilesDir, config.BC.xBCLeftHeat.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
-               else
-                  BC.readProfiles = true
-                  BC.ProfilesDir = config.BC.xBCLeftHeat.u.File.FileDir
-               end
-            elseif config.BC.xBCLeftHeat.type == SCHEMA.TempProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming heat model not supported')
-            else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
-            if config.BC.xBCLeftMixture.type == SCHEMA.MixtureProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCLeftMixture.type == SCHEMA.MixtureProfile_File then
-               if (BC.readProfiles) then
-                  regentlib.assert(C.strcmp(BC.ProfilesDir, config.BC.xBCLeftMixture.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
-               else
-                  BC.readProfiles = true
-                  BC.ProfilesDir = config.BC.xBCLeftMixture.u.File.FileDir
-               end
-            elseif config.BC.xBCLeftMixture.type == SCHEMA.MixtureProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming mixture model not supported')
-            else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+         if (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+            [BCOND.CheckNSCBC_Inflow(BC, rexpr config.BC.xBCLeft.u.NSCBC_Inflow end)];
 
-         elseif (config.BC.xBCLeft == SCHEMA.FlowBC_AdiabaticWall) then
+         elseif (config.BC.xBCLeft.type == SCHEMA.FlowBC_Dirichlet) then
+            [BCOND.CheckDirichlet(BC, rexpr config.BC.xBCLeft.u.Dirichlet end)];
+
+         elseif (config.BC.xBCLeft.type == SCHEMA.FlowBC_AdiabaticWall) then
             -- Do nothing
 
          else
             regentlib.assert(false, "Boundary conditions in xBCLeft not implemented")
          end
 
-         if (config.BC.xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
+         if (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
             -- Do nothing
 
-         elseif (config.BC.xBCRight == SCHEMA.FlowBC_Dirichlet) then
-            if config.BC.xBCRightInflowProfile.type == SCHEMA.InflowProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCRightHeat.type == SCHEMA.InflowProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming InflowProfile not supported')
-            else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
-            if config.BC.xBCRightHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCRightHeat.type == SCHEMA.TempProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming heat model not supported')
-            else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
-            if config.BC.xBCRightMixture.type == SCHEMA.MixtureProfile_Constant then
-               -- Do nothing
-            elseif config.BC.xBCRightMixture.type == SCHEMA.MixtureProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming mixture model not supported')
-            else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+         elseif (config.BC.xBCRight.type == SCHEMA.FlowBC_Dirichlet) then
+            [BCOND.CheckDirichlet(BC, rexpr config.BC.xBCRight.u.Dirichlet end)];
 
-         elseif (config.BC.xBCRight == SCHEMA.FlowBC_AdiabaticWall) then
+         elseif (config.BC.xBCRight.type == SCHEMA.FlowBC_AdiabaticWall) then
             -- Do nothing
 
          else
@@ -1732,141 +1959,56 @@ local function mkInstance() local INSTANCE = {}
       end
 
       -- Set up flow BC's in y direction
-      if (not((config.BC.yBCLeft == SCHEMA.FlowBC_Periodic) and (config.BC.yBCRight == SCHEMA.FlowBC_Periodic))) then
-         if (config.BC.yBCLeft == SCHEMA.FlowBC_Dirichlet) then
-            if config.BC.yBCLeftInflowProfile.type == SCHEMA.InflowProfile_Constant then
-               -- Do nothing
-            elseif config.BC.yBCLeftHeat.type == SCHEMA.InflowProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming InflowProfile not supported')
-            else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
-            if config.BC.yBCLeftHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            elseif config.BC.yBCLeftHeat.type == SCHEMA.TempProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming heat model not supported')
-            else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
-            if config.BC.yBCLeftMixture.type == SCHEMA.MixtureProfile_Constant then
-               -- Do nothing
-            elseif config.BC.yBCLeftMixture.type == SCHEMA.MixtureProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming mixture model not supported')
-            else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+      if (not((config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.yBCRight.type == SCHEMA.FlowBC_Periodic))) then
 
---      if (config.BC.yBCLeft == SCHEMA.FlowBC_Symmetry) then
-         elseif (config.BC.yBCLeft == SCHEMA.FlowBC_AdiabaticWall) then
+         if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
             -- Do nothing
 
-         elseif (config.BC.yBCLeft == SCHEMA.FlowBC_IsothermalWall) then
-            if config.BC.yBCLeftHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            else
-               regentlib.assert(false, 'Only constant heat model supported')
-            end
+         elseif (config.BC.yBCLeft.type == SCHEMA.FlowBC_Dirichlet) then
+            [BCOND.CheckDirichlet(BC, rexpr config.BC.yBCLeft.u.Dirichlet end)];
 
-         elseif (config.BC.yBCLeft == SCHEMA.FlowBC_SuctionAndBlowingWall) then
-            regentlib.assert(config.BC.yBCLeftInflowProfile.type == SCHEMA.InflowProfile_SuctionAndBlowing,
-                             "SuctionAndBlowingWall BC requires a SuctionAndBlowing InflowProfile")
+         elseif (config.BC.yBCLeft.type == SCHEMA.FlowBC_AdiabaticWall) then
+            -- Do nothing
 
+         elseif (config.BC.yBCLeft.type == SCHEMA.FlowBC_IsothermalWall) then
+            [BCOND.CheckIsothermalWall(rexpr config.BC.yBCLeft.u.IsothermalWall end)];
 
-            regentlib.assert(config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.A.length == config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.omega.length, 
-                            "Equal number of amplitudes and frequencies must be specified")
-
-            regentlib.assert(config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.A.length == config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.beta.length, 
-                            "Equal number of amplitudes and spanwise wave numbers must be specified")
-
-            if config.BC.yBCLeftHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            else
-               regentlib.assert(false, 'Only constant heat model supported')
-            end
+         elseif (config.BC.yBCLeft.type == SCHEMA.FlowBC_SuctionAndBlowingWall) then
+            [BCOND.CheckSuctionAndBlowingWall(rexpr config.BC.yBCLeft.u.SuctionAndBlowingWall end)];
 
          else
             regentlib.assert(false, "Boundary conditions in yBCLeft not implemented")
          end
 
-         if (config.BC.yBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
-            -- Do nothing
-         elseif (config.BC.yBCRight == SCHEMA.FlowBC_Dirichlet) then
-            if config.BC.yBCRightInflowProfile.type == SCHEMA.InflowProfile_Constant then
-               -- Do nothing
-            elseif config.BC.yBCRightHeat.type == SCHEMA.InflowProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming InflowProfile not supported')
-            else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
-            if config.BC.yBCRightHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            elseif config.BC.yBCRightHeat.type == SCHEMA.TempProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming heat model not supported')
-            else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
-            if config.BC.yBCRightMixture.type == SCHEMA.MixtureProfile_Constant then
-               -- Do nothing
-            elseif config.BC.yBCRightMixture.type == SCHEMA.MixtureProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming mixture model not supported')
-            else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
-
-         elseif (config.BC.yBCRight == SCHEMA.FlowBC_AdiabaticWall) then
+         if (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
             -- Do nothing
 
-         elseif (config.BC.yBCRight == SCHEMA.FlowBC_IsothermalWall) then
+         elseif (config.BC.yBCRight.type == SCHEMA.FlowBC_Dirichlet) then
+            [BCOND.CheckDirichlet(BC, rexpr config.BC.yBCRight.u.Dirichlet end)];
+
+         elseif (config.BC.yBCRight.type == SCHEMA.FlowBC_AdiabaticWall) then
             -- Do nothing
-            if config.BC.yBCRightHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            else
-               regentlib.assert(false, 'Only constant heat model supported')
-            end
+
+         elseif (config.BC.yBCRight.type == SCHEMA.FlowBC_IsothermalWall) then
+            [BCOND.CheckIsothermalWall(rexpr config.BC.yBCRight.u.IsothermalWall end)];
+
          else
             regentlib.assert(false, "Boundary conditions in yBCRight not implemented")
          end
       end
 
       -- Set up flow BC's in z direction
-      if (not((config.BC.zBCLeft == SCHEMA.FlowBC_Periodic) and (config.BC.zBCRight == SCHEMA.FlowBC_Periodic))) then
-         if (config.BC.zBCLeft == SCHEMA.FlowBC_Dirichlet) then
-            if config.BC.zBCLeftInflowProfile.type == SCHEMA.InflowProfile_Constant then
-               -- Do nothing
-            elseif config.BC.zBCLeftHeat.type == SCHEMA.InflowProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming InflowProfile not supported')
-            else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
-            if config.BC.zBCLeftHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            elseif config.BC.zBCLeftHeat.type == SCHEMA.TempProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming heat model not supported')
-            else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
-            if config.BC.zBCLeftMixture.type == SCHEMA.MixtureProfile_Constant then
-               -- Do nothing
-            elseif config.BC.zBCLeftMixture.type == SCHEMA.MixtureProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming mixture model not supported')
-            else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+      if (not((config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.zBCRight.type == SCHEMA.FlowBC_Periodic))) then
+
+         if (config.BC.zBCLeft.type == SCHEMA.FlowBC_Dirichlet) then
+            [BCOND.CheckDirichlet(BC, rexpr config.BC.zBCLeft.u.Dirichlet end)];
 
          else
             regentlib.assert(false, "Boundary conditions in zBCLeft not implemented")
          end
 
-         if (config.BC.zBCRight == SCHEMA.FlowBC_Dirichlet) then
-            if config.BC.zBCRightInflowProfile.type == SCHEMA.InflowProfile_Constant then
-               -- Do nothing
-            elseif config.BC.zBCRightHeat.type == SCHEMA.InflowProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming InflowProfile not supported')
-            else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
-            if config.BC.zBCRightHeat.type == SCHEMA.TempProfile_Constant then
-               -- Do nothing
-            elseif config.BC.zBCRightHeat.type == SCHEMA.TempProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming heat model not supported')
-            else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
-            if config.BC.zBCRightMixture.type == SCHEMA.MixtureProfile_Constant then
-               -- Do nothing
-            elseif config.BC.zBCRightMixture.type == SCHEMA.MixtureProfile_Incoming then
-               -- Do nothing
-               regentlib.assert(false, 'Incoming mixture model not supported')
-            else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+         if (config.BC.zBCRight.type == SCHEMA.FlowBC_Dirichlet) then
+            [BCOND.CheckDirichlet(BC, rexpr config.BC.yBCRight.u.Dirichlet end)];
 
          else
             regentlib.assert(false, "Boundary conditions in zBCRight not implemented")
@@ -1874,16 +2016,16 @@ local function mkInstance() local INSTANCE = {}
       end
 
       -- Check if boundary conditions in each direction are either both periodic or both non-periodic
-      if (not (((config.BC.xBCLeft == SCHEMA.FlowBC_Periodic) and (config.BC.xBCRight == SCHEMA.FlowBC_Periodic))
-          or ((not (config.BC.xBCLeft == SCHEMA.FlowBC_Periodic)) and (not (config.BC.xBCRight == SCHEMA.FlowBC_Periodic))))) then
+      if (not (((config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.xBCRight.type == SCHEMA.FlowBC_Periodic))
+          or ((not (config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic)) and (not (config.BC.xBCRight.type == SCHEMA.FlowBC_Periodic))))) then
          regentlib.assert(false, "Boundary conditions in x should match for periodicity")
       end
-      if (not (((config.BC.yBCLeft == SCHEMA.FlowBC_Periodic) and (config.BC.yBCRight == SCHEMA.FlowBC_Periodic))
-         or ((not (config.BC.yBCLeft == SCHEMA.FlowBC_Periodic)) and (not (config.BC.yBCRight == SCHEMA.FlowBC_Periodic))))) then
+      if (not (((config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.yBCRight.type == SCHEMA.FlowBC_Periodic))
+         or ((not (config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic)) and (not (config.BC.yBCRight.type == SCHEMA.FlowBC_Periodic))))) then
          regentlib.assert(false, "Boundary conditions in y should match for periodicity")
       end
-      if (not (((config.BC.zBCLeft == SCHEMA.FlowBC_Periodic) and (config.BC.zBCRight == SCHEMA.FlowBC_Periodic))
-         or ((not (config.BC.zBCLeft == SCHEMA.FlowBC_Periodic)) and (not (config.BC.zBCRight == SCHEMA.FlowBC_Periodic))))) then
+      if (not (((config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.zBCRight.type == SCHEMA.FlowBC_Periodic))
+         or ((not (config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic)) and (not (config.BC.zBCRight.type == SCHEMA.FlowBC_Periodic))))) then
          regentlib.assert(false, "Boundary conditions in z should match for periodicity")
       end
 
@@ -1912,7 +2054,7 @@ local function mkInstance() local INSTANCE = {}
       [UTIL.emitRegionTagAttach(Fluid_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
 
       -- Partitioning domain
-      var [tiles] = ispace(int3d, {NX,NY,NZ})
+      var [tiles] = ispace(int3d, {Grid.NX, Grid.NY, Grid.NZ})
 
       -- Fluid Partitioning
       var [Fluid_Partitions]      = PartitionGrid(Fluid,      tiles, config, Grid.xBnum, Grid.yBnum, Grid.zBnum)
@@ -1944,96 +2086,14 @@ local function mkInstance() local INSTANCE = {}
       var [z_faces] = z_faces_t[0]
       var [p_x_faces] = p_x_faces_t[0]
       var [p_y_faces] = p_y_faces_t[0]
-      var [p_z_faces] = p_z_faces_t[0]
+      var [p_z_faces] = p_z_faces_t[0];
 
       ---------------------------------------------------------------------------
       -- Create one-dimensional averages
       ---------------------------------------------------------------------------
-
-      -- Create averages regions
-      var is_XAverages = ispace(int2d, {x = config.Grid.xNum + 2*Grid.xBnum,
-                                        y = config.IO.YZAverages.length    })
-
-      var is_YAverages = ispace(int2d, {x = config.Grid.yNum + 2*Grid.yBnum,
-                                        y = config.IO.XZAverages.length    })
-
-      var is_ZAverages = ispace(int2d, {x = config.Grid.zNum + 2*Grid.zBnum,
-                                        y = config.IO.XYAverages.length    })
-
-      var [Averages.XAverages] = region(is_XAverages, AVG.Averages_columns)
-      var [Averages.YAverages] = region(is_YAverages, AVG.Averages_columns)
-      var [Averages.ZAverages] = region(is_ZAverages, AVG.Averages_columns)
-      var [Averages.XAverages_copy] = region(is_XAverages, AVG.Averages_columns)
-      var [Averages.YAverages_copy] = region(is_YAverages, AVG.Averages_columns)
-      var [Averages.ZAverages_copy] = region(is_ZAverages, AVG.Averages_columns);
-
-      [UTIL.emitRegionTagAttach(Averages.XAverages,      MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(Averages.YAverages,      MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(Averages.ZAverages,      MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(Averages.XAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(Averages.YAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(Averages.ZAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-
-      -- Partitioning averages in rakes
-      var [Averages.is_Xrakes] = ispace(int2d, {1, max(config.IO.YZAverages.length, 1)})
-      var [Averages.is_Yrakes] = ispace(int2d, {1, max(config.IO.XZAverages.length, 1)})
-      var [Averages.is_Zrakes] = ispace(int2d, {1, max(config.IO.XYAverages.length, 1)})
-
-      var [Averages.Xrakes] = partition(equal, Averages.XAverages, Averages.is_Xrakes)
-      var [Averages.Yrakes] = partition(equal, Averages.YAverages, Averages.is_Yrakes)
-      var [Averages.Zrakes] = partition(equal, Averages.ZAverages, Averages.is_Zrakes)
-
-      var [Averages.Xrakes_copy] = partition(equal, Averages.XAverages_copy, Averages.is_Xrakes)
-      var [Averages.Yrakes_copy] = partition(equal, Averages.YAverages_copy, Averages.is_Yrakes)
-      var [Averages.Zrakes_copy] = partition(equal, Averages.ZAverages_copy, Averages.is_Zrakes)
-
---      -- TODO: in the future we might want to partition these also along the rakes
---      var is_XrakesTiles = ispace(int2d, {NX, config.IO.YZAverages.length})
---      var is_YrakesTiles = ispace(int2d, {NY, config.IO.XZAverages.length})
---      var is_ZrakesTiles = ispace(int2d, {NZ, config.IO.XYAverages.length});
---
---      var [Averages.p_Xrakes] = [UTIL.mkPartitionByTile(int2d, int2d, AVG.Averages_columns)]
---                                (Averages.Xrakes, is_XrakesTiles, int2d{Grid.xBnum,0}, int2d{0,0})
---      var [Averages.p_Yrakes] = [UTIL.mkPartitionByTile(int2d, int2d, AVG.Averages_columns)]
---                                (Averages.Yrakes, is_YrakesTiles, int2d{Grid.yBnum,0}, int2d{0,0})
---      var [Averages.p_Zrakes] = [UTIL.mkPartitionByTile(int2d, int2d, AVG.Averages_columns)]
---                                (Averages.Zrakes, is_ZrakesTiles, int2d{Grid.zBnum,0}, int2d{0,0})
-
-      -- Create local buffers for averages regions
-      var is_XAverages_local = ispace(int4d, {x = config.Grid.xNum + 2*Grid.xBnum,
-                                              y = config.IO.YZAverages.length    ,
-                                              z = NY                             ,
-                                              w = NZ                             })
-
-      var is_YAverages_local = ispace(int4d, {x = config.Grid.yNum + 2*Grid.yBnum,
-                                              y = config.IO.XZAverages.length    ,
-                                              z = NX                             ,
-                                              w = NZ                             })
-
-      var is_ZAverages_local = ispace(int4d, {x = config.Grid.zNum + 2*Grid.zBnum,
-                                              y = config.IO.XYAverages.length    ,
-                                              z = NX                             ,
-                                              w = NY                             })
-
-      var [Averages.XAverages_local] = region(is_XAverages_local, AVG.Averages_columns)
-      var [Averages.YAverages_local] = region(is_YAverages_local, AVG.Averages_columns)
-      var [Averages.ZAverages_local] = region(is_ZAverages_local, AVG.Averages_columns);
-
-      [UTIL.emitRegionTagAttach(Averages.XAverages_local, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(Averages.YAverages_local, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(Averages.ZAverages_local, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-
-      -- Partitioning local buffer in rakes
-      var [Averages.is_Xrakes_local] = ispace(int4d, {NX, max(config.IO.YZAverages.length, 1), NY, NZ})
-      var [Averages.is_Yrakes_local] = ispace(int4d, {NY, max(config.IO.XZAverages.length, 1), NX, NZ})
-      var [Averages.is_Zrakes_local] = ispace(int4d, {NZ, max(config.IO.XYAverages.length, 1), NX, NY})
-
-      var [Averages.p_Xrakes_local] = [UTIL.mkPartitionByTile(int4d, int4d, AVG.Averages_columns)]
-                                      (Averages.XAverages_local, Averages.is_Xrakes_local, int4d{Grid.xBnum,0,0,0}, int4d{0,0,0,0})
-      var [Averages.p_Yrakes_local] = [UTIL.mkPartitionByTile(int4d, int4d, AVG.Averages_columns)]
-                                      (Averages.YAverages_local, Averages.is_Yrakes_local, int4d{Grid.yBnum,0,0,0}, int4d{0,0,0,0})
-      var [Averages.p_Zrakes_local] = [UTIL.mkPartitionByTile(int4d, int4d, AVG.Averages_columns)]
-                                      (Averages.ZAverages_local, Averages.is_Zrakes_local, int4d{Grid.zBnum,0,0,0}, int4d{0,0,0,0})
+@ESCAPE if AVERAGES then @EMIT
+      [AVG.DeclSymbols(Averages, Grid, config, MAPPER)];
+@TIME end @EPACSE
 
    end end -- DeclSymbols
 
@@ -2043,7 +2103,7 @@ local function mkInstance() local INSTANCE = {}
 
    function INSTANCE.InitRegions(config) return rquote
 
-      InitializeCell(Fluid)
+      InitializeCell(Fluid, tiles, Fluid_Partitions)
 
       -- Unpack the partitions that we are going to need
       var {p_All, p_Interior, p_AllGhost, 
@@ -2073,15 +2133,12 @@ local function mkInstance() local INSTANCE = {}
          end
       end
 
+@ESCAPE if AVERAGES then @EMIT
       -- Initialize averages
-      [AVG.mkInitializeAverages(int2d)](Averages.XAverages);
-      [AVG.mkInitializeAverages(int2d)](Averages.YAverages);
-      [AVG.mkInitializeAverages(int2d)](Averages.ZAverages);
-
-      -- Reinitialize reduction buffers
-      [AVG.mkInitializeAverages(int4d)](Averages.XAverages_local);
-      [AVG.mkInitializeAverages(int4d)](Averages.YAverages_local);
-      [AVG.mkInitializeAverages(int4d)](Averages.ZAverages_local)
+      [AVG.InitRakes(Averages)];
+      -- Initialize reduction buffers
+      [AVG.InitBuffers(Averages)];
+@TIME end @EPACSE
 
       -- Initialize BC profiles
       -- Read from file...
@@ -2189,23 +2246,12 @@ local function mkInstance() local INSTANCE = {}
          if config.Flow.turbForcing.type == SCHEMA.TurbForcingModel_CHANNEL then
             config.Flow.turbForcing.u.CHANNEL.Forcing = HDF.read.channelForcing( 0, tiles, config.Flow.restartDir, Fluid, p_All)
          end
-         HDF.load(0, tiles, config.Flow.restartDir, Fluid, Fluid_copy, p_All, Fluid_Partitions_copy.p_All)
-         if not config.IO.ResetAverages then
-            var dirname = [&int8](C.malloc(256))
-            if config.IO.YZAverages.length ~= 0 then
-               C.snprintf(dirname, 256, '%s/YZAverages', config.Flow.restartDir)
-               AVG.HDF.load(0, Averages.is_Xrakes, dirname, Averages.XAverages, Averages.XAverages_copy, Averages.Xrakes, Averages.Xrakes_copy)
-            end
-            if config.IO.XZAverages.length ~= 0 then
-               C.snprintf(dirname, 256, '%s/XZAverages', config.Flow.restartDir)
-               AVG.HDF.load(0, Averages.is_Yrakes, dirname, Averages.YAverages, Averages.YAverages_copy, Averages.Yrakes, Averages.Yrakes_copy)
-            end
-            if config.IO.XYAverages.length ~= 0 then
-               C.snprintf(dirname, 256, '%s/XYAverages', config.Flow.restartDir)
-               AVG.HDF.load(0, Averages.is_Zrakes, dirname, Averages.ZAverages, Averages.ZAverages_copy, Averages.Zrakes, Averages.Zrakes_copy)
-            end
-            C.free(dirname)
-         end
+         HDF.load(0, tiles, config.Flow.restartDir, Fluid, Fluid_copy, p_All, Fluid_Partitions_copy.p_All);
+
+@ESCAPE if AVERAGES then @EMIT
+         [AVG.ReadAverages(Averages, config)];
+@TIME end @EPACSE
+
       else regentlib.assert(false, 'Unhandled case in switch') end
 
       if config.Integrator.resetTime then
@@ -2228,18 +2274,15 @@ local function mkInstance() local INSTANCE = {}
                               Grid.zBnum, config.Grid.zNum);
 
       -- Enforce BCs on the metric
-      [METRIC.mkCorrectGhostMetric("x")](Fluid, Fluid_bounds, config.BC.xBCLeft, config.BC.xBCRight, Grid.xBnum, config.Grid.xNum);
-      [METRIC.mkCorrectGhostMetric("y")](Fluid, Fluid_bounds, config.BC.yBCLeft, config.BC.yBCRight, Grid.yBnum, config.Grid.yNum);
-      [METRIC.mkCorrectGhostMetric("z")](Fluid, Fluid_bounds, config.BC.zBCLeft, config.BC.zBCRight, Grid.zBnum, config.Grid.zNum)
+      [METRIC.mkCorrectGhostMetric("x")](Fluid, Fluid_bounds, config.BC.xBCLeft.type, config.BC.xBCRight.type, Grid.xBnum, config.Grid.xNum);
+      [METRIC.mkCorrectGhostMetric("y")](Fluid, Fluid_bounds, config.BC.yBCLeft.type, config.BC.yBCRight.type, Grid.yBnum, config.Grid.yNum);
+      [METRIC.mkCorrectGhostMetric("z")](Fluid, Fluid_bounds, config.BC.zBCLeft.type, config.BC.zBCRight.type, Grid.zBnum, config.Grid.zNum)
 
-      -- initialize ghost cells to their specified values in NSCBC case
-      if (config.Flow.initCase ~= SCHEMA.FlowInitCase_Restart) then
-         -- only if we did not read these values from the restart file
-         if config.BC.xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow then
-            __demand(__index_launch)
-            for c in tiles do
-               BCOND.InitializeGhostNSCBC(p_All[c], p_xNeg[c], Mix)
-            end
+      -- initialize ghost cells values for NSCBC
+      if config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow then
+         __demand(__index_launch)
+         for c in tiles do
+            BCOND.InitializeGhostNSCBC(p_All[c], p_xNeg[c], Mix)
          end
       end
 
@@ -2277,7 +2320,11 @@ local function mkInstance() local INSTANCE = {}
    function INSTANCE.MainLoopHeader(config) return rquote
 
       -- Unpack the partitions that we are going to need
-      var {p_All} = Fluid_Partitions
+      var {p_All} = Fluid_Partitions;
+
+@ESCAPE if TIMING then @EMIT
+      var [T] = IO.Console_WriteTiming(0, config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
       -- Calculate exit condition
       Integrator_exitCond =
@@ -2294,6 +2341,10 @@ local function mkInstance() local INSTANCE = {}
          Integrator_deltaTime = config.Integrator.cfl/Integrator_maxSpectralRadius
       end
 
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    end end -- MainLoopHeader
 
    -----------------------------------------------------------------------------
@@ -2303,7 +2354,11 @@ local function mkInstance() local INSTANCE = {}
    function INSTANCE.PerformIO(config) return rquote
 
       -- Unpack the partitions that we are going to need
-      var {p_All, p_Interior} = Fluid_Partitions
+      var {p_All, p_Interior} = Fluid_Partitions;
+
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
       -- Write to console
       var AveragePressure = 0.0
@@ -2337,6 +2392,10 @@ local function mkInstance() local INSTANCE = {}
          interior_volume += STAT.CalculateInteriorVolume(p_All[c], p_Interior[c]) 
       end
 
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
       AveragePressure      = (AveragePressure     /interior_volume)
       AverageTemperature   = (AverageTemperature  /interior_volume)
       AverageKineticEnergy = (AverageKineticEnergy/interior_volume)
@@ -2354,6 +2413,11 @@ local function mkInstance() local INSTANCE = {}
          config.Flow.turbForcing.u.CHANNEL.Forcing *= config.Flow.turbForcing.u.CHANNEL.RhoUbulk/averageRhoU
       end
 
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+@ESCAPE if AVERAGES then @EMIT
       -- Add averages
       if (Integrator_timeStep % config.IO.AveragesSamplingInterval == 0 and 
          ((config.IO.YZAverages.length ~= 0) or
@@ -2361,30 +2425,17 @@ local function mkInstance() local INSTANCE = {}
           (config.IO.XYAverages.length ~= 0) )) then
 
          -- Update temperature gradient for mean heat flux
-         VARS.GetTemperatureGradients(Fluid, Fluid_bounds)
+         VARS.GetTemperatureGradients(Fluid, Fluid_bounds);
 
-         for rake=0, config.IO.YZAverages.length do
-            __demand(__index_launch)
-            for c in tiles do
-               [AVG.mkAddAverages('x')](p_All[c], Averages.p_Xrakes_local[int4d{c.x,rake,c.y,c.z}], Mix,
-                                        config.IO.YZAverages.values[rake], Integrator_deltaTime)
-            end
-         end
-         for rake=0, config.IO.XZAverages.length do
-            __demand(__index_launch)
-            for c in tiles do
-               [AVG.mkAddAverages('y')](p_All[c], Averages.p_Yrakes_local[int4d{c.y,rake,c.x,c.z}], Mix,
-                                        config.IO.XZAverages.values[rake], Integrator_deltaTime)
-            end
-         end
-         for rake=0, config.IO.XYAverages.length do
-            __demand(__index_launch)
-            for c in tiles do
-               [AVG.mkAddAverages('z')](p_All[c], Averages.p_Zrakes_local[int4d{c.z,rake,c.x,c.y}], Mix,
-                                        config.IO.XYAverages.values[rake], Integrator_deltaTime)
-            end
-         end
+         [AVG.AddAverages(Averages, tiles, p_All, Integrator_deltaTime, config, Mix)]
+
       end
+
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+@TIME end @EPACSE
 
       -- Dump restart files
       if config.IO.wrtRestart then
@@ -2397,49 +2448,20 @@ local function mkInstance() local INSTANCE = {}
             _1 = HDF.write.timeStep(       _1, tiles, dirname, Fluid, p_All, Integrator_timeStep)
             _1 = HDF.write.simTime(        _1, tiles, dirname, Fluid, p_All, Integrator_simTime)
             _1 = HDF.write.SpeciesNames(   _1, tiles, dirname, Fluid, p_All, SpeciesNames)
-            _1 = HDF.write.channelForcing( _1, tiles, dirname, Fluid, p_All, config.Flow.turbForcing.u.CHANNEL.Forcing)
-            if config.IO.YZAverages.length ~= 0 then
---               AVG.DummyAverages(Averages.XAverages)
-               -- Reduce from reduction buffers
-               [AVG.mkReduceAverages('x')](Averages.XAverages, Averages.XAverages_local, tiles);
-               -- Reinitialize reduction buffers
-               [AVG.mkInitializeAverages(int4d)](Averages.XAverages_local)
-               var Avgdirname = [&int8](C.malloc(256))
-               C.snprintf(Avgdirname, 256, '%s/YZAverages', dirname)
-               var _1 = IO.createDir(Avgdirname)
-               _1 = AVG.HDF.dump(               _1, Averages.is_Xrakes, Avgdirname, Averages.XAverages, Averages.XAverages_copy, Averages.Xrakes, Averages.Xrakes_copy)
-               _1 = AVG.HDF.write.SpeciesNames( _1, Averages.is_Xrakes, Avgdirname, Averages.XAverages, Averages.Xrakes, SpeciesNames)
-               C.free(Avgdirname)
-            end
-            if config.IO.XZAverages.length ~= 0 then
---               AVG.DummyAverages(Averages.YAverages)
-               -- Reduce from reduction buffers
-               [AVG.mkReduceAverages('y')](Averages.YAverages, Averages.YAverages_local, tiles);
-               -- Reinitialize reduction buffers
-               [AVG.mkInitializeAverages(int4d)](Averages.YAverages_local)
-               var Avgdirname = [&int8](C.malloc(256))
-               C.snprintf(Avgdirname, 256, '%s/XZAverages', dirname)
-               var _1 = IO.createDir(Avgdirname)
-               _1 = AVG.HDF.dump(               _1, Averages.is_Yrakes, Avgdirname, Averages.YAverages, Averages.YAverages_copy, Averages.Yrakes, Averages.Yrakes_copy)
-               _1 = AVG.HDF.write.SpeciesNames( _1, Averages.is_Yrakes, Avgdirname, Averages.YAverages, Averages.Yrakes, SpeciesNames)
-               C.free(Avgdirname)
-            end
-            if config.IO.XYAverages.length ~= 0 then
---               AVG.DummyAverages(Averages.ZAverages)
-               -- Reduce from reduction buffers
-               [AVG.mkReduceAverages('z')](Averages.ZAverages, Averages.ZAverages_local, tiles);
-               -- Reinitialize reduction buffers
-               [AVG.mkInitializeAverages(int4d)](Averages.ZAverages_local)
-               var Avgdirname = [&int8](C.malloc(256))
-               C.snprintf(Avgdirname, 256, '%s/XYAverages', dirname)
-               var _1 = IO.createDir(Avgdirname)
-               _1 = AVG.HDF.dump(               _1, Averages.is_Zrakes, Avgdirname, Averages.ZAverages, Averages.ZAverages_copy, Averages.Zrakes, Averages.Zrakes_copy)
-               _1 = AVG.HDF.write.SpeciesNames( _1, Averages.is_Zrakes, Avgdirname, Averages.ZAverages, Averages.Zrakes, SpeciesNames)
-               C.free(Avgdirname)
-            end
-            C.free(dirname);
+            _1 = HDF.write.Versions(       _1, tiles, dirname, Fluid, p_All, array(regentlib.string([VERSION.SolverVersion]), regentlib.string([VERSION.LegionVersion])))
+            _1 = HDF.write.channelForcing( _1, tiles, dirname, Fluid, p_All, config.Flow.turbForcing.u.CHANNEL.Forcing);
+
+@ESCAPE if AVERAGES then @EMIT
+            [AVG.WriteAverages(Averages, tiles, dirname,IO, SpeciesNames, config)];
+@TIME end @EPACSE
+
+            C.free(dirname)
          end
       end
+
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
    end end -- PerformIO
 
@@ -2448,6 +2470,10 @@ local function mkInstance() local INSTANCE = {}
    -----------------------------------------------------------------------------
 
    function INSTANCE.MainLoopBody(config) return rquote
+
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
       var Integrator_time_old = Integrator_simTime
 
@@ -2466,7 +2492,11 @@ local function mkInstance() local INSTANCE = {}
                                      x_divg, y_divg, z_divg,
                                      config,
                                      Mix,
-                                     false)
+                                     false);
+
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
          -- TODO: it is not clear if here we need to correct the derivatives to
          --       preserve boundness
@@ -2476,6 +2506,10 @@ local function mkInstance() local INSTANCE = {}
          for c in tiles do
             CHEM.UpdateChemistry(p_All[c], p_solved[c], Integrator_deltaTime, Mix)
          end
+
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
          -- Update the fluxes in preparation to the RK algorithm
          UpdateFluxesFromConserved(Fluid,
@@ -2491,6 +2525,10 @@ local function mkInstance() local INSTANCE = {}
          Integrator_simTime = Integrator_time_old + Integrator_deltaTime*0.5
       end
 
+@ESCAPE if TIMING then @EMIT
+      [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
       -- Set iteration-specific fields that persist across RK sub-steps
       __demand(__index_launch)
       for c in tiles do
@@ -2499,6 +2537,10 @@ local function mkInstance() local INSTANCE = {}
 
       -- RK sub-time-stepping loop
       @ESCAPE for STAGE = 1, 3 do @EMIT
+
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
          -- Update the time derivatives
          UpdateDerivativesFromFluxes(Fluid,
@@ -2509,6 +2551,10 @@ local function mkInstance() local INSTANCE = {}
                                      config,
                                      Mix,
                                      config.Integrator.implicitChemistry);
+
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
          -- Predictor part of the time step
          __demand(__index_launch)
@@ -2531,6 +2577,10 @@ local function mkInstance() local INSTANCE = {}
             [RK.mkUpdateVarsCorr(STAGE)](p_All[c], Integrator_deltaTime, config.Integrator.implicitChemistry)
          end
 
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
          -- Update the fluxes
          UpdateFluxesFromConserved(Fluid,
                                    Fluid_bounds,
@@ -2541,7 +2591,21 @@ local function mkInstance() local INSTANCE = {}
                                    Mix,
                                    Integrator_simTime);
 
-         ---- Advance the time for the next sub-step
+@ESCAPE if DEBUG_OUTPUT then @EMIT
+         CheckDebugOutput(Fluid, Fluid_copy,
+                          Fluid_bounds, tiles,
+                          Fluid_Partitions, Fluid_Partitions_copy,
+                          config,
+                          Mix,
+                          Integrator_timeStep,
+                          Integrator_simTime);
+@TIME end @EPACSE
+
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+         -- Advance the time for the next sub-step
          @ESCAPE if STAGE == 3 then @EMIT
                Integrator_simTime = Integrator_time_old + Integrator_deltaTime
          @TIME else @EMIT
@@ -2552,15 +2616,24 @@ local function mkInstance() local INSTANCE = {}
                   Integrator_simTime = Integrator_time_old + [RK_C[STAGE][3]] * Integrator_deltaTime
                end
          @TIME end @EPACSE
+
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
       @TIME end @EPACSE-- RK sub-time-stepping
 
       -- Update time derivatives at boundary for NSCBC
-      if config.BC.xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow then
+      if config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow then
          __demand(__index_launch)
          for c in tiles do
             BCOND.UpdateNSCBCGhostCellTimeDerivatives(p_All[c], p_xNeg[c], Integrator_deltaTime)
          end
       end
+
+@ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 
       Integrator_timeStep += 1
 

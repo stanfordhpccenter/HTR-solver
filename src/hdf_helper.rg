@@ -17,7 +17,7 @@ return function(indexType, -- regentlib.index_type
                 fSpace, -- terralib.struct
                 flds, -- string*
                 attrs, -- map(string,terralib.type)
-                StringAttrs -- map(string,int)
+                StringAttrs -- map(string,{int, int})
                )
 
 local MODULE = {}
@@ -85,7 +85,9 @@ if not USE_HDF then
 
   end
 
-  for aName,aNum in pairs(StringAttrs) do
+  for aName,aPar in pairs(StringAttrs) do
+
+    local aNum = aPar[1]
 
     local __demand(__inline)
     task writeAttr(_ : int,
@@ -493,9 +495,10 @@ for aName,aType in pairs(attrs) do
 
 end
 
-for aName,aNum in pairs(StringAttrs) do
+for aName,aPar in pairs(StringAttrs) do
 
-  local aLenght = 20 -- Length of the written strings
+  local aNum    = aPar[1]    -- Number of the written strings
+  local aLength = aPar[2]+1  -- Length of the written strings (allow for traling characted of C)
 
   local terra write(fname : &int8, Strings : regentlib.string[aNum])
     var fid = HDF5.H5Fopen(fname, HDF5.H5F_ACC_RDWR, HDF5.H5P_DEFAULT)
@@ -505,14 +508,14 @@ for aName,aNum in pairs(StringAttrs) do
     var sid = HDF5.H5Screate_simple(1, aSize, [&uint64](0))
     if sid < 0 then [err('create string attribute dataspace')] end
     var stringType = HDF5.H5Tcopy(HDF5.H5T_C_S1_g)
-    var res = HDF5.H5Tset_size (stringType, aLenght)
+    var res = HDF5.H5Tset_size (stringType, aLength)
     if res < 0 then [err('set attribute size')] end
     var aid = HDF5.H5Acreate2(fid, aName, stringType, sid,
                               HDF5.H5P_DEFAULT, HDF5.H5P_DEFAULT)
     if aid < 0 then [err('create attribute')] end
-    var attr : int8[aLenght][aNum]
+    var attr : int8[aLength][aNum]
     for i = 0, aNum do
-       C.snprintf(attr[i], aLenght, Strings[i])
+       C.snprintf(attr[i], aLength, Strings[i])
     end
     res = HDF5.H5Awrite(aid, stringType, &attr)
     if res < 0 then [err('write attribute')] end

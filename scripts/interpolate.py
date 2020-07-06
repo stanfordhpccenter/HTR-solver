@@ -41,13 +41,16 @@ args = parser.parse_args()
 ##############################################################################
 
 def interp(values, i, j, k, w1, w2, w3):
-   return(values[i-1,j-1,k-1] *      w1  *      w2  *      w3  +
-          values[i-1,j-1,k  ] *      w1  *      w2  * (1.0-w3) +
-          values[i-1,j  ,k-1] *      w1  * (1.0-w2) *      w3  +
-          values[i  ,j-1,k-1] * (1.0-w1) *      w2  *      w3  +
-          values[i-1,j  ,k  ] *      w1  * (1.0-w2) * (1.0-w3) +
-          values[i  ,j-1,k  ] * (1.0-w1) *      w2  * (1.0-w3) +
-          values[i  ,j  ,k-1] * (1.0-w1) * (1.0-w2) *      w3  +
+   im1 = max(i-1, 0)
+   jm1 = max(j-1, 0)
+   km1 = max(k-1, 0)
+   return(values[im1,jm1,km1] *      w1  *      w2  *      w3  +
+          values[im1,jm1,k  ] *      w1  *      w2  * (1.0-w3) +
+          values[im1,j  ,km1] *      w1  * (1.0-w2) *      w3  +
+          values[i  ,jm1,km1] * (1.0-w1) *      w2  *      w3  +
+          values[im1,j  ,k  ] *      w1  * (1.0-w2) * (1.0-w3) +
+          values[i  ,jm1,k  ] * (1.0-w1) *      w2  * (1.0-w3) +
+          values[i  ,j  ,km1] * (1.0-w1) * (1.0-w2) *      w3  +
           values[i  ,j  ,k  ] * (1.0-w1) * (1.0-w2) * (1.0-w3))
 
 ##############################################################################
@@ -68,7 +71,9 @@ temperatureIn           = fin["temperature"][:]
 MolarFracsIn            = fin["MolarFracs"][:]
 temperatureIn           = fin["temperature"][:]
 
+simTime        = fin.attrs["simTime"]
 channelForcing = fin.attrs["channelForcing"]
+simTime = fin.attrs["simTime"]
 
 nSpec = MolarFracsIn.shape[3]
 
@@ -76,26 +81,38 @@ nSpec = MolarFracsIn.shape[3]
 #                           New Generate Grid                                #
 ##############################################################################
 
+dx0 = 1.0
+dy0 = 1.0
+dz0 = 1.0
+
+if "xDelta0" in config["Grid"]: dx0 = config["Grid"]["xDelta0"]
+if "yDelta0" in config["Grid"]: dy0 = config["Grid"]["yDelta0"]
+if "zDelta0" in config["Grid"]: dz0 = config["Grid"]["zDelta0"]
+   
+
 xGrid, dx = gridGen.GetGrid(config["Grid"]["origin"][0],
                             config["Grid"]["xWidth"],
                             config["Grid"]["xNum"], 
                             config["Grid"]["xType"],
                             config["Grid"]["yStretching"],
-                            args.Xper)
+                            args.Xper,
+                            dx0)
 
 yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yWidth"],
                             config["Grid"]["yNum"], 
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
-                            args.Yper)
+                            args.Yper,
+                            dy0)
 
 zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
                             config["Grid"]["zWidth"],
                             config["Grid"]["zNum"], 
                             config["Grid"]["zType"],
                             config["Grid"]["zStretching"],
-                            args.Zper)
+                            args.Zper,
+                            dz0)
 
 # Load mapping
 Ntiles = config["Mapping"]["tiles"]
@@ -143,13 +160,14 @@ def writeTile(xt, yt, zt):
    temperature       = np.ndarray(shape)
    MolarFracs        = np.ndarray(shape, dtype=np.dtype("("+str(nSpec)+",)f8"))
    velocity          = np.ndarray(shape, dtype=np.dtype("(3,)f8"))
-   dudtBoundary      = np.ndarray(shape)
+   dudtBoundary      = np.ndarray(shape, dtype=np.dtype("(3,)f8"))
    dTdtBoundary      = np.ndarray(shape)
 
+   dudtBoundary[:] = [0.0, 0.0, 0.0]
+   dTdtBoundary[:] = 0.0
    for (k,kc) in enumerate(centerCoordinates):
       kIn = np.searchsorted(zIn, zGrid[k+lo_bound[2]])
       if (kIn == 0):
-         kIn = 1
          zweight = 0.0
       elif (kIn > zIn.size-1):
          kIn = zIn.size-1
@@ -160,7 +178,6 @@ def writeTile(xt, yt, zt):
       for (j,jc) in enumerate(kc):
          jIn = np.searchsorted(yIn, yGrid[j+lo_bound[1]])
          if (jIn == 0):
-            jIn = 1
             yweight = 0.0
          elif (jIn > yIn.size-1):
             jIn = yIn.size-1
@@ -171,7 +188,6 @@ def writeTile(xt, yt, zt):
          for (i,ic) in enumerate(jc):
             iIn = np.searchsorted(xIn, xGrid[i+lo_bound[0]])
             if (iIn == 0):
-               iIn = 1
                xweight = 0.0
             elif (iIn > xIn.size-1):
                iIn = xIn.size-1
@@ -189,13 +205,11 @@ def writeTile(xt, yt, zt):
             velocity         [k,j,i] = [ interp(velocityIn[:,:,:,0], kIn, jIn, iIn, zweight, yweight, xweight),
                                          interp(velocityIn[:,:,:,1], kIn, jIn, iIn, zweight, yweight, xweight),
                                          interp(velocityIn[:,:,:,2], kIn, jIn, iIn, zweight, yweight, xweight)]
-            dudtBoundary     [k,j,i] = 0.0
-            dTdtBoundary     [k,j,i] = 0.0
 
    with h5py.File(os.path.join(args.outputdir, filename), 'w') as fout:
       fout.attrs.create("SpeciesNames", ["MIX".encode()], dtype="S20")
       fout.attrs.create("timeStep", 0)
-      fout.attrs.create("simTime", 0.0)
+      fout.attrs.create("simTime", simTime)
       fout.attrs.create("channelForcing", channelForcing)
 
       fout.create_dataset("centerCoordinates",     shape=shape, dtype = np.dtype("(3,)f8"))
@@ -205,10 +219,8 @@ def writeTile(xt, yt, zt):
       fout.create_dataset("temperature",           shape=shape, dtype = np.dtype("f8"))
       fout.create_dataset("MolarFracs",            shape=shape, dtype = np.dtype("("+str(nSpec)+",)f8"))
       fout.create_dataset("velocity",              shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("f8"))
+      fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("(3,)f8"))
       fout.create_dataset("dTdtBoundary",          shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("velocity_old_NSCBC",    shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("temperature_old_NSCBC", shape=shape, dtype = np.dtype("f8"))
 
       fout["centerCoordinates"][:] = centerCoordinates
       fout["cellWidth"][:] = cellWidth
@@ -219,7 +231,5 @@ def writeTile(xt, yt, zt):
       fout["velocity"][:] = velocity
       fout["dudtBoundary"][:] = dudtBoundary
       fout["dTdtBoundary"][:] = dTdtBoundary
-      fout["velocity_old_NSCBC"][:] = velocity
-      fout["temperature_old_NSCBC"][:] = temperature
 
 Parallel(n_jobs=args.np)(delayed(writeTile)(x, y, z) for x, y, z in np.ndindex((Ntiles[0], Ntiles[1], Ntiles[2])))

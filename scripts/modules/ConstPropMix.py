@@ -4,12 +4,12 @@ def GetDensity(T, P, config):
    return P/(T*config["Flow"]["gasConstant"])
 
 def GetViscosity(T, config):
-   if (config["Flow"]["viscosityModel"] == "Constant"):
-      viscosity = config["Flow"]["constantVisc"]
-   elif (config["Flow"]["viscosityModel"] == "PowerLaw"):
-      viscosity = config["Flow"]["powerlawViscRef"]*(T/config["Flow"]["powerlawTempRef"])**0.7
-   elif (config["Flow"]["viscosityModel"] == "Sutherland"):
-      viscosity = (config["Flow"]["sutherlandViscRef"]*(T/config["Flow"]["sutherlandTempRef"])**1.5)*(config["Flow"]["sutherlandTempRef"]+config["Flow"]["sutherlandSRef"])/(T+config["Flow"]["sutherlandSRef"])
+   if (config["Flow"]["viscosityModel"]["type"] == "Constant"):
+      viscosity = config["Flow"]["viscosityModel"]["Visc"]
+   elif (config["Flow"]["viscosityModel"]["type"] == "PowerLaw"):
+      viscosity = config["Flow"]["viscosityModel"]["ViscRef"]*(T/config["Flow"]["viscosityModel"]["TempRef"])**0.7
+   elif (config["Flow"]["viscosityModel"]["type"] == "Sutherland"):
+      viscosity = (config["Flow"]["viscosityModel"]["ViscRef"]*(T/config["Flow"]["viscosityModel"]["TempRef"])**1.5)*(config["Flow"]["viscosityModel"]["TempRef"]+config["Flow"]["viscosityModel"]["SRef"])/(T+config["Flow"]["viscosityModel"]["SRef"])
    else: 
       assert False
    return viscosity

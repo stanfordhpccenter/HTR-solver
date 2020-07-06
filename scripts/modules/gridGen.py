@@ -20,6 +20,22 @@ def GetGridFaces(Origin, Width, Num, Type, stretching, dx=1, xswitch=1, switch=1
       x = np.linspace( 0.0, 1.0, Num+1)
       x = np.tanh(stretching*x)/np.tanh(stretching)
       x = Width*x+Origin
+   elif (Type == 'Tanh'):
+      x = np.linspace(-1.0, 1.0, Num+1)
+      x = np.tanh(stretching*x)/np.tanh(stretching)
+      x = 0.5*Width*(x+1.0)+Origin
+   elif (Type == 'SinhMinus'):
+      x = np.linspace( 0.0, 1.0, Num+1)
+      x = np.sinh(stretching*x)/np.sinh(stretching)
+      x = Width*x+Origin
+   elif (Type == 'SinhPlus'):
+      x = np.linspace(-1.0, 0.0, Num+1)
+      x = np.sinh(stretching*x)/np.sinh(stretching)
+      x = Width*(x+1.0)+Origin
+   elif (Type == 'Sinh'):
+      x = np.linspace(-1.0, 1.0, Num+1)
+      x = np.sinh(stretching*x)/np.sinh(stretching)
+      x = 0.5*Width*(x+1.0)+Origin
    elif (Type == 'GeometricMinus'):
       assert dx<Width
       def GenGeomMinus(stretch):
@@ -47,10 +63,6 @@ def GetGridFaces(Origin, Width, Num, Type, stretching, dx=1, xswitch=1, switch=1
          return x[0]-Origin
       stretch, = fsolve(objectiveGeomPlus, stretching)
       x = GenGeomPlus(stretch)
-   elif (Type == 'Tanh'):
-      x = np.linspace(-1.0, 1.0, Num+1)
-      x = np.tanh(stretching*x)/np.tanh(stretching)
-      x = 0.5*Width*(x+1.0)+Origin
    elif (Type == 'DoubleGeometricMinus'):
       assert dx<Width
       def GenDoubleGeomMinus(stretch):

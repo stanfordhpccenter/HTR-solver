@@ -40,7 +40,7 @@ def process(case):
    yNum = data["Grid"]["yNum"]
    xWidth  = data["Grid"]["xWidth"]
    yWidth  = data["Grid"]["yWidth"]
-   constantVisc = data["Flow"]["constantVisc"]
+   constantVisc = data["Flow"]["viscosityModel"]["Visc"]
 
    Area = xWidth*yWidth
 

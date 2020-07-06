@@ -101,6 +101,8 @@ function run_sapling {
     fi
     # Synthesize final command
     CORES_PER_NODE=12
+    RESERVED_CORES=4
+    NUMA_PER_RANK=2
     RAM_PER_NODE=30000
     GPUS_PER_NODE=2
     FB_PER_GPU=5000
@@ -134,6 +136,29 @@ function run_quartz {
    # 18 cores per NUMA domain
 }
 
+function run_galileo {
+    export QUEUE="${QUEUE:-gll_usr_gpuprod}"
+    RESOURCES=
+    if [[ "$QUEUE" == "gll_usr_gpuprod" ]]; then
+        RESOURCES="gpu:kepler:2"
+    fi
+    DEPS=
+    if [[ ! -z "$AFTER" ]]; then
+        DEPS="-d afterok:$AFTER"
+    fi
+    CORES_PER_RANK=$(( 36/$RANKS_PER_NODE ))
+    sbatch --export=ALL \
+        -N "$NUM_RANKS" -t "$WALLTIME" -p "$QUEUE" --gres="$RESOURCES" $DEPS \
+        --ntasks-per-node="$RANKS_PER_NODE" --cpus-per-task="$CORES_PER_RANK" \
+        --account="$ACCOUNT" \
+        "$HTR_DIR"/src/galileo.slurm
+   # Resources:
+   # 118GB RAM per node
+   # 2 NUMA domains per node
+   # 18 cores per NUMA domain
+   # 1 nVidia K80 GPUs (seen as two K40 gpus)
+}
+
 function run_local {
     if (( NUM_NODES > 1 )); then
         quit "Too many nodes requested"
@@ -142,6 +167,7 @@ function run_local {
     LOCAL_RUN=1
     USE_CUDA=0
     RESERVED_CORES=2
+    NUMA_PER_RANK=1
     # Synthesize final command
     CORES_PER_NODE="$(grep ^cpu\\scores /proc/cpuinfo | uniq |  awk '{print $4}')"
     RAM_PER_NODE="$(free -m | head -2 | tail -1 | awk '{print $2}')"
@@ -162,6 +188,8 @@ elif [[ "$(uname -n)" == *"sapling"* ]]; then
     run_sapling
 elif [[ "$(uname -n)" == *"quartz"* ]]; then
     run_quartz
+elif [[ "$(uname -n)" == *"r033c01s"* ]]; then
+    run_galileo
 else
     echo 'Hostname not recognized; assuming local machine run w/o GPUs'
     run_local

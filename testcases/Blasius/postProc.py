@@ -57,12 +57,12 @@ def process():
    yOrigin = data["Grid"]["origin"][1]
 
    R = data["Flow"]["gasConstant"]
-   mu = data["Flow"]["constantVisc"]
+   mu = data["Flow"]["viscosityModel"]["Visc"]
 
-   T = data["BC"]["xBCLeftHeat"]["temperature"]
-   P = data["BC"]["xBCLeftP"]
-   U = data["BC"]["xBCLeftInflowProfile"]["velocity"]
-   Re = data["BC"]["xBCLeftInflowProfile"]["Reynolds"]
+   T  = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
+   P  = data["BC"]["xBCLeft"]["P"]
+   U  = data["BC"]["xBCLeft"]["VelocityProfile"]["velocity"]
+   Re = data["BC"]["xBCLeft"]["VelocityProfile"]["Reynolds"]
 
    Rho = P/(R*T)
    nu = mu/Rho

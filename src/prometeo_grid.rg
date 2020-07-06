@@ -203,6 +203,27 @@ task transform_uniform_to_nonuniform(x : double,
       var x_non_uniform_minus1_to_plus1 = tanh(Grid_Stretching*x_scaled_minus1_to_plus1)/tanh(Grid_Stretching)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_minus1_to_plus1, -1.0, 1.0, x_min, x_max)
+   elseif (Grid_Type == SCHEMA.GridType_SinhMinus) then
+      -- map x onto the interval 0 to 1
+      var x_scaled_zero_to_plus1 = linear_interpolation(x, x_min, x_max, 0.0, 1.0)
+      -- map non-uniformly onto the interval 0 to 1
+      var x_non_uniform_zero_to_plus1 = sinh(Grid_Stretching*x_scaled_zero_to_plus1)/sinh(Grid_Stretching)
+      -- map non-uniform sample back to origional interval x_min to x_max
+      transformed = linear_interpolation(x_non_uniform_zero_to_plus1, 0.0, 1.0, x_min, x_max)
+   elseif (Grid_Type == SCHEMA.GridType_SinhPlus) then
+      -- map x onto the interval -1 to 0
+      var x_scaled_minus1_to_zero = linear_interpolation(x, x_min, x_max, -1.0, 0.0)
+      -- map non-uniformly onto the interval -1 to 0
+      var x_non_uniform_minus1_to_zero = sinh(Grid_Stretching*x_scaled_minus1_to_zero)/sinh(Grid_Stretching)
+      -- map non-uniform sample back to origional interval x_min to x_max
+      transformed = linear_interpolation(x_non_uniform_minus1_to_zero, -1.0, 0.0, x_min, x_max)
+   elseif (Grid_Type == SCHEMA.GridType_Sinh) then
+      -- map x onto the interval -1 to 1
+      var x_scaled_minus1_to_plus1 = linear_interpolation(x, x_min, x_max, -1.0, 1.0)
+      -- map non-uniformly onto the interval -1 to 1
+      var x_non_uniform_minus1_to_plus1 = sinh(Grid_Stretching*x_scaled_minus1_to_plus1)/sinh(Grid_Stretching)
+      -- map non-uniform sample back to origional interval x_min to x_max
+      transformed = linear_interpolation(x_non_uniform_minus1_to_plus1, -1.0, 1.0, x_min, x_max)
    end
    return  transformed
 end

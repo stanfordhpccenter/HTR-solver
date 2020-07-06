@@ -160,6 +160,35 @@ end
 --                                    avgFluidT)];
 --end
 
+-- regentlib.rexpr, regentlib.rexpr, regentlib.rexpr* -> regentlib.rquote
+local function emitTimingWrite(config_Mapping, format, ...)
+   local args = terralib.newlist{...}
+   return rquote
+      var consoleFile = [&int8](C.malloc(256))
+      C.snprintf(consoleFile, 256, '%s/timing.txt', config_Mapping.outDir)
+      var console = UTIL.openFile(consoleFile, 'a')
+      C.free(consoleFile)
+      C.fprintf(console, format, [args])
+      C.fflush(console)
+      C.fclose(console)
+   end
+end
+
+-- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Exports.Console_WriteTiming( _ : int,
+                                  config_Mapping : SCHEMA.MappingStruct,
+                                  taskname : regentlib.string,
+                                  line : int,
+                                  currTime : uint64)
+   [emitTimingWrite(config_Mapping,
+                    "TIMING: %s task is on line %d at time %llu.%06llu\n",
+                    taskname,
+                    line,
+                    rexpr currTime / 1000000 end,
+                    rexpr currTime % 1000000 end)];
+   return _
+end
+
 -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.createDir(dirname : regentlib.string)
    UTIL.createDir(dirname)

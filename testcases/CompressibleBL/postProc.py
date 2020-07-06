@@ -35,28 +35,24 @@ yOrigin = data["Grid"]["origin"][1]
 
 gamma = data["Flow"]["gamma"]
 R     = data["Flow"]["gasConstant"]
-muRef = data["Flow"]["powerlawViscRef"]
-TRef  = data["Flow"]["powerlawTempRef"]
 Pr    = data["Flow"]["prandtl"]
 
-TInf = data["BC"]["xBCLeftHeat"]["temperature"]
-Tw = data["BC"]["yBCLeftHeat"]["temperature"]
-P = data["BC"]["xBCLeftP"]
-U = data["BC"]["xBCLeftInflowProfile"]["velocity"]
-Re = data["BC"]["xBCLeftInflowProfile"]["Reynolds"]
+TInf = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
+Tw   = data["BC"]["yBCLeft"]["TemperatureProfile"]["temperature"]
+P    = data["BC"]["xBCLeft"]["P"]
+U    = data["BC"]["xBCLeft"]["VelocityProfile"]["velocity"]
+Re   = data["BC"]["xBCLeft"]["VelocityProfile"]["Reynolds"]
 
 aInf = np.sqrt(gamma*R*TInf)
 MaInf = U/aInf
-
-def visc(T):
-   return muRef*(T/TRef)**0.7
 
 ##############################################################################
 #                            Process result file                             #
 ##############################################################################
 def process(frac):
-   RhoInf = P/(R*TInf)
-   nuInf = visc(TInf)/RhoInf
+   RhoInf = ConstPropMix.GetDensity(TInf, P, data)
+   muInf = ConstPropMix.GetViscosity(TInf, data)
+   nuInf = muInf/RhoInf
 
    dt    = data["Integrator"]["fixedDeltaTime"]
    nstep = int(data["Integrator"]["maxIter"])
@@ -118,7 +114,7 @@ def process(frac):
    for i in range(y.size) :
       if (i > 0) :
          rhoMid = 0.5*(rho[i] + rho[i-1])
-         eta[i] = eta[i-1] + U/(visc(TInf)*np.sqrt(2*myRe))*rhoMid*(y[i] - y[i-1])
+         eta[i] = eta[i-1] + U/(muInf*np.sqrt(2*myRe))*rhoMid*(y[i] - y[i-1])
 
    return eta, u/U, v*np.sqrt(2.0*myRe)/U, T/TInf, p
 

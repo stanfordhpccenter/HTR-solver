@@ -157,33 +157,32 @@ config["Grid"]["zWidth"] *= deltaStarIn
 ##############################################################################
 #                            Boundary conditions                             #
 ##############################################################################
-assert config["BC"]["xBCLeft"] == "NSCBC_Inflow"
-assert config["BC"]["xBCLeftInflowProfile"]["type"] == "File"
-config["BC"]["xBCLeftInflowProfile"]["FileDir"] = restartDir
-assert config["BC"]["xBCLeftHeat"]["type"] == "File"
-config["BC"]["xBCLeftHeat"]["FileDir"] = restartDir
-config["BC"]["xBCLeftP"] = PInf
+assert config["BC"]["xBCLeft"]["type"] == "NSCBC_Inflow"
+assert config["BC"]["xBCLeft"]["VelocityProfile"]["type"] == "File"
+config["BC"]["xBCLeft"]["VelocityProfile"]["FileDir"] = restartDir
+assert config["BC"]["xBCLeft"]["TemperatureProfile"]["type"] == "File"
+config["BC"]["xBCLeft"]["TemperatureProfile"]["FileDir"] = restartDir
+config["BC"]["xBCLeft"]["P"] = PInf
 
-assert config["BC"]["xBCRight"] == "NSCBC_Outflow"
-config["BC"]["xBCRightP"] = PInf
+assert config["BC"]["xBCRight"]["type"] == "NSCBC_Outflow"
+config["BC"]["xBCRight"]["P"] = PInf
 
-assert config["BC"]["yBCLeft"] == "SuctionAndBlowingWall"
-assert config["BC"]["yBCLeftHeat"]["type"] == "Constant"
-config['BC']["yBCLeftHeat"]["temperature"] = Tw
-assert config["BC"]["yBCLeftInflowProfile"]["type"] == "SuctionAndBlowing"
+assert config["BC"]["yBCLeft"]["type"] == "SuctionAndBlowingWall"
+assert config["BC"]["yBCLeft"]["TemperatureProfile"]["type"] == "Constant"
+config['BC']["yBCLeft"]["TemperatureProfile"]["temperature"] = Tw
 
-config["BC"]["yBCLeftInflowProfile"]["Xmin"]  = 15*deltaStarIn + x0
-config["BC"]["yBCLeftInflowProfile"]["Xmax"]  = 20*deltaStarIn + x0
-config["BC"]["yBCLeftInflowProfile"]["X0"]    = 0.5*(config["BC"]["yBCLeftInflowProfile"]["Xmin"] + config["BC"]["yBCLeftInflowProfile"]["Xmax"])
-config["BC"]["yBCLeftInflowProfile"]["sigma"] = 0.3*(config["BC"]["yBCLeftInflowProfile"]["X0"] - config["BC"]["yBCLeftInflowProfile"]["Xmin"])
-config["BC"]["yBCLeftInflowProfile"]["Zw"]    = 0.1*config["Grid"]["zWidth"]
+config["BC"]["yBCLeft"]["Xmin"]  = 15*deltaStarIn + x0
+config["BC"]["yBCLeft"]["Xmax"]  = 20*deltaStarIn + x0
+config["BC"]["yBCLeft"]["X0"]    = 0.5*(config["BC"]["yBCLeft"]["Xmin"] + config["BC"]["yBCLeft"]["Xmax"])
+config["BC"]["yBCLeft"]["sigma"] = 0.3*(config["BC"]["yBCLeft"]["X0"] - config["BC"]["yBCLeft"]["Xmin"])
+config["BC"]["yBCLeft"]["Zw"]    = 0.1*config["Grid"]["zWidth"]
 
-config["BC"]["yBCLeftInflowProfile"]["A"]     = [ 0.05*UInf, 0.05*UInf]
-config["BC"]["yBCLeftInflowProfile"]["omega"] = [ 0.9*cInf/deltaStarIn, 0.9*cInf/deltaStarIn]
-config["BC"]["yBCLeftInflowProfile"]["beta"]  = [ 0.3/deltaStarIn, -0.3/deltaStarIn]
+config["BC"]["yBCLeft"]["A"]     = [ 0.05*UInf, 0.05*UInf]
+config["BC"]["yBCLeft"]["omega"] = [ 0.9*cInf/deltaStarIn, 0.9*cInf/deltaStarIn]
+config["BC"]["yBCLeft"]["beta"]  = [ 0.3/deltaStarIn, -0.3/deltaStarIn]
 
-assert config["BC"]["yBCRight"] == "NSCBC_Outflow"
-config["BC"]["yBCRightP"] = PInf
+assert config["BC"]["yBCRight"]["type"] == "NSCBC_Outflow"
+config["BC"]["yBCRight"]["P"] = PInf
 
 ##############################################################################
 #                              Generate Grid                                 #
@@ -291,9 +290,11 @@ def writeTile(xt, yt, zt):
    temperature       = np.ndarray(shape)
    MolarFracs        = np.ndarray(shape, dtype=np.dtype('(1,)f8'))
    velocity          = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   dudtBoundary      = np.ndarray(shape)
+   dudtBoundary      = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
    dTdtBoundary      = np.ndarray(shape)
    pressure[:] = PInf
+   dudtBoundary[:] = [0.0, 0.0, 0.0]
+   dTdtBoundary[:] = 0.0
    for (k,kc) in enumerate(centerCoordinates):
       for (j,jc) in enumerate(kc):
          for (i,ic) in enumerate(jc):
@@ -325,10 +326,8 @@ def writeTile(xt, yt, zt):
       fout.create_dataset("temperature",           shape=shape, dtype = np.dtype("f8"))
       fout.create_dataset("MolarFracs",            shape=shape, dtype = np.dtype("(1,)f8"))
       fout.create_dataset("velocity",              shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("f8"))
+      fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("(3,)f8"))
       fout.create_dataset("dTdtBoundary",          shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("velocity_old_NSCBC",    shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("temperature_old_NSCBC", shape=shape, dtype = np.dtype("f8"))
       fout.create_dataset("MolarFracs_profile",    shape=shape, dtype = np.dtype("(1,)f8"))
       fout.create_dataset("velocity_profile",      shape=shape, dtype = np.dtype("(3,)f8"))
       fout.create_dataset("temperature_profile",   shape=shape, dtype = np.dtype("f8"))
@@ -342,8 +341,6 @@ def writeTile(xt, yt, zt):
       fout["velocity"][:] = velocity
       fout["dudtBoundary"][:] = dudtBoundary
       fout["dTdtBoundary"][:] = dTdtBoundary
-      fout["velocity_old_NSCBC"][:] = velocity
-      fout["temperature_old_NSCBC"][:] = temperature
       fout["MolarFracs_profile"][:] = MolarFracs
       fout["velocity_profile"][:] = velocity
       fout["temperature_profile"][:] = temperature

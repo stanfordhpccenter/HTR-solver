@@ -53,6 +53,127 @@ local Primitives   = CONST.Primitives
 local ProfilesVars = CONST.ProfilesVars
 
 -------------------------------------------------------------------------------
+-- CHECK FUNCTIONS
+-------------------------------------------------------------------------------
+function Exports.CheckNSCBC_Inflow(BC, NSCBC_Inflow)
+   return rquote
+      -- Check velocity profile
+      if NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
+         -- Do nothing
+      elseif NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_File then
+         BC.readProfiles = true
+         BC.ProfilesDir = NSCBC_Inflow.VelocityProfile.u.File.FileDir
+      elseif NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming InflowProfile not supported')
+      else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
+
+      -- Check temperature profile
+      if NSCBC_Inflow.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+         -- Do nothing
+      elseif NSCBC_Inflow.TemperatureProfile.type == SCHEMA.TempProfile_File then
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, NSCBC_Inflow.TemperatureProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = NSCBC_Inflow.TemperatureProfile.u.File.FileDir
+         end
+      elseif NSCBC_Inflow.TemperatureProfile.type == SCHEMA.TempProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming heat model not supported')
+      else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
+
+      -- Check mixture profile
+      if NSCBC_Inflow.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
+         -- Do nothing
+      elseif NSCBC_Inflow.MixtureProfile.type == SCHEMA.MixtureProfile_File then
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, NSCBC_Inflow.MixtureProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = NSCBC_Inflow.MixtureProfile.u.File.FileDir
+         end
+      elseif NSCBC_Inflow.MixtureProfile.type == SCHEMA.MixtureProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming mixture model not supported')
+
+      else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+   end
+end
+
+function Exports.CheckDirichlet(BC, Dirichlet)
+   return rquote
+      -- Check velocity profile
+      if Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
+         -- Do nothing
+      elseif Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_File then
+         BC.readProfiles = true
+         BC.ProfilesDir = Dirichlet.VelocityProfile.u.File.FileDir
+      elseif Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming InflowProfile not supported')
+      else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
+
+      -- Check temperature profile
+      if Dirichlet.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+         -- Do nothing
+      elseif Dirichlet.TemperatureProfile.type == SCHEMA.TempProfile_File then
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, Dirichlet.TemperatureProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = Dirichlet.TemperatureProfile.u.File.FileDir
+         end
+      elseif Dirichlet.TemperatureProfile.type == SCHEMA.TempProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming heat model not supported')
+      else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
+
+      -- Check mixture profile
+      if Dirichlet.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
+         -- Do nothing
+      elseif Dirichlet.MixtureProfile.type == SCHEMA.MixtureProfile_File then
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, Dirichlet.MixtureProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = Dirichlet.MixtureProfile.u.File.FileDir
+         end
+      elseif Dirichlet.MixtureProfile.type == SCHEMA.MixtureProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming mixture model not supported')
+
+      else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+   end
+end
+
+function Exports.CheckIsothermalWall(IsothermalWall)
+   return rquote
+      if IsothermalWall.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+         -- Do nothing
+      else
+         regentlib.assert(false, 'Only constant heat model supported')
+      end
+   end
+end
+
+function Exports.CheckSuctionAndBlowingWall(SuctionAndBlowingWall)
+   return rquote
+      regentlib.assert(SuctionAndBlowingWall.A.length == SuctionAndBlowingWall.omega.length,
+                      "Equal number of amplitudes and frequencies must be specified")
+
+      regentlib.assert(SuctionAndBlowingWall.A.length == SuctionAndBlowingWall.beta.length,
+                      "Equal number of amplitudes and spanwise wave numbers must be specified")
+
+      if SuctionAndBlowingWall.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+         -- Do nothing
+      else
+         regentlib.assert(false, 'Only constant heat model supported')
+      end
+   end
+end
+
+-------------------------------------------------------------------------------
 -- BC ROUTINES
 -------------------------------------------------------------------------------
 -- Set up stuff for RHS of NSCBC inflow
@@ -62,7 +183,7 @@ task Exports.InitializeGhostNSCBC(Fluid : region(ispace(int3d), Fluid_columns),
                                   mix : MIX.Mixture)
 where
    reads(Fluid.[Primitives]),
-   writes(Fluid.{velocity_old_NSCBC, temperature_old_NSCBC, dudtBoundary, dTdtBoundary})
+   writes(Fluid.{velocity_old_NSCBC, temperature_old_NSCBC})
 do
    var BC   = Fluid_BC[0]
 
@@ -70,8 +191,6 @@ do
    for c in BC do
       BC[c].velocity_old_NSCBC = BC[c].velocity
       BC[c].temperature_old_NSCBC = BC[c].temperature
-      BC[c].dudtBoundary = 0.0
-      BC[c].dTdtBoundary= 0.0
    end
 end
 
@@ -353,12 +472,12 @@ task Exports.UpdateGhostPrimitives(Fluid : region(ispace(int3d), Fluid_columns),
 where
    reads writes(Fluid)
 do
-   var BC_xBCLeft  = config.BC.xBCLeft
-   var BC_xBCRight = config.BC.xBCRight
-   var BC_yBCLeft  = config.BC.yBCLeft
-   var BC_yBCRight = config.BC.yBCRight
-   var BC_zBCLeft  = config.BC.zBCLeft
-   var BC_zBCRight = config.BC.zBCRight
+   var BC_xBCLeft  = config.BC.xBCLeft.type
+   var BC_xBCRight = config.BC.xBCRight.type
+   var BC_yBCLeft  = config.BC.yBCLeft.type
+   var BC_yBCRight = config.BC.yBCRight.type
+   var BC_zBCLeft  = config.BC.zBCLeft.type
+   var BC_zBCRight = config.BC.zBCRight.type
    var {p_All, p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos} = Fluid_Partitions
 
    -- Start updating BCs that are local
@@ -366,12 +485,12 @@ do
    if (BC_xBCLeft == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in tiles do
-         SetDirichletBC(p_All[c], p_xNeg[c], config.BC.xBCLeftP)
+         SetDirichletBC(p_All[c], p_xNeg[c], config.BC.xBCLeft.u.Dirichlet.P)
       end
    elseif (BC_xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) then
       __demand(__index_launch)
       for c in tiles do
-         [mkSetNSCBC_InflowBC("x")](p_All[c], p_xNeg[c], Mix, config.BC.xBCLeftP)
+         [mkSetNSCBC_InflowBC("x")](p_All[c], p_xNeg[c], Mix, config.BC.xBCLeft.u.NSCBC_Inflow.P)
       end
    end
 
@@ -379,7 +498,7 @@ do
    if (BC_xBCRight == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in tiles do
-         SetDirichletBC(p_All[c], p_xPos[c], config.BC.xBCRightP)
+         SetDirichletBC(p_All[c], p_xPos[c], config.BC.xBCRight.u.Dirichlet.P)
       end
    elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       __demand(__index_launch)
@@ -392,7 +511,12 @@ do
    if (BC_yBCLeft == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in tiles do
-         SetDirichletBC(p_All[c], p_yNeg[c], config.BC.yBCLeftP)
+         SetDirichletBC(p_All[c], p_yNeg[c], config.BC.yBCLeft.u.Dirichlet.P)
+      end
+   elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      __demand(__index_launch)
+      for c in tiles do
+         SetNSCBC_OutflowBC(p_All[c], p_yNeg[c], Mix)
       end
    end
 
@@ -400,7 +524,7 @@ do
    if (BC_yBCRight == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in tiles do
-         SetDirichletBC(p_All[c], p_yPos[c], config.BC.yBCRightP)
+         SetDirichletBC(p_All[c], p_yPos[c], config.BC.yBCRight.u.Dirichlet.P)
       end
    elseif (BC_yBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       __demand(__index_launch)
@@ -413,7 +537,7 @@ do
    if (BC_zBCLeft == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in tiles do
-         SetDirichletBC(p_All[c], p_zNeg[c], config.BC.zBCLeftP)
+         SetDirichletBC(p_All[c], p_zNeg[c], config.BC.zBCLeft.u.Dirichlet.P)
       end
    end
 
@@ -421,7 +545,7 @@ do
    if (BC_zBCRight == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in tiles do
-         SetDirichletBC(p_All[c], p_zPos[c], config.BC.zBCRightP)
+         SetDirichletBC(p_All[c], p_zPos[c], config.BC.zBCRight.u.Dirichlet.P)
       end
    end
 
@@ -441,15 +565,15 @@ do
       __demand(__index_launch)
       for c in tiles do
          [mkSetSuctionAndBlowingWallBC("yNeg")](p_All[c], p_yNeg[c],
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.Xmin,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.Xmax,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.X0,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.sigma,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.Zw,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.A.length,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.A.values,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.omega.values,
-                                                config.BC.yBCLeftInflowProfile.u.SuctionAndBlowing.beta.values,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.Xmin,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.Xmax,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.X0,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.sigma,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.Zw,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.A.length,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.A.values,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.omega.values,
+                                                config.BC.yBCLeft.u.SuctionAndBlowingWall.beta.values,
                                                 config.Grid.zWidth,
                                                 config.Grid.origin[2],
                                                 Integrator_simTime)
@@ -493,13 +617,15 @@ task Exports.UpdateNSCBCGhostCellTimeDerivatives(Fluid : region(ispace(int3d), F
                                                  Integrator_deltaTime : double)
 where
   reads(Fluid.{velocity, temperature}),
-  writes(Fluid.{dudtBoundary, dTdtBoundary}),
+  reads writes(Fluid.{dudtBoundary, dTdtBoundary}),
   reads writes(Fluid.{velocity_old_NSCBC, temperature_old_NSCBC})
 do
    var BC   = Fluid_BC[0]
    __demand(__openmp)
    for c in BC do
-      BC[c].dudtBoundary = (BC[c].velocity[0] - BC[c].velocity_old_NSCBC[0]) / Integrator_deltaTime
+      for i=1, 3 do
+         BC[c].dudtBoundary[i] = (BC[c].velocity[i] - BC[c].velocity_old_NSCBC[i]) / Integrator_deltaTime
+      end
       BC[c].dTdtBoundary = (BC[c].temperature - BC[c].temperature_old_NSCBC) / Integrator_deltaTime
       BC[c].velocity_old_NSCBC    = BC[c].velocity
       BC[c].temperature_old_NSCBC = BC[c].temperature

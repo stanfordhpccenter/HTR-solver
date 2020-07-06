@@ -1,0 +1,195 @@
+###
+### Variables
+###
+
+# Global variables (will be set in every job):
+variables:
+   MAX_DIM: "4"
+   LEGION_BRANCH: "parallelizer-dcr-new"
+   HTR_DIR: "$CI_PROJECT_DIR"
+   REALM_BACKTRACE: "1"
+#  TIMELIMIT: "600"  # each test should take less than 10 minutes
+
+# Local variables (included on a case-by-case basis in each job):
+#.gcc48: &gcc48
+#  CXX: "g++-4.8"
+#.gcc49: &gcc49
+#  CXX: "g++-4.9"
+#.gcc5: &gcc5
+#  CXX: "g++-5"
+#.gcc6: &gcc6
+#  CXX: "g++-6"
+#.gcc7: &gcc7
+#  CXX: "g++-7"
+#.gcc8: &gcc8
+#  CXX: "g++-8"
+#
+#.clang35: &clang35
+#  CXX: "clang++-3.5"
+#.clang38: &clang38
+#  CXX: "clang++-3.8"
+#.clang7: &clang7
+#  CXX: "clang++-7"
+#.clang8: &clang8
+#  CXX: "clang++-8"
+#
+#.terra35: &terra35
+#  LLVM_CONFIG: "llvm-config-3.5"
+#  TERRA_DIR: "/usr/local/terra35"
+#.terra38: &terra38
+#  LLVM_CONFIG: "llvm-config-3.8"
+#  TERRA_DIR: "/usr/local/terra38"
+#.terra70: &terra70
+#  LLVM_CONFIG: "llvm-config-7"
+#  TERRA_DIR: "/usr/local/terra70"
+
+.debug: &debug
+  DEBUG: "1"
+.release: &release
+  DEBUG: "0"
+
+.openmp: &openmp
+  USE_OPENMP: "1"
+.hdf5: &hdf5
+  USE_HDF: "1"
+.llvm: &llvm
+  USE_LLVM: "1"
+.cuda: &cuda
+  USE_CUDA: "1"
+.gasnet: &gasnet
+  USE_GASNET: "1"
+
+.prof: &prof
+  USE_PROF: "1"
+
+###
+### Setup
+###
+
+# These commands will run before each job.
+before_script:
+   - |
+      if [[ "$(hostname)" = ctr-205-1.stanford.edu ]]; then
+         module load mpi/mpich-3.0-x86_64
+         export CC=mpicc
+         export CXX=mpicxx
+         export LEGION_DIR=/home/gitlab-runner/legion
+         export HDF_ROOT=$LEGION_DIR/language/hdf/install
+         export USE_GASNET=0
+         export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent:$LEGION_DIR/language/hdf/install/lib"
+         cd $HTR_DIR
+      fi
+
+   # Make sure that we are running the last version of Legion
+   - |
+      cd $LEGION_DIR/language
+      git fetch
+      LOCAL0=$(git rev-parse @)
+      git checkout $LEGION_BRANCH
+      UPSTREAM=${1:-'@{u}'}
+      LOCAL=$(git rev-parse @)
+      REMOTE=$(git rev-parse "$UPSTREAM")
+      if [ $LOCAL != $REMOTE ]; then
+         echo "Updating Legion"
+         git reset --hard $REMOTE
+         scripts/setup_env.py --llvm-version 38
+      elif [ $LOCAL != $LOCAL0 ]; then
+         echo "Building Legion on the new branch"
+         scripts/setup_env.py --llvm-version 38
+      fi
+      cd $HTR_DIR
+
+
+###
+### Tags
+###
+
+.ctr-205-1: &ctr-205-1
+   tags:
+      - centos7
+      - ctr-205-1
+
+###
+### Docker Image
+###
+
+# Each job will run in a fresh container with this image.
+#.image: &image
+#  image: stanfordlegion/gitlab-ci:ubuntu16.04 # i.e. https://hub.docker.com/r/stanfordlegion/gitlab-ci/
+
+###
+### Tests
+###
+
+# Unit tests that check the solver component by component.
+.unitTests: &unitTests
+   script:
+      - cd unitTests/configTest
+      - make
+      - ./configTest.exec
+      - cd ../..
+
+      - cd unitTests/mathUtilsTest
+      - make
+      - ./mathUtilsTest.exec
+      - cd ../..
+
+      - cd unitTests/hdfTest
+      - make
+      - ./hdfTest.exec
+      - cd ../..
+
+      - cd unitTests/mixTest
+      - make
+      - ./mixTest.exec
+      - cd ../..
+
+      - cd unitTests/geometryTest
+      - make
+      - ./geometryTest.exec
+      - cd ../..
+
+      - cd unitTests/metricTest
+      - make -j
+      - ./metricTest_Periodic.exec
+      - ./metricTest_Collocated.exec
+      - ./metricTest_Staggered.exec
+      - cd ../..
+
+      - cd unitTests/cflTest
+      - make
+      - ./cflTest.exec
+      - cd ../..
+
+      - cd unitTests/chemTest
+      - make
+      - ./chemTest.exec
+      - cd ../..
+
+      - cd unitTests/variablesTest
+      - make
+      - ./variablesTest.exec
+      - cd ../..
+
+.solverTests: &solverTests
+   script:
+      - NO_ATOMIC=1 make -j -C src/
+      - cd solverTests
+      - python ./test.py
+      - cd ../..
+
+###
+### Jobs
+###
+
+# Each item below defines a job.
+
+ctr-205-1_release_unitTests:
+   <<: [*ctr-205-1, *unitTests]
+   variables:
+      <<: [*release, *openmp, *hdf5]
+
+ctr-205-1_release_solverTests:
+   <<: [*ctr-205-1, *solverTests]
+   variables:
+      <<: [*release, *openmp, *hdf5]

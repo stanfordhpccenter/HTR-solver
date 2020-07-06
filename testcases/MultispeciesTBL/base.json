@@ -47,111 +47,47 @@
    },
 
    "BC" : {
-      "xBCLeft" : "NSCBC_Inflow",
-      "xBCLeftInflowProfile" : {
-         "type" : "File",
-         "FileDir" : ""
-      },
-      "xBCLeftP" : -1.0,
-      "xBCLeftHeat" : {
-         "type" : "File",
-         "FileDir" : ""
-      },
-      "xBCLeftMixture" : {
-         "type" : "File",
-         "FileDir" : ""
-      },
-      "xBCRight" : "NSCBC_Outflow",
-      "xBCRightInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "xBCRightP" : -1.0,
-      "xBCRightHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "xBCRightMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
-                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+      "xBCLeft" : {
+         "type" : "NSCBC_Inflow",
+         "VelocityProfile" : {
+            "type" : "File",
+            "FileDir" : ""
+         },
+         "P" : -1.0,
+         "TemperatureProfile" : {
+            "type" : "File",
+            "FileDir" : ""
+         },
+         "MixtureProfile" : {
+            "type" : "File",
+            "FileDir" : ""
          }
       },
-      "yBCLeft" : "SuctionAndBlowingWall",
-      "yBCLeftInflowProfile" : {
-         "type" : "SuctionAndBlowing",
+      "xBCRight" : {
+         "type" : "NSCBC_Outflow",
+         "P" : -1.0
+      },
+      "yBCLeft" : {
+         "type" : "SuctionAndBlowingWall",
          "Xmin" : 0.0,
          "Xmax" : 0.0,
          "X0" : 0.0,
          "sigma" : 0.0,
          "A" : [0.0, 0.0, 0.0],
          "omega" : [0.0, 0.0, 0.0],
-         "beta" : [0.0, 0.0, 0.0]
-      },
-      "yBCLeftP" : -1.0,
-      "yBCLeftHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "yBCLeftMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
-                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         "beta" : [0.0, 0.0, 0.0],
+         "P" : -1.0,
+         "TemperatureProfile" : {
+            "type" : "Constant",
+            "temperature" : -1.0
          }
       },
-      "yBCRight" : "NSCBC_Outflow",
-      "yBCRightInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
+      "yBCRight" : {
+         "type" : "NSCBC_Outflow",
+         "P" : -1.0
       },
-      "yBCRightP" : -1.0,
-      "yBCRightHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "yBCRightMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
-                         {"Name" : "O2", "MolarFrac" : 0.21 }]
-         }
-      },
-      "zBCLeft" : "Periodic",
-      "zBCLeftInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "zBCLeftP" : 0.0,
-      "zBCLeftHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "zBCLeftMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
-                         {"Name" : "O2", "MolarFrac" : 0.21 }]
-         }
-      },
-      "zBCRight" : "Periodic",
-      "zBCRightInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "zBCRightP" : 0.0,
-      "zBCRightHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "zBCRightMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
-                         {"Name" : "O2", "MolarFrac" : 0.21 }]
-         }
-      }
+      "zBCLeft" :  { "type" : "Periodic" },
+      "zBCRight" : { "type" : "Periodic" }
    },
 
    "Flow" : {
@@ -159,13 +95,11 @@
       "gasConstant" : 287.15,
       "gamma" : 1.4,
       "prandtl" : 0.71,
-      "viscosityModel" : "PowerLaw",
-      "constantVisc" : -1.0,
-      "powerlawViscRef" : 1.716e-5,
-      "powerlawTempRef" : 273.0,
-      "sutherlandViscRef" : 1.81e-5,
-      "sutherlandTempRef" : 300.0,
-      "sutherlandSRef" : 110.4,
+      "viscosityModel" : {
+         "type" : "PowerLaw",
+         "ViscRef" : 1.716e-5,
+         "TempRef" : 273.0
+      },
       "initCase" : "Restart",
       "restartDir" : "",
       "initParams" : [1.01325e5, 300.0, 0.0, 0.1, 0.05],

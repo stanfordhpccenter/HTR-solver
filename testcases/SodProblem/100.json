@@ -35,102 +35,46 @@
    },
 
    "BC" : {
-      "xBCLeft" : "Dirichlet",
-      "xBCLeftInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "xBCLeftP" : 1.0,
-      "xBCLeftHeat" : {
-         "type" : "Constant",
-         "temperature" : 1.0
-      },
-      "xBCLeftMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+      "xBCLeft" : {
+         "type" : "Dirichlet",
+         "VelocityProfile" : {
+            "type" : "Constant",
+            "velocity" : [0.0, 0.0, 0.0]
+         },
+         "P" : 1.0,
+         "TemperatureProfile" : {
+            "type" : "Constant",
+            "temperature" : 1.0
+         },
+         "MixtureProfile" : {
+            "type" : "Constant",
+            "Mixture" : {
+               "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+            }
          }
       },
-      "xBCRight" : "Dirichlet",
-      "xBCRightInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "xBCRightP" : 0.1,
-      "xBCRightHeat" : {
-         "type" : "Constant",
-         "temperature" : 0.8
-      },
-      "xBCRightMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+      "xBCRight" : {
+         "type" : "Dirichlet",
+         "VelocityProfile" : {
+            "type" : "Constant",
+            "velocity" : [0.0, 0.0, 0.0]
+         },
+         "P" : 0.1,
+         "TemperatureProfile" : {
+            "type" : "Constant",
+            "temperature" : 0.8
+         },
+         "MixtureProfile" : {
+            "type" : "Constant",
+            "Mixture" : {
+               "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+            }
          }
       },
-      "yBCLeft" : "Periodic",
-      "yBCLeftInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "yBCLeftP" : 0.0,
-      "yBCLeftHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "yBCLeftMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
-         }
-      },
-      "yBCRight" : "Periodic",
-      "yBCRightInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "yBCRightP" : 0.0,
-      "yBCRightHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "yBCRightMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
-         }
-      },
-      "zBCLeft" : "Periodic",
-      "zBCLeftInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "zBCLeftP" : 0.0,
-      "zBCLeftHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "zBCLeftMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
-         }
-      },
-      "zBCRight" : "Periodic",
-      "zBCRightInflowProfile" : {
-         "type" : "Constant",
-         "velocity" : [0.0, 0.0, 0.0]
-      },
-      "zBCRightP" : 0.0,
-      "zBCRightHeat" : {
-         "type" : "Constant",
-         "temperature" : -1.0
-      },
-      "zBCRightMixture" : {
-         "type" : "Constant",
-         "Mixture" : {
-            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
-         }
-      }
+      "yBCLeft" :  { "type" : "Periodic" },
+      "yBCRight" : { "type" : "Periodic" },
+      "zBCLeft" :  { "type" : "Periodic" },
+      "zBCRight" : { "type" : "Periodic" }
    },
 
    "Flow" : {
@@ -138,13 +82,10 @@
       "gasConstant" : 1.0,
       "gamma" : 1.4,
       "prandtl" : 0.71,
-      "viscosityModel" : "Constant",
-      "constantVisc" : 0.0,
-      "powerlawViscRef" : -1.0,
-      "powerlawTempRef" : -1.0,
-      "sutherlandViscRef" : -1.0,
-      "sutherlandTempRef" : -1.0,
-      "sutherlandSRef" : -1.0,
+      "viscosityModel" : {
+         "type" : "Constant",
+         "Visc" : 0.0
+      },
       "initCase" : "SodProblem",
       "restartDir" : "",
       "initParams" : [1.0, 1.0, 0.80, 0.0, 0.0],

@@ -32,7 +32,7 @@ def postFile(Dir):
 nodes = []
 wt = []
 for i in range(0,args.num_times):
-   nodes.append(2**i)
+   nodes.append(int(2**i))
    wt.append(postFile(args.baseDir + "/" + str(nodes[i])))
 
 scale = wt[0]

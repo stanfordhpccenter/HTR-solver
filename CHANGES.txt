@@ -1,0 +1,11 @@
+This file lists the major changes as they appear in the master branch.
+
+Version 1.1.0 (April 23, 2020)
+   - basic test suite added to the repository
+   - timing infrastructure added to the main task of the solver
+   - NSCBC_Outflow available on the yNeg surface of the domain
+   - Added compile time flag to dump fields when a NaN appears
+   - Added compile time flag to deactivate atomic coherence mode
+   - New Sinh, SinhPlus, and SinhMinus grid stretching available to the user
+   - Less verbose input for BCs based on unions
+
