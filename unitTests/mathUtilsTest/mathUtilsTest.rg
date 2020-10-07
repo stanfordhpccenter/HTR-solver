@@ -4,8 +4,10 @@ import "regent"
 -------------------------------------------------------------------------------
 
 local C = regentlib.c
+local cos = regentlib.cos(double)
 local fabs = regentlib.fabs(double)
 local MATH = require 'math_utils'
+local PI = 3.1415926535898
 
 task checkMatMul()
    var A = array( 1.0, 0.0, 0.0,
@@ -115,6 +117,40 @@ task checkRosenbrock()
    end
 end
 
+local struct SrcInterpType {
+   y : double;
+   x : double;
+}
+FIData, FIType,
+FIInitData, FIInitRegion,
+FIFindIndex, FIGetWeight = unpack(MATH.mkFastInterp(SrcInterpType, "x"))
+local NFastInterp = 50
+local LFastInterp = rexpr 1.0 end
+task checkFastInterp()
+   var src = region(ispace(int1d, NFastInterp), SrcInterpType)
+   -- Fill the source region
+   for c in src do
+      src[c].x = [LFastInterp]*0.5*(cos(PI*(double(c)/(NFastInterp-1)+1.0))+1.0)
+      src[c].y = src[c].x/LFastInterp
+   end
+
+   -- Init fast interpolation
+   var FIdata = FIInitData(src)
+   var FIRegion = region(ispace(int1d, FIdata.nloc), FIType)
+   FIInitRegion(FIRegion, src, FIdata)
+
+   -- Test
+   var testvals = array(0.0, 0.3389, 0.54545, 0.7898, 1.0)
+   for i=0, 5 do
+      var x = testvals[i]
+      var ind = FIFindIndex(x, FIRegion, FIdata)
+      var w = FIGetWeight(x, src[ind].x, src[ind+int1d(1)].x)
+      var y = src[ind].y*w + src[ind+int1d(1)].y*(1.0-w)
+      regentlib.assert(((x >= src[ind].x) and (x <= src[ind+int1d(1)].x)), "mathUtilsTest: ERROR in checkFastInterp FindIndex")
+      regentlib.assert(fabs(y - x) < 1e-12, "mathUtilsTest: ERROR in checkFastInterp GetWeight")
+   end
+end
+
 task main()
    -- Check MatMul
    checkMatMul()
@@ -130,6 +166,8 @@ task main()
    checkReconCoeffRightBC()
    -- Check Rosenbrock
    checkRosenbrock()
+   -- Check FastInterp
+   checkFastInterp()
 
    __fence(__execution, __block)
 

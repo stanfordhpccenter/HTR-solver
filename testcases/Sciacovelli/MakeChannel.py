@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import argparse
 import json
@@ -34,12 +34,12 @@ assert config["BC"]["yBCLeft"]["TemperatureProfile"]["temperature"] == config["B
 Tw = config["BC"]["yBCLeft"]["TemperatureProfile"]["temperature"]
 
 # Read properties
-Pb              = config["Flow"]["initParams"][0]
-Tb              = config["Flow"]["initParams"][1]
-gamma           = config["Flow"]["gamma"]
-R               = config["Flow"]["gasConstant"]
+Pb              = config["Flow"]["initCase"]["pressure"]
+Tb              = config["Flow"]["initCase"]["temperature"]
+gamma           = config["Flow"]["mixture"]["gamma"]
+R               = config["Flow"]["mixture"]["gasConstant"]
 assert config["Flow"]["turbForcing"]["type"] == "CHANNEL"
-assert config["Flow"]["initCase"] == "ChannelFlow"
+assert config["Flow"]["initCase"]["type"] == "ChannelFlow"
 assert Tw == Tb
 
 cW = np.sqrt(gamma*R*Tw)
@@ -50,6 +50,7 @@ rhoB = Pb/(R*Tb)
 
 h = ReB*muW/(rhoB*uB)
 print("h = ", h)
+config["Integrator"]["vorticityScale"] = uB/h
 
 rhoW = rhoB
 uTau = ReTau*muW/(rhoW*h)
@@ -64,7 +65,8 @@ def objective(yStretching):
                                config["Grid"]["yNum"], 
                                config["Grid"]["yType"],
                                yStretching,
-                               False)
+                               False,
+                               StagMinus=True)
    return dy[1]/deltaNu - yPlusTrg
 
 yStretching, = fsolve(objective, 1.0)
@@ -78,7 +80,7 @@ config["Grid"]["zWidth"] = 2.0*h*np.pi
 config["Grid"]["yStretching"] = yStretching
 
 # Flow section
-config["Flow"]["initParams"][2] = uB
+config["Flow"]["initCase"]["velocity"] = uB
 config["Flow"]["turbForcing"]["RhoUbulk"] = rhoB*uB
 config["Flow"]["turbForcing"]["Forcing"] = TauW/h
 
@@ -89,7 +91,7 @@ with open("ChannelFlow.json", "w") as fout:
 
 config["Integrator"]["maxTime"] = tNu*(dTplus+dTplusStat)
 
-config["Flow"]["initCase"] == "Restart"
+config["Flow"]["initCase"]["type"] = "Restart"
 
 config["IO"]["XZAverages"] = [{"fromCell" : [0, 0, 0], "uptoCell" : [1024, 1024, 1024]}]
 

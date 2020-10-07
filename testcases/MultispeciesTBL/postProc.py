@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import numpy as np
 import json
@@ -119,7 +119,8 @@ yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yNum"],
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
-                            False)
+                            False,
+                            StagMinus=True)
 
 # Correct boundaries that are staggered
 yGrid[0] += 0.5*dy[0]
@@ -128,7 +129,7 @@ yGrid[0] += 0.5*dy[0]
 #                          Load average files                                #
 ##############################################################################
 
-Xavg = Averages.avg(args.input_dir+"/YZAverages/0,0-" + str(xNum+1) + ",0.hdf")
+Xavg = Averages.avg2D(args.input_dir+"/YZAverages/0,0-" + str(xNum+1) + ",0.hdf")
 
 ##############################################################################
 #                               Plot stuff                                   #

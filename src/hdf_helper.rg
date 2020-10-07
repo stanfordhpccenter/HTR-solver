@@ -357,6 +357,7 @@ task dumpTile(_ : int,
               r : region(ispace(indexType), fSpace),
               s : region(ispace(indexType), fSpace))
 where reads(r.[flds]), reads writes(s.[flds]), r * s do
+  if r.volume == 0 then return _ end
   var filename = tileFilename([&int8](dirname), r.bounds)
   create(filename, r.bounds.hi - r.bounds.lo + one)
   attach(hdf5, s.[flds], filename, regentlib.file_read_write)
@@ -441,6 +442,7 @@ for aName,aType in pairs(attrs) do
                      dirname : regentlib.string,
                      r : region(ispace(indexType), fSpace),
                      aVal : aType)
+    if r.volume == 0 then return _ end
     var filename = tileFilename([&int8](dirname), r.bounds)
     write(filename, aVal)
     return _
@@ -529,6 +531,7 @@ for aName,aPar in pairs(StringAttrs) do
                      dirname : regentlib.string,
                      r : region(ispace(indexType), fSpace),
                      Strings : regentlib.string[aNum])
+    if r.volume == 0 then return _ end
     var filename = tileFilename([&int8](dirname), r.bounds)
     write(filename, Strings)
     return _

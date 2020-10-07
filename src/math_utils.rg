@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -31,10 +31,12 @@ import "regent"
 
 local Exports = {}
 
-local fabs = regentlib.fabs(double)
-local max  = regentlib.fmax
-local min  = regentlib.fmin
-local pow  = regentlib.pow(double)
+local floor = regentlib.floor(double)
+local ceil  = regentlib.ceil(double)
+local fabs  = regentlib.fabs(double)
+local max   = regentlib.fmax
+local min   = regentlib.fmin
+local pow   = regentlib.pow(double)
 
 -- Row by column multiplication
 Exports.mkMatMul = terralib.memoize(function(n)
@@ -511,6 +513,146 @@ Exports.mkRosenbrock = terralib.memoize(function(nEq, Fields, Vars, Unkowns, Dat
       return fail
    end
    return Rosenbrock
+end)
+
+-- Fast interpolation using the integer domain
+Exports.mkFastInterp = terralib.memoize(function(SrcType, xfld)
+   local FastInterpData, FastInterpType
+   local FastInterpInitData, FastInterpInitRegion
+   local FastInterpFindIndex, FastInterpGetWeight
+   local eps = 1e-6
+
+   local struct FastInterpData {
+      nloc : int;
+      xmin : double;
+      xmax : double;
+      small : double;
+      dxloc : double;
+      idxloc : double;
+   }
+
+   -- Single precision is sufficient at this stage
+   local struct FastInterpType {
+      xloc : float;
+      iloc : float;
+   }
+
+   -- Initializes data structure
+   local __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+   task FastInterpInitData(src : region(ispace(int1d), SrcType))
+   where
+      reads(src.[xfld])
+   do
+      var data : FastInterpData
+      if src.volume > 1 then
+         var xmin =  math.huge
+         var xmax = -math.huge
+         var dxmin = math.huge
+         __demand(__openmp)
+         for c in src do
+            xmin min= src[c].[xfld]
+            xmax max= src[c].[xfld]
+            if c < src.bounds.hi then
+               dxmin min= src[c+1].[xfld] - src[c].[xfld]
+            end
+         end
+         regentlib.assert(dxmin >= 0.0, "FastInterpInitData: something wrong in the input region")
+         data.xmin = xmin
+         data.xmax = xmax
+         data.small = eps*(data.xmax - data.xmin)
+         -- ensure at least 2 points per interval in src
+         data.nloc = ceil(2.0*(data.xmax-data.xmin)/dxmin)
+         -- Size of the uniform grid
+         data.dxloc = (data.xmax-data.xmin)/(data.nloc-1)
+         data.idxloc = 1.0/data.dxloc
+      else
+         data.xmin = src[0].[xfld]
+         data.xmax = src[0].[xfld]
+         data.small = eps
+         data.nloc = 2
+         data.dxloc = 0.0
+         data.idxloc = 0.0
+      end
+      return data
+   end
+
+   -- Initializes region
+   local --__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
+   task FastInterpInitRegion(r   : region(ispace(int1d), FastInterpType),
+                             src : region(ispace(int1d), SrcType),
+                             d : FastInterpData)
+   where
+      reads(src.[xfld]),
+      reads writes(r.{xloc, iloc})
+   do
+      -- Initialize xloc and iloc
+      __demand(__openmp)
+      for c in r do
+         r[c].xloc = d.xmin + float(c)*d.dxloc
+         var i : int1d
+         for c1 in src do
+            i = c1
+            var cp1 = min(c1+int1d(1), src.bounds.hi)
+            if (r[c].xloc <= src[cp1].[xfld]) then break end
+         end
+         i min= src.bounds.hi-int1d(1)
+         var ip1 = i+int1d(1)
+         var w = (src[ip1].[xfld] - r[c].xloc)/(src[ip1].[xfld]-src[i].[xfld])
+         r[c].iloc = w*float(i)+(1.0 - w)*float(ip1)
+      end
+
+      var dimin = math.huge
+      for c in r do
+         if c < r.bounds.hi then
+            dimin min= r[c+1].iloc - r[c].iloc
+         end
+      end
+      if r.volume==1 then dimin = 0 end
+
+      -- Correct iloc to pass though src.[xfld]'s
+      r[0].iloc = 0.0
+--      __demand(__openmp)
+      for c in src do
+         if c > int1d(0) then
+            var csi = int1d(0)
+            for c1 in r do
+               csi = c1
+               var cp1 = min(c1+int1d(1), r.bounds.hi)
+               if (src[c].[xfld] <= r[cp1].xloc) then break end
+            end
+            var cp1 = min(csi+int1d(1), r.bounds.hi)
+            r[csi].iloc = float(c) + dimin*d.idxloc*(r[csi].xloc - src[c].[xfld])
+            r[cp1].iloc = float(c) + dimin*d.idxloc*(r[cp1].xloc - src[c].[xfld])
+         end
+      end
+      r[r.bounds.hi].iloc = float(src.bounds.hi)
+   end
+
+   -- Finds index of first element on the left
+   __demand(__inline)
+   task FastInterpFindIndex(x : double,
+                            r : region(ispace(int1d), FastInterpType),
+                            d : FastInterpData)
+   where
+      reads(r.{iloc, xloc})
+   do
+      x max = d.xmin+d.small
+      x min = d.xmax-d.small
+      var k = int1d(floor((x-d.xmin)*d.idxloc))
+      var kp1 = k+int1d(1)
+      return int1d(floor(r[k].iloc + (r[kp1].iloc-r[k].iloc)*
+                                     (          x-r[k].xloc)*d.idxloc))
+   end
+
+   -- Compute linear interpolation weight for point on the left
+   __demand(__inline)
+   task FastInterpGetWeight(x : double, xm : double, xp : double)
+      return (xp - x)/(xp - xm)
+   end
+
+   return {FastInterpData, FastInterpType,
+           FastInterpInitData, FastInterpInitRegion,
+           FastInterpFindIndex, FastInterpGetWeight}
 end)
 
 return Exports

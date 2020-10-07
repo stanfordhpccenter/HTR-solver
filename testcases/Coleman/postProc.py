@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import numpy as np
 import json
@@ -48,11 +48,9 @@ yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yNum"],
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
-                            False)
-
-# Correct boundaries that are staggered
-yGrid[     0] += 0.5*dy[0]
-yGrid[yNum+1] -= 0.5*dy[yNum+1]
+                            False,
+                            StagMinus=True,
+                            StagPlus=True)
 
 ##############################################################################
 #                          Load reference solution                           #

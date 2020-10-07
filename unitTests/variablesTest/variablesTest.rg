@@ -6,6 +6,7 @@ import "regent"
 local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
+local REGISTRAR = terralib.includec("prometeo_variables.h")
 local UTIL = require 'util-desugared'
 
 local Config = SCHEMA.Config
@@ -19,33 +20,12 @@ local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solve
 local Primitives = CONST.Primitives
 local Properties = CONST.Properties
 
-local struct Fluid_columns {
-   -- Cell center gradient operator [c - c-1, c+1 - c]
-   gradX : double[2];
-   gradY : double[2];
-   gradZ : double[2];
-   -- Primitive variables
-   pressure    : double;
-   temperature : double;
-   MolarFracs  : double[nSpec];
-   velocity    : double[3];
-   -- Properties
-   rho  : double;
-   mu   : double;
-   lam  : double;
-   Di   : double[nSpec];
-   SoS  : double;
-   -- Gradients
-   velocityGradientX   : double[3];
-   velocityGradientY   : double[3];
-   velocityGradientZ   : double[3];
-   temperatureGradient : double[3];
-   -- Conserved varaibles
-   Conserved       : double[nEq];
-}
+local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
+local Fluid_columns = TYPES.Fluid_columns
 
 --External modules
-local VARS = (require 'prometeo_variables')(SCHEMA, MIX, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, Fluid_columns)
+local VARS = (require 'prometeo_variables')(SCHEMA, MIX, METRIC, Fluid_columns)
 
 -- Test parameters
 local Npx = 16
@@ -65,7 +45,7 @@ local Tres = rexpr 500.0 end
 -- Expected properties
 local eRho = rexpr 6.2899871101668e-02 end
 local eMu  = rexpr 1.2424467023580e-04 end
-local eLam = rexpr 2.2727742147267e-01 end
+local eLam = rexpr 2.4040340390246e-01 end
 local eDi  = rexpr array(2.5146873480781e-03, 2.4389311883618e-03, 2.4550965167542e-03, 3.6168277168130e-03, 3.9165634179846e-03) end
 local eSoS = rexpr 1.4518705966651e+03 end
 
@@ -77,11 +57,23 @@ task InitializeCell(Fluid : region(ispace(int3d), Fluid_columns))
 where
    writes(Fluid)
 do
-   fill(Fluid.gradX, array(0.0, 0.0))
-   fill(Fluid.gradY, array(0.0, 0.0))
-   fill(Fluid.gradZ, array(0.0, 0.0))
+   fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
+   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
+   fill(Fluid.nType_x, 0)
+   fill(Fluid.nType_y, 0)
+   fill(Fluid.nType_z, 0)
+   fill(Fluid.dcsi_e, 0.0)
+   fill(Fluid.deta_e, 0.0)
+   fill(Fluid.dzet_e, 0.0)
+   fill(Fluid.dcsi_d, 0.0)
+   fill(Fluid.deta_d, 0.0)
+   fill(Fluid.dzet_d, 0.0)
+   fill(Fluid.dcsi_s, 0.0)
+   fill(Fluid.deta_s, 0.0)
+   fill(Fluid.dzet_s, 0.0)
    fill(Fluid.pressure, [P])
    fill(Fluid.temperature, [T])
+   fill(Fluid.MassFracs, [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
    fill(Fluid.MolarFracs, [Xi])
    fill(Fluid.velocity, [v])
    fill(Fluid.rho, 0.0)
@@ -102,13 +94,13 @@ where
    reads(Fluid.[Properties])
 do
    for c in Fluid do
-      regentlib.assert(fabs((Fluid[c].rho/[eRho]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive")
-      regentlib.assert(fabs((Fluid[c].mu /[eMu ]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive")
-      regentlib.assert(fabs((Fluid[c].lam/[eLam]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive")
+      regentlib.assert(fabs((Fluid[c].rho/[eRho]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (rho)")
+      regentlib.assert(fabs((Fluid[c].mu /[eMu ]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (mu)")
+      regentlib.assert(fabs((Fluid[c].lam/[eLam]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (lam)")
       for i=0, nSpec do
-         regentlib.assert(fabs((Fluid[c].Di[i]/[eDi][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive")
+         regentlib.assert(fabs((Fluid[c].Di[i]/[eDi][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (Di)")
       end
-      regentlib.assert(fabs((Fluid[c].SoS/[eSoS]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive")
+      regentlib.assert(fabs((Fluid[c].SoS/[eSoS]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (SoS)")
    end
 end
 
@@ -183,6 +175,7 @@ end
 task main()
    -- Init the mixture
    var config : Config
+   config.Flow.mixture.type = SCHEMA.MixtureModel_AirMix
    var Mix = MIX.InitMixture(config)
 
    -- Define the domain
@@ -211,15 +204,8 @@ task main()
    -- Interior points
    var p_Interior = static_cast(partition(disjoint, Fluid, tiles), cross_product(Fluid_regions, p_Fluid)[0])
 
-
    -- All ghost points
    var p_AllGhost = p_Fluid - p_Interior
-
-   __parallelize_with
-      tiles,
-      disjoint(p_Fluid),
-      complete(p_Fluid, Fluid)
-   do
 
    InitializeCell(Fluid)
 
@@ -260,8 +246,6 @@ task main()
 
    CheckUpdatePrimitiveFromConserved(Fluid)
 
-   end
-
    __fence(__execution, __block)
 
    C.printf("variablesTest: TEST OK!\n")
@@ -271,4 +255,4 @@ end
 -- COMPILATION CALL
 -------------------------------------------------------------------------------
 
-regentlib.saveobj(main, "variablesTest.o", "object")
+regentlib.saveobj(main, "variablesTest.o", "object", REGISTRAR.register_variables_tasks)

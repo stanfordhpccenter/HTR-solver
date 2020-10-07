@@ -4,8 +4,9 @@
 
 # Global variables (will be set in every job):
 variables:
-   MAX_DIM: "4"
-   LEGION_BRANCH: "parallelizer-dcr-new"
+   MAX_DIM: "3"
+   LEGION_BRANCH: "control_replication"
+#   LEGION_BRANCH: "master"
    HTR_DIR: "$CI_PROJECT_DIR"
    REALM_BACKTRACE: "1"
 #  TIMELIMIT: "600"  # each test should take less than 10 minutes
@@ -71,8 +72,8 @@ before_script:
    - |
       if [[ "$(hostname)" = ctr-205-1.stanford.edu ]]; then
          module load mpi/mpich-3.0-x86_64
-         export CC=mpicc
-         export CXX=mpicxx
+         export CC=gcc
+         export CXX=g++
          export LEGION_DIR=/home/gitlab-runner/legion
          export HDF_ROOT=$LEGION_DIR/language/hdf/install
          export USE_GASNET=0
@@ -84,7 +85,6 @@ before_script:
    - |
       cd $LEGION_DIR/language
       git fetch
-      LOCAL0=$(git rev-parse @)
       git checkout $LEGION_BRANCH
       UPSTREAM=${1:-'@{u}'}
       LOCAL=$(git rev-parse @)
@@ -92,11 +92,8 @@ before_script:
       if [ $LOCAL != $REMOTE ]; then
          echo "Updating Legion"
          git reset --hard $REMOTE
-         scripts/setup_env.py --llvm-version 38
-      elif [ $LOCAL != $LOCAL0 ]; then
-         echo "Building Legion on the new branch"
-         scripts/setup_env.py --llvm-version 38
       fi
+      scripts/setup_env.py --llvm-version 38
       cd $HTR_DIR
 
 
@@ -124,59 +121,21 @@ before_script:
 # Unit tests that check the solver component by component.
 .unitTests: &unitTests
    script:
-      - cd unitTests/configTest
-      - make
-      - ./configTest.exec
-      - cd ../..
-
-      - cd unitTests/mathUtilsTest
-      - make
-      - ./mathUtilsTest.exec
-      - cd ../..
-
-      - cd unitTests/hdfTest
-      - make
-      - ./hdfTest.exec
-      - cd ../..
-
-      - cd unitTests/mixTest
-      - make
-      - ./mixTest.exec
-      - cd ../..
-
-      - cd unitTests/geometryTest
-      - make
-      - ./geometryTest.exec
-      - cd ../..
-
-      - cd unitTests/metricTest
-      - make -j
-      - ./metricTest_Periodic.exec
-      - ./metricTest_Collocated.exec
-      - ./metricTest_Staggered.exec
-      - cd ../..
-
-      - cd unitTests/cflTest
-      - make
-      - ./cflTest.exec
-      - cd ../..
-
-      - cd unitTests/chemTest
-      - make
-      - ./chemTest.exec
-      - cd ../..
-
-      - cd unitTests/variablesTest
-      - make
-      - ./variablesTest.exec
-      - cd ../..
+      - python3 unitTests/testAll.py
 
 .solverTests: &solverTests
    script:
       - NO_ATOMIC=1 make -j -C src/
-      - cd solverTests
-      - python ./test.py
-      - cd ../..
+      - python3 solverTests/testAll.py
+
+.quickSolverTests: &quickSolverTests
+   script:
+      - NO_ATOMIC=1 make -j -C src/
+      - python3 solverTests/3DPeriodic/test.py
+      - python3 solverTests/RecycleBoundary/test.py
+      - python3 solverTests/ShockTube/test.py
+      - python3 solverTests/VortexAdvection2D/test.py
+
 
 ###
 ### Jobs
@@ -193,3 +152,14 @@ ctr-205-1_release_solverTests:
    <<: [*ctr-205-1, *solverTests]
    variables:
       <<: [*release, *openmp, *hdf5]
+
+ctr-205-1_debug_unitTests:
+   <<: [*ctr-205-1, *unitTests]
+   variables:
+      <<: [*debug, *openmp, *hdf5]
+
+ctr-205-1_debug_quickSolverTests:
+   <<: [*ctr-205-1, *quickSolverTests]
+   variables:
+      <<: [*debug, *openmp, *hdf5]
+

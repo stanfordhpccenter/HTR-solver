@@ -31,7 +31,9 @@
       "maxTime" : 20.0,
       "cfl" : 0.5,
       "fixedDeltaTime" : 4.0e-3,
-      "implicitChemistry" : false
+      "implicitChemistry" : false,
+      "hybridScheme" : true,
+      "vorticityScale" : 0.0
    },
 
    "BC" : {
@@ -73,18 +75,21 @@
    },
 
    "Flow" : {
-      "mixture": "ConstPropMix",
-      "gasConstant" : 287.15,
-      "gamma" : 1.4,
-      "prandtl" : 0.71,
-      "viscosityModel" : {
-         "type" : "PowerLaw",
-         "ViscRef" : 0.05,
-         "TempRef" : 300.0
+      "mixture": {
+         "type" : "ConstPropMix",
+         "gasConstant" : 287.15,
+         "gamma" : 1.4,
+         "prandtl" : 0.71,
+         "viscosityModel" : {
+            "type" : "PowerLaw",
+            "ViscRef" : 0.05,
+            "TempRef" : 300.0
+         }
       },
-      "initCase" : "Restart",
-      "restartDir" : "InflowProfile",
-      "initParams" : [1.01325e5, 300.0, 2083.67, 0.0, 0.0],
+      "initCase" : {
+         "type" : "Restart",
+         "restartDir" : "InflowProfile"
+      },
       "resetMixture" : false,
       "initMixture" : {
          "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
@@ -96,11 +101,16 @@
    "IO" : {
       "wrtRestart" : true,
       "restartEveryTimeSteps" : 5000,
+      "probesSamplingInterval" : 1,
       "probes" : [],
-      "AveragesSamplingInterval": 1,
-      "ResetAverages": false,
-      "YZAverages": [],
-      "XZAverages": [],
-      "XYAverages": []
+      "AveragesSamplingInterval" : 1,
+      "ResetAverages" : false,
+      "YZAverages" : [],
+      "XZAverages" : [],
+      "XYAverages" : [],
+      "XAverages" : [],
+      "YAverages" : [],
+      "ZAverages" : [],
+      "volumeProbes" : []
    }
 }

@@ -27,19 +27,30 @@ CXXFLAGS += -std=c++11 -O3 -Wall -Werror -fno-strict-aliasing -I$(LEGION_DIR)/ru
 
 # Regent options
 export TERRA_PATH := ?.rg;$(HTR_DIR)/src/?.rg
-export INCLUDE_PATH := .
+export INCLUDE_PATH := .;$(HTR_DIR)/src
 ifdef HDF_ROOT
   export INCLUDE_PATH := $(INCLUDE_PATH);$(HDF_ROOT)/include
   export $(DYNLINK_PATH) := $($(DYNLINK_PATH)):$(HDF_ROOT)/lib
 endif
 REGENT := $(LEGION_DIR)/language/regent.py
-REGENT_FLAGS := -fflow 0 -finner 1 -fbounds-checks 1
+REGENT_FLAGS := -fflow 0 -finner 1
+ifeq ($(DEBUG), 1)
+  REGENT_FLAGS += -g -fcuda 0 -fbounds-checks 1
+  CFLAGS += -g
+  CXXFLAGS += -g -DBOUNDS_CHECKS -DPRIVILEGE_CHECKS
+  LINK_FLAGS += -g
+else
 ifeq ($(USE_CUDA), 1)
   REGENT_FLAGS += -fcuda 1 -fcuda-offline 1
+  NVCC ?= $(CUDA_HOME)/bin/nvcc
+  NVCCFLAGS += -std=c++11 -O3 -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent
 else
   REGENT_FLAGS += -fcuda 0
 endif
+endif
 ifeq ($(USE_OPENMP), 1)
+  CFLAGS       += -fopenmp
+  CXXFLAGS     += -fopenmp
   REGENT_FLAGS += -fopenmp 1
 else
   REGENT_FLAGS += -fopenmp 0
@@ -55,17 +66,12 @@ ifeq ($(USE_HDF), 1)
 endif
 LINK_FLAGS += -lm
  
-ifeq ($(DEBUG), 1)
-  REGENT_FLAGS += -g
-  CFLAGS += -g
-  CXXFLAGS += -g
-  LINK_FLAGS += -g
-endif
-
 .PHONY: default all clean
 
 MODULES= $(HTR_DIR)/src/prometeo_const.rg \
 			$(HTR_DIR)/src/prometeo_macro.rg \
+			$(HTR_DIR)/src/prometeo_metric.rg \
+			$(HTR_DIR)/src/prometeo_partitioner.rg \
 			$(HTR_DIR)/src/prometeo_grid.rg
 
 default: geometryTest.exec
@@ -77,7 +83,7 @@ geometryTest.exec: geometryTest.o $(HTR_DIR)/src/config_schema.o $(HTR_DIR)/src/
 	$(CXX) -o $@ $^ $(LINK_FLAGS)
 
 geometryTest.o: geometryTest.rg $(HTR_DIR)/src/config_schema.h $(HTR_DIR)/src/util-desugared.rg $(MODULES)
-	$(REGENT) geometryTest.rg $(REGENT_FLAGS)
+	EOS=ConstPropMix $(REGENT) geometryTest.rg $(REGENT_FLAGS)
 
 $(HTR_DIR)/src/config_schema.o $(HTR_DIR)/src/config_schema.h: $(HTR_DIR)/src/process_schema.rg $(HTR_DIR)/src/config_schema.lua
 	make -C $(HTR_DIR)/src config_schema.o

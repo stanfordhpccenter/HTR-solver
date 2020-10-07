@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import numpy as np
 import json
@@ -47,9 +47,9 @@ TwOvT  = config["Case"]["TwOvTInf"]
 xTurb  = config["Case"]["xTurb"]
 yPlus  = config["Case"]["yPlus"]
 
-R      = config["Flow"]["gasConstant"]
-gamma  = config["Flow"]["gamma"]
-Pr     = config["Flow"]["prandtl"]
+R      = config["Flow"]["mixture"]["gasConstant"]
+gamma  = config["Flow"]["mixture"]["gamma"]
+Pr     = config["Flow"]["mixture"]["prandtl"]
 
 # Free-stream mixture properties
 cInf  = np.sqrt(gamma*R*TInf)
@@ -135,7 +135,8 @@ yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yNum"],
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
-                            False)
+                            False,
+                            StagMinus=True)
 
 # Correct boundaries that are staggered
 yGrid[0] += 0.5*dy[0]
@@ -152,11 +153,11 @@ UProf  = pandas.read_csv("Uprof.csv")
 #                          Load average files                                #
 ##############################################################################
 
-Xavg = Averages.avg(args.input_dir+"/YZAverages/0,0-" + str(xNum+1) + ",0.hdf")
+Xavg = Averages.avg2D(args.input_dir+"/YZAverages/0,0-" + str(xNum+1) + ",0.hdf")
 
 yrakes = []
 for i in range(4):
-   yrakes.append(Averages.avg(args.input_dir+"/XZAverages/0," + str(i) + "-" + str(yNum+1) + "," + str(i) + ".hdf"))
+   yrakes.append(Averages.avg2D(args.input_dir+"/XZAverages/0," + str(i) + "-" + str(yNum+1) + "," + str(i) + ".hdf"))
 rakesNames = ["x=400", "x=650", "x=800", "x=950"]
 
 ##############################################################################

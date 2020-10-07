@@ -52,22 +52,26 @@ task check(config : Config)
    regentlib.assert(config.Integrator.maxTime == 20.0,          "configTest: ERROR on config.Integrator.maxTime")
    regentlib.assert(config.Integrator.cfl == 0.9,               "configTest: ERROR on config.Integrator.cfl")
    regentlib.assert(config.Integrator.fixedDeltaTime == 4.0e-3, "configTest: ERROR on config.Integrator.fixedDeltaTime")
+   regentlib.assert(config.Integrator.hybridScheme == true,     "configTest: ERROR on config.Integrator.hybridScheme")
+   regentlib.assert(config.Integrator.vorticityScale == 1.0,    "configTest: ERROR on config.Integrator.vorticityScale")
    -- Flow section
-   regentlib.assert(C.strcmp(config.Flow.mixture, "ConstPropMix") == 0,                "configTest: ERROR on config.Flow.mixture")
-   regentlib.assert(config.Flow.gasConstant == 287.15,                                 "configTest: ERROR on config.Flow.gasConstant")
-   regentlib.assert(config.Flow.gamma == 1.4,                                          "configTest: ERROR on config.Flow.gamma")
-   regentlib.assert(config.Flow.prandtl == 0.71,                                       "configTest: ERROR on config.Flow.prandtl")
-   regentlib.assert(config.Flow.viscosityModel.type == SCHEMA.ViscosityModel_Constant, "configTest: ERROR on config.Grid.viscosityModel")
-   regentlib.assert(config.Flow.viscosityModel.u.Constant.Visc == 5.0e-3,              "configTest: ERROR on config.Flow.constantVisc")
-   regentlib.assert(config.Flow.initCase == SCHEMA.FlowInitCase_Uniform,               "configTest: ERROR on config.Flow.initCase")
-   regentlib.assert(C.strcmp(config.Flow.restartDir, "restartDir") == 0,               "configTest: ERROR on config.Flow.restartDir");
+   regentlib.assert(config.Flow.mixture.type == SCHEMA.MixtureModel_ConstPropMix,      "configTest: ERROR on config.Flow.mixture.type")
+   regentlib.assert(config.Flow.mixture.u.ConstPropMix.gasConstant == 287.15,          "configTest: ERROR on config.Flow.mixture.gasConstant")
+   regentlib.assert(config.Flow.mixture.u.ConstPropMix.gamma == 1.4,                   "configTest: ERROR on config.Flow.mixture.gamma")
+   regentlib.assert(config.Flow.mixture.u.ConstPropMix.prandtl == 0.71,                "configTest: ERROR on config.Flow.mixture.prandtl")
+   regentlib.assert(config.Flow.mixture.u.ConstPropMix.viscosityModel.type == SCHEMA.ViscosityModel_Constant,
+                                                                                       "configTest: ERROR on config.Grid.mixture.viscosityModel")
+   regentlib.assert(config.Flow.mixture.u.ConstPropMix.viscosityModel.u.Constant.Visc == 5.0e-3,
+                                                                                       "configTest: ERROR on config.Flow.constantVisc")
+   regentlib.assert(config.Flow.initCase.type == SCHEMA.FlowInitCase_Uniform,          "configTest: ERROR on config.Flow.initCase.type")
+   regentlib.assert(config.Flow.initCase.u.Uniform.pressure == 1.01325e5,              "configTest: ERROR on config.Flow.initCase.u.Uniform.pressure")
+   regentlib.assert(config.Flow.initCase.u.Uniform.temperature == 300.0,               "configTest: ERROR on config.Flow.initCase.u.Uniform.temperature")
+   regentlib.assert(config.Flow.initCase.u.Uniform.velocity[0] == 10.0,                "configTest: ERROR on config.Flow.initCase.u.Uniform.velocity[0]")
+   regentlib.assert(config.Flow.initCase.u.Uniform.velocity[1] == 20.0,                "configTest: ERROR on config.Flow.initCase.u.Uniform.velocity[1]")
+   regentlib.assert(config.Flow.initCase.u.Uniform.velocity[2] == 30.0,                "configTest: ERROR on config.Flow.initCase.u.Uniform.velocity[2]");
+   [testMixture( rexpr config.Flow.initCase.u.Uniform.molarFracs end, "config.Flow.initCase.u.Uniform.molarFracs")];
+   regentlib.assert(config.Flow.resetMixture == false,                                 "configTest: ERROR on config.Flow.resetMixture");
    [testMixture( rexpr config.Flow.initMixture end, "config.Flow.initMixture")];
-   regentlib.assert(config.Flow.initParams[0] == 1.01325e5,                            "configTest: ERROR on config.Flow.initParams[0]")
-   regentlib.assert(config.Flow.initParams[1] == 300.0,                                "configTest: ERROR on config.Flow.initParams[1]")
-   regentlib.assert(config.Flow.initParams[2] == 10.0,                                 "configTest: ERROR on config.Flow.initParams[2]")
-   regentlib.assert(config.Flow.initParams[3] == 20.0,                                 "configTest: ERROR on config.Flow.initParams[3]")
-   regentlib.assert(config.Flow.initParams[4] == 30.0,                                 "configTest: ERROR on config.Flow.initParams[4]")
-   regentlib.assert(config.Flow.resetMixture == false,                                 "configTest: ERROR on config.Flow.resetMixture")
    regentlib.assert(config.Flow.bodyForce[0] == 1.0,                                   "configTest: ERROR on config.Flow.bodyForce[0]")
    regentlib.assert(config.Flow.bodyForce[1] == 2.0,                                   "configTest: ERROR on config.Flow.bodyForce[1]")
    regentlib.assert(config.Flow.bodyForce[2] == 3.0,                                   "configTest: ERROR on config.Flow.bodyForce[2]")
@@ -77,6 +81,7 @@ task check(config : Config)
    -- IO section
    regentlib.assert(config.IO.wrtRestart == true,               "configTest: ERROR on config.IO.wrtRestart")
    regentlib.assert(config.IO.restartEveryTimeSteps == 10000,   "configTest: ERROR on config.IO.restartEveryTimeSteps")
+   regentlib.assert(config.IO.probesSamplingInterval == 1,      "configTest: ERROR on config.IO.probesSamplingInterval")
    regentlib.assert(config.IO.AveragesSamplingInterval == 10,   "configTest: ERROR on config.IO.AveragesSamplingInterval")
    return 1
 end

@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -102,6 +102,19 @@ function Exports.mkInitializeProfilesField(Side)
          var SuctionAndBlowingWall = config.BC.[Side].u.SuctionAndBlowingWall
          if SuctionAndBlowingWall.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
             fill(BC.temperature_profile, SuctionAndBlowingWall.TemperatureProfile.u.Constant.temperature)
+         end
+
+     elseif (config.BC.[Side].type == SCHEMA.FlowBC_RecycleRescaling) then
+         var RecycleRescaling = config.BC.[Side].u.RecycleRescaling
+         if RecycleRescaling.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
+            var BC_Mixture = CHEM.ParseConfigMixture(RecycleRescaling.MixtureProfile.u.Constant.Mixture,  mix)
+            fill(BC.MolarFracs_profile, BC_Mixture)
+         end
+         if RecycleRescaling.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
+            fill(BC.velocity_profile, RecycleRescaling.VelocityProfile.u.Constant.velocity)
+         end
+         if RecycleRescaling.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+            fill(BC.temperature_profile, RecycleRescaling.TemperatureProfile.u.Constant.temperature)
          end
 
       end

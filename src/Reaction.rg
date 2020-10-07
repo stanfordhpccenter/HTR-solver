@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -42,10 +42,16 @@ local RGAS = 8.3144598        -- [J/(mol K)]
 
 local struct Reactant {
    ind : int,     -- Index in the species vector
-   nu  : double   -- Stoichiometric coefficient
+   nu  : double,  -- Stoichiometric coefficient
+   ord : double,  -- Order of the reactant
 }
 
--- Species structure
+local struct ThirdBd {
+   ind : int,     -- Index in the species vector
+   eff : double,  -- Efficiency as a third body
+}
+
+-- Reaction structure
 struct Exports.Reaction {
    A         : double         -- Arrhenius pre-exponential factor [m^{3*(o-1)}/(mol^(o-1) s)] where o is the order fo the reaction
    n         : double         -- Arrhenius temperature exponent
@@ -58,7 +64,7 @@ struct Exports.Reaction {
 
    educts : Reactant[MAX_NUM_REACTANTS]   -- List of reactants and stoichiometric coefficients
    pducts : Reactant[MAX_NUM_REACTANTS]   -- List of products and stoichiometric coefficients
-   thirdb : Reactant[MAX_NUM_TB]          -- List of third bodies and efficiencies
+   thirdb : ThirdBd[MAX_NUM_TB]           -- List of third bodies and efficiencies
 
 --   vector<pair<double,shared_ptr<Species>>> educts   -- List of reactants and stoichiometric coefficient
 --   vector<pair<double,shared_ptr<Species>>> pducts   -- List of products and stoichiometric coefficient
@@ -66,28 +72,30 @@ struct Exports.Reaction {
 }
 
 __demand(__inline)
-task Exports.AddEduct( r : Exports.Reaction, index : int, nu : double )
+task Exports.AddEduct( r : Exports.Reaction, index : int, nu : double, ord : double )
    regentlib.assert(r.Neducts < MAX_NUM_REACTANTS, "Increase MAX_NUM_REACTANTS")
    r.educts[r.Neducts].ind = index
    r.educts[r.Neducts].nu  = nu
+   r.educts[r.Neducts].ord = ord
    r.Neducts += 1
    return r
 end
 
 __demand(__inline)
-task Exports.AddPduct( r : Exports.Reaction, index : int, nu : double )
+task Exports.AddPduct( r : Exports.Reaction, index : int, nu : double, ord : double )
    regentlib.assert(r.Npducts < MAX_NUM_REACTANTS, "Increase MAX_NUM_REACTANTS")
    r.pducts[r.Npducts].ind = index
    r.pducts[r.Npducts].nu  = nu
+   r.pducts[r.Npducts].ord = ord
    r.Npducts += 1
    return r
 end
 
 __demand(__inline)
-task Exports.AddThirdb( r : Exports.Reaction, index : int, nu : double )
+task Exports.AddThirdb( r : Exports.Reaction, index : int, eff : double )
    regentlib.assert(r.Nthirdb < MAX_NUM_TB, "Increase MAX_NUM_TB")
    r.thirdb[r.Nthirdb].ind = index
-   r.thirdb[r.Nthirdb].nu  = nu
+   r.thirdb[r.Nthirdb].eff = eff
    r.Nthirdb += 1
    return r
 end
@@ -127,7 +135,7 @@ task GetReactionRate( r : Exports.Reaction, P : double, T : double, C : double[n
    var a = 1.0
    for i = 0, r.Neducts do
       var ind = r.educts[i].ind
-      a *= pow(C[ind],r.educts[i].nu)
+      a *= pow(C[ind],r.educts[i].ord)
    end
    -- Backward reaction rate
    var Kb = 0.0
@@ -136,7 +144,7 @@ task GetReactionRate( r : Exports.Reaction, P : double, T : double, C : double[n
       Kb = CompBackwardRateCoeff(r, Kf, P, T, G)
       for i = 0, r.Npducts do
          var ind = r.pducts[i].ind
-         b *= pow(C[ind],r.pducts[i].nu)
+         b *= pow(C[ind],r.pducts[i].ord)
       end
    end
    -- Third body efficiency
@@ -145,7 +153,7 @@ task GetReactionRate( r : Exports.Reaction, P : double, T : double, C : double[n
       c = 0.0
       for i = 0, r.Nthirdb do
          var ind = r.thirdb[i].ind
-         c += C[ind]*r.thirdb[i].nu
+         c += C[ind]*r.thirdb[i].eff
       end
    end
    -- Compute reaction rate

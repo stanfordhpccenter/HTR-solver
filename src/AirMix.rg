@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -36,25 +36,19 @@ local    C = regentlib.c
 local fabs = regentlib.fabs(double)
 local pow  = regentlib.pow(double)
 local sqrt = regentlib.sqrt(double)
+local format = require("std/format")
 
 -- Constants
-
 local ATom  =  1e-10          -- Angstrom to meter
 local DToCm =  3.33564e-30    -- Debye to Coulomb meter
 
-local RGAS = 8.3144598        -- [J/(mol K)]
-local Na   = 6.02214086e23    -- [1/mol]
-local kb   = 1.38064852e-23   -- [m^2 kg /( s^2 K)]
-local PI   = 3.1415926535898
-
 Exports.nSpec = 5
+Exports.nReac = 5
 
 local SPECIES  = require 'Species'
 local REACTION = (require 'Reaction')(Exports.nSpec, 2, 5)
 
 struct Exports.Mixture {
-   nSpec : int
-   nReac : int
    species : SPECIES.Species[5]
    reactions : REACTION.Reaction[5]
    -- Max an min acceptable temeperatures
@@ -62,18 +56,21 @@ struct Exports.Mixture {
    TMin : double
 }
 
+local MultiComponent = (require 'MultiComponent')(SPECIES, REACTION, Exports.Mixture, Exports.nSpec, Exports.nReac)
+
 __demand(__inline)
 task Exports.InitMixture(config : SCHEMA.Config)
+   regentlib.assert(config.Flow.mixture.type == SCHEMA.MixtureModel_AirMix,
+                    "This executable is expecting AirMix in the input file");
    var Mix : Exports.Mixture
-   Mix.nSpec = Exports.nSpec
 --------------------------------------
 -- Set Species
 --------------------------------------
    -- N2
    var iN2 = 0
-   Mix.species[iN2].Name = "N2"
+   format.snprint([&int8](Mix.species[iN2].Name), 10, "N2")
    Mix.species[iN2].W = 2*14.0067e-3
-   Mix.species[iN2].Geom = 1
+   Mix.species[iN2].Geom = SPECIES.SpeciesGeom_Linear
    Mix.species[iN2].cpCoeff.TSwitch1 = 1000.0007
    Mix.species[iN2].cpCoeff.TSwitch2 = 6000.0007
    Mix.species[iN2].cpCoeff.TMin     = 0200.0000
@@ -88,9 +85,9 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.species[iN2].DiffCoeff.Z298    = 4.000
    -- O2
    var iO2 = 1
-   Mix.species[iO2].Name = "O2"
+   format.snprint([&int8](Mix.species[iO2].Name), 10, "O2")
    Mix.species[iO2].W = 2*15.9994e-3
-   Mix.species[iO2].Geom = 1
+   Mix.species[iO2].Geom = SPECIES.SpeciesGeom_Linear
    Mix.species[iO2].cpCoeff.TSwitch1 = 1000.0007
    Mix.species[iO2].cpCoeff.TSwitch2 = 6000.0007
    Mix.species[iO2].cpCoeff.TMin     = 0200.0000
@@ -105,9 +102,9 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.species[iO2].DiffCoeff.Z298    = 3.800
    -- NO
    var iNO = 2
-   Mix.species[iNO].Name = "NO"
+   format.snprint([&int8](Mix.species[iNO].Name), 10, "NO")
    Mix.species[iNO].W = 14.0067e-3+15.9994e-3
-   Mix.species[iNO].Geom = 1
+   Mix.species[iNO].Geom = SPECIES.SpeciesGeom_Linear
    Mix.species[iNO].cpCoeff.TSwitch1 = 1000.0007
    Mix.species[iNO].cpCoeff.TSwitch2 = 6000.0007
    Mix.species[iNO].cpCoeff.TMin     = 0200.0000
@@ -122,9 +119,9 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.species[iNO].DiffCoeff.Z298    = 4.000
    -- N
    var iN = 3
-   Mix.species[iN].Name = "N"
+   format.snprint([&int8](Mix.species[iN].Name), 10, "N")
    Mix.species[iN].W = 14.0067e-3
-   Mix.species[iN].Geom = 0
+   Mix.species[iN].Geom = SPECIES.SpeciesGeom_Atom
    Mix.species[iN].cpCoeff.TSwitch1 = 1000.0007
    Mix.species[iN].cpCoeff.TSwitch2 = 6000.0007
    Mix.species[iN].cpCoeff.TMin     = 0200.0000
@@ -139,9 +136,9 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.species[iN].DiffCoeff.Z298    = 0.000
    -- O
    var iO = 4
-   Mix.species[iO].Name = "O"
+   format.snprint([&int8](Mix.species[iO].Name), 10, "O")
    Mix.species[iO].W = 15.9994e-3
-   Mix.species[iO].Geom = 0
+   Mix.species[iO].Geom = SPECIES.SpeciesGeom_Atom
    Mix.species[iO].cpCoeff.TSwitch1 = 1000.0007
    Mix.species[iO].cpCoeff.TSwitch2 = 6000.0007
    Mix.species[iO].cpCoeff.TMin     = 0200.0000
@@ -155,8 +152,6 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.species[iO].DiffCoeff.alpha   = 0.000*ATom
    Mix.species[iO].DiffCoeff.Z298    = 0.000
 
-
-   Mix.nReac = 5
    var i = 0
    -- Oxygen dissociation (O2 + X -> 2O + X)
    Mix.reactions[i].A    = 2.0e15
@@ -165,10 +160,10 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.reactions[i].has_backward = true
    -- Educts
    Mix.reactions[i].Neducts = 0
-   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iO2, 1.0)
+   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iO2, 1.0, 1.0)
    -- Products
    Mix.reactions[i].Npducts = 0
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iO, 2.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iO, 2.0, 2.0)
    -- Colliders
    Mix.reactions[i].Nthirdb = 0
    Mix.reactions[i] = REACTION.AddThirdb(Mix.reactions[i], iO2, 1.0)
@@ -185,11 +180,11 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.reactions[i].has_backward = true
    -- Educts
    Mix.reactions[i].Neducts = 0
-   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iNO,  1.0)
+   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iNO,  1.0, 1.0)
    -- Products
    Mix.reactions[i].Npducts = 0
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iO,  1.0)
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  1.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iO,  1.0, 1.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  1.0, 1.0)
    -- Colliders
    Mix.reactions[i].Nthirdb = 0
    Mix.reactions[i] = REACTION.AddThirdb(Mix.reactions[i], iO2,  1.0)
@@ -206,10 +201,10 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.reactions[i].has_backward = true
    -- Educts
    Mix.reactions[i].Neducts = 0
-   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iN2,  1.0)
+   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iN2,  1.0, 1.0)
    -- Products
    Mix.reactions[i].Npducts = 0
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  2.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  2.0, 2.0)
    -- Colliders
    Mix.reactions[i].Nthirdb = 0
    Mix.reactions[i] = REACTION.AddThirdb(Mix.reactions[i], iO2,  1.0)
@@ -226,12 +221,12 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.reactions[i].has_backward = true
    -- Educts
    Mix.reactions[i].Neducts = 0
-   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iN2,  1.0)
-   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i],  iO,  1.0)
+   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iN2,  1.0, 1.0)
+   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i],  iO,  1.0, 1.0)
    -- Products
    Mix.reactions[i].Npducts = 0
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i], iNO,  1.0)
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  1.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i], iNO,  1.0, 1.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  1.0, 1.0)
    -- Colliders
    Mix.reactions[i].Nthirdb = 0
 
@@ -243,16 +238,16 @@ task Exports.InitMixture(config : SCHEMA.Config)
    Mix.reactions[i].has_backward = true
    -- Educts
    Mix.reactions[i].Neducts = 0
-   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iNO,  1.0)
-   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i],  iO,  1.0)
+   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i], iNO,  1.0, 1.0)
+   Mix.reactions[i] = REACTION.AddEduct(Mix.reactions[i],  iO,  1.0, 1.0)
    -- Products
    Mix.reactions[i].Npducts = 0
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i], iO2,  1.0)
-   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  1.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i], iO2,  1.0, 1.0)
+   Mix.reactions[i] = REACTION.AddPduct(Mix.reactions[i],  iN,  1.0, 1.0)
    -- Colliders
    Mix.reactions[i].Nthirdb = 0
 
-   regentlib.assert(i+1 == Mix.nReac, "Something wrong with number of reactions in InitMixture")
+   regentlib.assert(i+1 == Exports.nReac, "Something wrong with number of reactions in InitMixture")
 
    -- Set maximum and minimum temperature
    Mix.TMax = math.huge
@@ -265,293 +260,10 @@ task Exports.InitMixture(config : SCHEMA.Config)
    return Mix
 end
 
-__demand(__inline)
-task Exports.GetSpeciesNames(Mix : Exports.Mixture)
-   var Names : regentlib.string[Exports.nSpec]
-   for i = 0, Exports.nSpec do
-      Names[i] = Mix.species[i].Name
-   end
-   return Names
-end
-
-__demand(__inline)
-task Exports.FindSpecies(name : int8[10], Mix : Exports.Mixture)
-   var iSpec = -1
-   for i = 0, Exports.nSpec do
-      if C.strcmp(Mix.species[i].Name, name) == 0 then
-         iSpec = i
-         break
-      end
-   end
-   regentlib.assert(iSpec > -1, "Species not found");
-   return iSpec
-end
-
-__demand(__inline)
-task Exports.ClipYi(Yi : double[Exports.nSpec])
-   for i = 0, Exports.nSpec do
-      Yi[i] max= 1.0e-60
-      Yi[i] min= 1.0
-   end
-   return Yi
-end
-
-__demand(__inline)
-task Exports.GetMolarWeightFromYi(Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var MixW = 0.0
-   for i = 0, Exports.nSpec do
-      MixW += Yi[i] / Mix.species[i].W
-   end
-   return 1.0/MixW
-end
-
-__demand(__inline)
-task Exports.GetMolarWeightFromXi(Xi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var MixW = 0.0
-   for i = 0, Exports.nSpec do
-      MixW += Xi[i] * Mix.species[i].W
-   end
-   return MixW
-end
-
-__demand(__inline)
-task Exports.GetMolarFractions(MixW : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   for i = 0, Exports.nSpec do
-      Yi[i] *= MixW/Mix.species[i].W
-   end
-   return Yi
-end
-
-__demand(__inline)
-task Exports.GetMassFractions(MixW : double, Xi : double[Exports.nSpec], Mix : Exports.Mixture)
-   for i = 0, Exports.nSpec do
-      Xi[i] *= Mix.species[i].W/MixW
-   end
-   return Xi
-end
-
-__demand(__inline)
-task Exports.GetRhoFromRhoYi(rhoYi : double[Exports.nSpec])
-   var rho = 0.0
-   for i = 0, Exports.nSpec do
-      rho += rhoYi[i]
-   end
-   return rho
-end
-
-__demand(__inline)
-task Exports.GetYi(rho : double, rhoYi : double[Exports.nSpec])
-   var rhoInv = 1.0/rho
-   for i = 0, Exports.nSpec do
-      rhoYi[i] *= rhoInv
-   end
-   return rhoYi
-end
-
-__demand(__inline)
-task Exports.GetRhoYiFromYi(rho : double, Yi : double[Exports.nSpec])
-   for i = 0, Exports.nSpec do
-      Yi[i] *= rho
-   end
-   return Yi
-end
-
-__demand(__inline)
-task Exports.GetRho(P : double, T : double, MixW : double, Mix : Exports.Mixture)
-   return P * MixW / (RGAS * T)
-end
-
-__demand(__inline)
-task Exports.GetHeatCapacity(T : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var cp = 0.0
-   for i = 0, Exports.nSpec do
-      cp += Yi[i]*SPECIES.GetCp(Mix.species[i], T)
-   end
-   return cp
-end
-
-__demand(__inline)
-task Exports.GetEnthalpy(T : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var Enth = 0.0
-   for i = 0, Exports.nSpec do
-      Enth += Yi[i]*SPECIES.GetEnthalpy(Mix.species[i], T)
-   end
-   return Enth
-end
-
-__demand(__inline)
-task Exports.GetSpeciesEnthalpy(i : int, T : double,  Mix : Exports.Mixture)
-   return SPECIES.GetEnthalpy(Mix.species[i], T)
-end
-
-__demand(__inline)
-task Exports.GetSpeciesMolarWeight(i : int, Mix : Exports.Mixture)
-   return Mix.species[i].W
-end
-
-__demand(__inline)
-task Exports.GetInternalEnergy(T : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var e = 0.0
-   for i = 0, Exports.nSpec do
-      e += Yi[i]*(SPECIES.GetEnthalpy(Mix.species[i], T) - RGAS*T/Mix.species[i].W)
-   end
-   return e
-end
-
-__demand(__inline)
-task Exports.GetSpecificInternalEnergy(i : int, T : double,  Mix : Exports.Mixture)
-   return SPECIES.GetEnthalpy(Mix.species[i], T) - RGAS*T/Mix.species[i].W
-end
-
-__demand(__inline)
-task Exports.GetTFromInternalEnergy(e0 : double, T : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var MAXITS = 1000
-   var TOL = 1e-5
-   var dfdT = 1.0
-   for j = 0, MAXITS do
-      var f = e0 - Exports.GetInternalEnergy(T, Yi, Mix)
-      if (fabs(f/dfdT) < TOL) then break end
-      dfdT = 0.0
-      for i = 0, Exports.nSpec do
-         dfdT += Yi[i]*(SPECIES.GetCp(Mix.species[i], T) - RGAS/Mix.species[i].W)
-      end
-      T += f/dfdT
--- TODO: the assert is not yet supported by the cuda compiler 
---      regentlib.assert(j~=MAXITS, "GetTFromInternalEnergy did not converge")
-   end
-   return T
-end
-
-__demand(__inline)
-task Exports.isValidInternalEnergy(e : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var valid = true
-   if     e < Exports.GetInternalEnergy(Mix.TMin, Yi, Mix) then valid = false
-   elseif e > Exports.GetInternalEnergy(Mix.TMax, Yi, Mix) then valid = false
-   end
-   return valid
-end
-
-__demand(__inline)
-task Exports.GetTFromRhoAndP(rho: double, MixW : double, P : double)
-   return P*MixW/(rho*RGAS)
-end
-
-__demand(__inline)
-task Exports.GetPFromRhoAndT(rho: double, MixW : double, T : double)
-   return rho*RGAS*T/MixW
-end
-
-__demand(__inline)
-task Exports.GetViscosity(T : double, Xi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var muk : double[Exports.nSpec]
-   for i = 0, Exports.nSpec do
-      muk[i] = SPECIES.GetMu(Mix.species[i], T)
-   end
-
-   var mu = 0.0
-   for i = 0, Exports.nSpec do
-      var den = 0.0;
-      for j = 0, Exports.nSpec do
-         var Phi = pow(1 + sqrt(muk[i]/muk[j]) * pow(Mix.species[j].W/Mix.species[i].W, 0.25) , 2);
-         Phi /= sqrt(8*(1 + Mix.species[i].W/Mix.species[j].W));
-         den += Xi[j]*Phi;
-      end
-      mu += Xi[i]*muk[i]/den;
-   end
-   return mu;
-end
-
-__demand(__inline)
-task Exports.GetHeatConductivity(T : double, Xi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var a = 0.0
-   var b = 0.0
-   for i = 0, Exports.nSpec do
-      var lami = SPECIES.GetLam(Mix.species[i], T)
-      a += Xi[i]*lami
-      b += Xi[i]/lami
-   end
-   return 0.5*(a + 1/b)
-end
-
-__demand(__inline)
-task Exports.GetGamma(T : double, MixW : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var cp = Exports.GetHeatCapacity(T, Yi, Mix)
-   return cp/(cp - RGAS/MixW)
-end
-
-__demand(__inline)
-task Exports.GetSpeedOfSound(T : double, gamma : double, MixW : double, Mix : Exports.Mixture)
-   return sqrt(gamma * RGAS * T / MixW)
-end
-
-__demand(__inline)
-task Exports.GetDiffusivity(P: double, T : double, MixW : double, Xi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var invDi : double[Exports.nSpec*Exports.nSpec]
-   var Di    : double[Exports.nSpec]
-   for i = 0, Exports.nSpec do
-      invDi[i*Exports.nSpec+i] = 0.0
-      for j = 0, i do
-         invDi[j*Exports.nSpec+i] = 1.0/SPECIES.GetDif(Mix.species[i], Mix.species[j], P, T)
-         invDi[i*Exports.nSpec+j] = invDi[j*Exports.nSpec+i]
-      end
-   end
-
-   for i = 0, Exports.nSpec do
-      var num = 0.0
-      var den = 0.0
-      for j = 0, i do
-         num += Xi[j]*Mix.species[j].W;
-         den += Xi[j]*invDi[i*Exports.nSpec+j];
-      end
-      for j = i+1, Exports.nSpec do
-         num += Xi[j]*Mix.species[j].W
-         den += Xi[j]*invDi[i*Exports.nSpec+j]
-      end
-      Di[i] = num/(MixW*den)
-   end
-   return Di
-end
-
-__demand(__inline)
-task Exports.GetProductionRates(rho : double, P : double, T : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var G : double[Exports.nSpec]
-   var C : double[Exports.nSpec]
-   var w : double[Exports.nSpec]
-   for i = 0, Exports.nSpec do
-      w[i] = 0.0;
-      C[i] = Yi[i]*rho/Mix.species[i].W
-      G[i] = SPECIES.GetFreeEnthalpy(Mix.species[i], T)
-   end
-
-   for i = 0, Mix.nReac do
-      w = REACTION.AddProductionRates(Mix.reactions[i], P, T, C, G, w)
-   end
-
-   -- From [mol/(s m^3)] to [kg/(s m^3)]
-   for i = 0, Exports.nSpec do
-      w[i] *= Mix.species[i].W
-   end
-   return w
-end
-
-__demand(__inline)
-task Exports.Getdpde(rho : double, gamma : double, Mix : Exports.Mixture)
-   return rho*(gamma - 1)
-end
-
-__demand(__inline)
-task Exports.Getdpdrhoi(gamma : double, T : double, Yi : double[Exports.nSpec], Mix : Exports.Mixture)
-   var e = 0.0
-   var ei : double[Exports.nSpec]
-   for i = 0, Exports.nSpec do
-      ei[i] = (SPECIES.GetEnthalpy(Mix.species[i], T) - RGAS*T/Mix.species[i].W)
-      e += Yi[i]*ei[i]
-   end
-   var dpdrhoi : double[Exports.nSpec]
-   for i = 0, Exports.nSpec do
-      dpdrhoi[i] = RGAS*T/Mix.species[i].W + (gamma - 1)*(e - ei[i])
-   end
-   return dpdrhoi
+-- Copy all elements form MultiComponent
+for k, t in pairs(MultiComponent) do
+   local v = k
+   Exports[v] = t
 end
 
 return Exports end

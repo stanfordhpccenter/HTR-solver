@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -29,14 +29,14 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
+return function(SCHEMA, MIX, METRIC, Fluid_columns, DEBUG_OUTPUT) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
 -------------------------------------------------------------------------------
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
-local OP    = require "prometeo_operators"
+local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -51,27 +51,18 @@ local Properties = CONST.Properties
 -- MIXTURE PROPERTIES ROUTINES
 -------------------------------------------------------------------------------
 
-__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.UpdatePropertiesFromPrimitive(Fluid    : region(ispace(int3d), Fluid_columns),
-                                           ModCells : region(ispace(int3d), Fluid_columns),
-                                           mix : MIX.Mixture)
+extern task Exports.UpdatePropertiesFromPrimitive(Fluid    : region(ispace(int3d), Fluid_columns),
+                                                  ModCells : region(ispace(int3d), Fluid_columns),
+                                                  mix : MIX.Mixture)
 where
    ModCells <= Fluid,
    reads(Fluid.[Primitives]),
+   writes(Fluid.MassFracs),
    writes(Fluid.[Properties])
-do
-   __demand(__openmp)
-   for c in ModCells do
-      var MixW     = MIX.GetMolarWeightFromXi(Fluid[c].MolarFracs, mix)
-      Fluid[c].rho = MIX.GetRho(Fluid[c].pressure, Fluid[c].temperature, MixW, mix)
-      Fluid[c].mu  = MIX.GetViscosity(       Fluid[c].temperature,       Fluid[c].MolarFracs, mix)
-      Fluid[c].lam = MIX.GetHeatConductivity(Fluid[c].temperature,       Fluid[c].MolarFracs, mix)
-      Fluid[c].Di  = MIX.GetDiffusivity(Fluid[c].pressure, Fluid[c].temperature, MixW, Fluid[c].MolarFracs, mix)
-      var Yi = MIX.GetMassFractions(MixW, Fluid[c].MolarFracs, mix)
-      var gamma = MIX.GetGamma(Fluid[c].temperature, MixW, Yi, mix)
-      Fluid[c].SoS = MIX.GetSpeedOfSound(Fluid[c].temperature, gamma, MixW, mix)
-   end
 end
+
+Exports.UpdatePropertiesFromPrimitive:set_calling_convention(regentlib.convention.manual())
+Exports.UpdatePropertiesFromPrimitive:set_task_id(TYPES.TID_UpdatePropertiesFromPrimitive)
 
 -------------------------------------------------------------------------------
 -- CONSERVED TO PRIMITIVE/PRIMITIVE TO CONSERVED ROUTINES
@@ -82,15 +73,13 @@ task Exports.UpdateConservedFromPrimitive(Fluid    : region(ispace(int3d), Fluid
                                           ModCells : region(ispace(int3d), Fluid_columns),
                                           mix : MIX.Mixture)
 where
-   reads(Fluid.[Primitives]),
+   reads(Fluid.{MassFracs, temperature, velocity}),
    reads(Fluid.rho),
    writes(Fluid.Conserved)
 do
    __demand(__openmp)
    for c in ModCells do
-      var MixW  = MIX.GetMolarWeightFromXi(Fluid[c].MolarFracs, mix)
-      var Yi    = MIX.GetMassFractions(MixW, Fluid[c].MolarFracs, mix)
-      var rhoYi = MIX.GetRhoYiFromYi(Fluid[c].rho, Yi)
+      var rhoYi = MIX.GetRhoYiFromYi(Fluid[c].rho, Fluid[c].MassFracs)
       var Conserved : double[nEq]
       for i=0, nSpec do
          Conserved[i] = rhoYi[i]
@@ -99,7 +88,7 @@ do
          Conserved[i+irU] = Fluid[c].rho*Fluid[c].velocity[i]
       end
       Conserved[irE] = (Fluid[c].rho*(0.5*MACRO.dot(Fluid[c].velocity, Fluid[c].velocity)
-                     + MIX.GetInternalEnergy(Fluid[c].temperature, Yi, mix)))
+                     + MIX.GetInternalEnergy(Fluid[c].temperature, Fluid[c].MassFracs, mix)))
       -- TODO this trick is needed because of the bug in the write privileges in regent
       Fluid[c].Conserved = Conserved
    end
@@ -141,53 +130,29 @@ end
 -- GRADIENT ROUTINES
 -------------------------------------------------------------------------------
 
-__demand(__parallel, __cuda, __leaf)
-task Exports.GetVelocityGradients(Fluid : region(ispace(int3d), Fluid_columns),
-                                  Fluid_bounds : rect3d)
+extern task Exports.GetVelocityGradients(Ghost : region(ispace(int3d), Fluid_columns),
+                                         Fluid : region(ispace(int3d), Fluid_columns),
+                                         Fluid_bounds : rect3d)
 where
-   reads(Fluid.{gradX, gradY, gradZ}),
-   reads(Fluid.velocity),
+   reads(Ghost.velocity),
+   reads(Fluid.{nType_x, nType_y, nType_z}),
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
    writes(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ})
-do
-   __demand(__openmp)
-   for c in Fluid do
-
-      -- X direction
-      var cm1_x = (c+{-1, 0, 0}) % Fluid_bounds
-      var cp1_x = (c+{ 1, 0, 0}) % Fluid_bounds
-      Fluid[c].velocityGradientX = MACRO.vv_add(MACRO.vs_mul(MACRO.vv_sub(Fluid[c    ].velocity, Fluid[cm1_x].velocity), Fluid[c].gradX[0]),
-                                                MACRO.vs_mul(MACRO.vv_sub(Fluid[cp1_x].velocity, Fluid[c    ].velocity), Fluid[c].gradX[1]))
-
-      -- Y direction
-      var cm1_y = (c+{ 0,-1, 0}) % Fluid_bounds
-      var cp1_y = (c+{ 0, 1, 0}) % Fluid_bounds
-      Fluid[c].velocityGradientY = MACRO.vv_add(MACRO.vs_mul(MACRO.vv_sub(Fluid[c    ].velocity, Fluid[cm1_y].velocity), Fluid[c].gradY[0]),
-                                                MACRO.vs_mul(MACRO.vv_sub(Fluid[cp1_y].velocity, Fluid[c    ].velocity), Fluid[c].gradY[1]))
-
-
-      -- Z direction
-      var cm1_z = (c+{ 0, 0,-1}) % Fluid_bounds
-      var cp1_z = (c+{ 0, 0, 1}) % Fluid_bounds
-      Fluid[c].velocityGradientZ = MACRO.vv_add(MACRO.vs_mul(MACRO.vv_sub(Fluid[c    ].velocity, Fluid[cm1_z].velocity), Fluid[c].gradZ[0]),
-                                                MACRO.vs_mul(MACRO.vv_sub(Fluid[cp1_z].velocity, Fluid[c    ].velocity), Fluid[c].gradZ[1]))
-  end
 end
+Exports.GetVelocityGradients:set_calling_convention(regentlib.convention.manual())
+Exports.GetVelocityGradients:set_task_id(TYPES.TID_GetVelocityGradients)
 
-__demand(__parallel, __cuda, __leaf)
-task Exports.GetTemperatureGradients(Fluid : region(ispace(int3d), Fluid_columns),
-                                     Fluid_bounds : rect3d)
+extern task Exports.GetTemperatureGradients(Ghost : region(ispace(int3d), Fluid_columns),
+                                            Fluid : region(ispace(int3d), Fluid_columns),
+                                            Fluid_bounds : rect3d)
 where
-   reads(Fluid.{gradX, gradY, gradZ}),
-   reads(Fluid.temperature),
+   reads(Ghost.temperature),
+   reads(Fluid.{nType_x, nType_y, nType_z}),
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
    writes(Fluid.temperatureGradient)
-do
-   __demand(__openmp)
-   for c in Fluid do
-      Fluid[c].temperatureGradient = array([OP.emitXderiv(rexpr Fluid end, 'temperature', c, rexpr Fluid_bounds end)],
-                                           [OP.emitYderiv(rexpr Fluid end, 'temperature', c, rexpr Fluid_bounds end)],
-                                           [OP.emitZderiv(rexpr Fluid end, 'temperature', c, rexpr Fluid_bounds end)])
-  end
 end
+Exports.GetTemperatureGradients:set_calling_convention(regentlib.convention.manual())
+Exports.GetTemperatureGradients:set_task_id(TYPES.TID_GetTemperatureGradient)
 
 return Exports end
 

@@ -18,6 +18,7 @@ local struct Fluid_columns {
    cellWidth : double[3];
    -- Primitive variables
    temperature : double;
+   MassFracs   : double[nSpec];
    MolarFracs  : double[nSpec];
    velocity    : double[3];
    -- Properties
@@ -38,6 +39,7 @@ where
 do
    fill(Fluid.cellWidth, array(1.0, 1.0, 1.0))
    fill(Fluid.temperature, 0.0)
+   fill(Fluid.MassFracs,  [UTIL.mkArrayConstant(nSpec, rexpr 1.0 end)])
    fill(Fluid.MolarFracs, [UTIL.mkArrayConstant(nSpec, rexpr 1.0 end)])
    fill(Fluid.velocity, array(0.0, 0.0, 0.0))
    fill(Fluid.rho, 1.0)
@@ -51,8 +53,9 @@ task main()
 
    -- Init the mixture
    var config : Config
-   config.Flow.gasConstant = 1.0
-   config.Flow.gamma = 1.4
+   config.Flow.mixture.type = SCHEMA.MixtureModel_ConstPropMix
+   config.Flow.mixture.u.ConstPropMix.gasConstant = 1.0
+   config.Flow.mixture.u.ConstPropMix.gamma = 1.4
 
    var Mix = MIX.InitMixture(config)
 
@@ -65,25 +68,25 @@ task main()
    -- Test acustic cfl
    fill(Fluid.velocity,  array(1.0, 1.0, 1.0))
    fill(Fluid.SoS, 10.0)
-   var s = CFL.CalculateMaxSpectralRadius(Fluid, Mix)
+   var s = CFL.CalculateMaxSpectralRadius(Fluid, Fluid, Mix)
    regentlib.assert(fabs(s/11.0 - 1.0) < 1e-3, "cflTest: ERROR in acustic cfl calculation")
    fill(Fluid.velocity,  array(0.0, 0.0, 0.0))
 
    -- Test momentum diffusion cfl
    fill(Fluid.mu, 10.0)
-   s = CFL.CalculateMaxSpectralRadius(Fluid, Mix)
+   s = CFL.CalculateMaxSpectralRadius(Fluid, Fluid, Mix)
    regentlib.assert(fabs(s/40.0 - 1.0) < 1e-3, "cflTest: ERROR in momentum diffusion cfl calculation")
    fill(Fluid.mu, 0.0)
 
    -- Test energy diffusion cfl
    fill(Fluid.lam, 10.0)
-   s = CFL.CalculateMaxSpectralRadius(Fluid, Mix)
+   s = CFL.CalculateMaxSpectralRadius(Fluid, Fluid, Mix)
    regentlib.assert(fabs(s/11.42857 - 1.0) < 1e-3, "cflTest: ERROR in energy diffusion cfl calculation")
    fill(Fluid.lam, 0.0)
 
    -- Test species diffusion cfl
    fill(Fluid.Di, [UTIL.mkArrayConstant(nSpec, rexpr 10.0 end)])
-   s = CFL.CalculateMaxSpectralRadius(Fluid, Mix)
+   s = CFL.CalculateMaxSpectralRadius(Fluid, Fluid, Mix)
    regentlib.assert(fabs(s/40.0 - 1.0) < 1e-3, "cflTest: ERROR in species diffusion cfl calculation")
    fill(Fluid.Di, [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
 

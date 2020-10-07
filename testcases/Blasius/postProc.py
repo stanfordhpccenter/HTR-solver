@@ -56,8 +56,8 @@ def process():
    xOrigin = data["Grid"]["origin"][0]
    yOrigin = data["Grid"]["origin"][1]
 
-   R = data["Flow"]["gasConstant"]
-   mu = data["Flow"]["viscosityModel"]["Visc"]
+   R = data["Flow"]["mixture"]["gasConstant"]
+   mu = data["Flow"]["mixture"]["viscosityModel"]["Visc"]
 
    T  = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
    P  = data["BC"]["xBCLeft"]["P"]

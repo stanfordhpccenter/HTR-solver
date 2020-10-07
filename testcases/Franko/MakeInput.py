@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import argparse
 import sys
@@ -40,15 +40,15 @@ FTT    = config["Case"]["FlowThroughTimesNoStat"]
 FTTS   = config["Case"]["FlowThroughTimesStat"]
 
 # Read properties
-Pr              = config["Flow"]["prandtl"]
-gamma           = config["Flow"]["gamma"]
-R               = config["Flow"]["gasConstant"]
+Pr    = config["Flow"]["mixture"]["prandtl"]
+gamma = config["Flow"]["mixture"]["gamma"]
+R     = config["Flow"]["mixture"]["gasConstant"]
 
 # Simulation setup
 assert config["Flow"]["turbForcing"]["type"] == "OFF"
-assert config["Flow"]["initCase"] == "Restart"
+assert config["Flow"]["initCase"]["type"] == "Restart"
 restartDir = "InitialCase"
-config["Flow"]["restartDir"] = restartDir
+config["Flow"]["initCase"]["restartDir"] = restartDir
 
 # Free-stream mixture properties
 cInf  = np.sqrt(gamma*R*TInf)
@@ -145,6 +145,16 @@ uTau = np.sqrt(TauW/rhoW)
 deltaNu = muW/(uTau*rhoW)
 tNu = deltaNu**2*rhoW/muW
 
+# Get VorticityScale
+delta = 0.0
+yBin = etaB*x0/np.sqrt(Rex0)
+for i in range(Np):
+   if (uB[i] > 0.99):
+      delta = yBin[i]
+      break
+
+config["Integrator"]["vorticityScale"] = UInf/delta
+
 # Rescale quantities
 uB *= UInf
 vB *= UInf
@@ -194,7 +204,8 @@ def objective(yStretching):
                                config["Grid"]["yNum"], 
                                config["Grid"]["yType"],
                                yStretching,
-                               False)
+                               False,
+                               StagMinus=True)
    return dy[1]/deltaNu - yPlus
 
 config["Grid"]["yStretching"], = fsolve(objective, 1.0)
@@ -213,7 +224,8 @@ yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
                             False,
-                            deltaNu*yPlus)
+                            StagMinus=True,
+                            dx=deltaNu*yPlus)
 
 zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
                             config["Grid"]["zWidth"],
@@ -229,13 +241,33 @@ print(config["Grid"]["xWidth"]/deltaNu, " x ",
       config["Grid"]["zWidth"]/deltaNu)
 
 print(dx[0]/deltaNu, " x ",
-      dy[0]/deltaNu, " x ",
+      dy[1]/deltaNu, " x ",
       dz[0]/deltaNu)
 
-# Load mapping
-Ntiles = config["Mapping"]["tiles"]
+# Set maxTime
+config["Integrator"]["maxTime"] = config["Grid"]["xWidth"]/UInf*FTT
 
-assert config["Grid"]["xNum"] % Ntiles[0] == 0 
+with open("NoStats.json", 'w') as fout:
+   json.dump(config, fout, indent=3)
+
+config["Integrator"]["maxTime"] = config["Grid"]["xWidth"]/UInf*FTT + FTTS*2*np.pi/config["BC"]["yBCLeft"]["omega"][0]
+
+# Setup averages
+config["IO"]["YZAverages"] = [{"fromCell" : [0, 0, 0],          "uptoCell" : [config["Grid"]["xNum"]+1, 0, config["Grid"]["zNum"]]}]
+
+with open("Stats.json", 'w') as fout:
+   json.dump(config, fout, indent=3)
+
+# Load mapping
+assert config["Mapping"]["tiles"][0] % config["Mapping"]["tilesPerRank"][0] == 0
+assert config["Mapping"]["tiles"][1] % config["Mapping"]["tilesPerRank"][1] == 0
+assert config["Mapping"]["tiles"][2] % config["Mapping"]["tilesPerRank"][2] == 0
+Ntiles = config["Mapping"]["tiles"]
+Ntiles[0] = int(Ntiles[0]/config["Mapping"]["tilesPerRank"][0])
+Ntiles[1] = int(Ntiles[1]/config["Mapping"]["tilesPerRank"][1])
+Ntiles[2] = int(Ntiles[2]/config["Mapping"]["tilesPerRank"][2])
+
+assert config["Grid"]["xNum"] % Ntiles[0] == 0
 assert config["Grid"]["yNum"] % Ntiles[1] == 0
 assert config["Grid"]["zNum"] % Ntiles[2] == 0
 
@@ -244,20 +276,6 @@ NyTile = int(config["Grid"]["yNum"]/Ntiles[1])
 NzTile = int(config["Grid"]["zNum"]/Ntiles[2])
 
 halo = [1, 1, 0]
-
-# Set maxTime
-config["Integrator"]["maxTime"] = config["Grid"]["xWidth"]/UInf*FTT
-
-with open("NoStats.json", 'w') as fout:
-   json.dump(config, fout, indent=3)
-
-config["Integrator"]["maxTime"] = config["Grid"]["xWidth"]/UInf*FTT + FTTS*2*np.pi/config["BC"]["yBCLeftInflowProfile"]["omega"][0]
-
-# Setup averages
-config["IO"]["YZAverages"] = [{"fromCell" : [0, 0, 0],          "uptoCell" : [config["Grid"]["xNum"]+1, 0, config["Grid"]["zNum"]]}]
-
-with open("Stats.json", 'w') as fout:
-   json.dump(config, fout, indent=3)
 
 ##############################################################################
 #                     Produce restart and profile files                      #

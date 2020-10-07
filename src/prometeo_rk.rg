@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -85,36 +85,36 @@ Exports.mkInitializeTimeDerivatives = terralib.memoize(function(Integrator_impli
    return InitializeTimeDerivatives
 end)
 
-Exports.mkUpdateVarsPred = terralib.memoize(function(STAGE)
-   local UpdateVars
-   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task UpdateVars(Fluid : region(ispace(int3d), Fluid_columns),
-                   Integrator_deltaTime : double,
-                   Integrator_implicitChemistry : bool)
-   where
-      reads(Fluid.Conserved_old),
-      reads(Fluid.Conserved_t),
-      reads(Fluid.Conserved),
-      writes(Fluid.Conserved_hat)
-   do
-      var dt = Integrator_deltaTime
-      if Integrator_implicitChemistry then
-         dt *= 0.5
-      end
-      __demand(__openmp)
-      for c in Fluid do
-         -- Set provvisional values for next substep
-         var Conserved_hat : double[nEq]
-         for i=0, nEq do
-            Conserved_hat[i] =  [RK_C[STAGE][1]] * Fluid[c].Conserved_old[i]
-                              + [RK_C[STAGE][2]] * Fluid[c].Conserved[i]
-                              + [RK_C[STAGE][3]] * Fluid[c].Conserved_t[i] * dt
-         end
-         Fluid[c].Conserved_hat = Conserved_hat
-      end
-   end
-   return UpdateVars
-end)
+--Exports.mkUpdateVarsPred = terralib.memoize(function(STAGE)
+--   local UpdateVars
+--   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
+--   task UpdateVars(Fluid : region(ispace(int3d), Fluid_columns),
+--                   Integrator_deltaTime : double,
+--                   Integrator_implicitChemistry : bool)
+--   where
+--      reads(Fluid.Conserved_old),
+--      reads(Fluid.Conserved_t),
+--      reads(Fluid.Conserved),
+--      writes(Fluid.Conserved_hat)
+--   do
+--      var dt = Integrator_deltaTime
+--      if Integrator_implicitChemistry then
+--         dt *= 0.5
+--      end
+--      __demand(__openmp)
+--      for c in Fluid do
+--         -- Set provvisional values for next substep
+--         var Conserved_hat : double[nEq]
+--         for i=0, nEq do
+--            Conserved_hat[i] =  [RK_C[STAGE][1]] * Fluid[c].Conserved_old[i]
+--                              + [RK_C[STAGE][2]] * Fluid[c].Conserved[i]
+--                              + [RK_C[STAGE][3]] * Fluid[c].Conserved_t[i] * dt
+--         end
+--         Fluid[c].Conserved_hat = Conserved_hat
+--      end
+--   end
+--   return UpdateVars
+--end)
 
 Exports.mkUpdateVarsCorr = terralib.memoize(function(STAGE)
    local UpdateVars

@@ -79,6 +79,8 @@ def progressbar(it, prefix="", suffix = '', decimals = 1, length = 100, fill = '
 parser = argparse.ArgumentParser()
 parser.add_argument('--sampledir', nargs='?', const='.', default='.',
                     help='directory with all the simulation output')
+parser.add_argument('--debugOut', default=False, action='store_true',
+                    help='flag to process debug output of the simulation')
 args = parser.parse_args()
 sample_dir = os.path.abspath(args.sampledir)
 
@@ -93,7 +95,11 @@ if not os.path.exists(out_dir):
     os.makedirs(out_dir)
 
 # Check for solution snapshots
-snapshots = glob.glob(os.path.join(sample_dir,"fluid_iter*"))
+if (args.debugOut):
+   snapshots = glob.glob(os.path.join(sample_dir,"debugOut"))
+else:
+   snapshots = glob.glob(os.path.join(sample_dir,"fluid_iter*"))
+if (len(snapshots) == 0): assert False, "No solution files provided"
 
 # sort files by timestep
 snapshots.sort(key=lambda x: x[len(os.path.join(sample_dir, "fluid_iter")):])
@@ -204,6 +210,22 @@ with open('out_fluid.xmf', 'w') as xmf_out:
                        .replace("@HDF_FILE", "%s" % solutionfile)
                        #.replace("@HDF_FILE", "%s" % tl)
                        .replace("@CELLS", "%s %s %s" % (nx,ny,nz)))
+
+         if (args.debugOut):
+            xmf_out.write(XMF_SOLUTION_SCALAR
+                          .replace("@NAME","%s" % "shockSensorX")
+                          .replace("@HDF_FILE", "%s" % tl)
+                          .replace("@CELLS", "%s %s %s" % (nx,ny,nz)))
+
+            xmf_out.write(XMF_SOLUTION_SCALAR
+                          .replace("@NAME","%s" % "shockSensorY")
+                          .replace("@HDF_FILE", "%s" % tl)
+                          .replace("@CELLS", "%s %s %s" % (nx,ny,nz)))
+
+            xmf_out.write(XMF_SOLUTION_SCALAR
+                          .replace("@NAME","%s" % "shockSensorZ")
+                          .replace("@HDF_FILE", "%s" % tl)
+                          .replace("@CELLS", "%s %s %s" % (nx,ny,nz)))
 
 
          xmf_out.write(XMF_TILE_FOOTER)

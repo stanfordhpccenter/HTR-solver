@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -39,6 +39,7 @@ local sqrt = regentlib.sqrt(double)
 local UTIL = require 'util-desugared'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
+local format = require "std/format"
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -55,6 +56,8 @@ local Properties = CONST.Properties
 
 local struct Averages_columns {
    weight : double;
+   -- Grid point
+   centerCoordinates : double[3];
    -- Primitive variables
    pressure_avg : double;
    pressure_rms : double;
@@ -130,6 +133,8 @@ local struct Averages_columns {
 
 local AveragesVars = terralib.newlist({
    'weight',
+   -- Grid point
+   'centerCoordinates',
    -- Primitive variables
    'pressure_avg',
    'pressure_rms',
@@ -202,18 +207,25 @@ local AveragesVars = terralib.newlist({
    'wYi_favg'
 })
 
-local HDF = (require 'hdf_helper')(int2d, int2d, Averages_columns,
-                                                 AveragesVars,
-                                                 {},
-                                                 {SpeciesNames={nSpec,20}})
+local HDF_RAKES = (require 'hdf_helper')(int2d, int2d, Averages_columns,
+                                                       AveragesVars,
+                                                       {},
+                                                       {SpeciesNames={nSpec,20}})
+
+local HDF_PLANES = (require 'hdf_helper')(int3d, int3d, Averages_columns,
+                                                        AveragesVars,
+                                                        {},
+                                                        {SpeciesNames={nSpec,20}})
 
 Exports.AvgList = {
-   XAverages = regentlib.newsymbol(),
-   YAverages = regentlib.newsymbol(),
-   ZAverages = regentlib.newsymbol(),
-   XAverages_copy = regentlib.newsymbol(),
-   YAverages_copy = regentlib.newsymbol(),
-   ZAverages_copy = regentlib.newsymbol(),
+   -- 2D averages
+   YZAverages = regentlib.newsymbol(),
+   XZAverages = regentlib.newsymbol(),
+   XYAverages = regentlib.newsymbol(),
+   YZAverages_copy = regentlib.newsymbol(),
+   XZAverages_copy = regentlib.newsymbol(),
+   XYAverages_copy = regentlib.newsymbol(),
+   -- partitions for IO
    is_Xrakes = regentlib.newsymbol(),
    is_Yrakes = regentlib.newsymbol(),
    is_Zrakes = regentlib.newsymbol(),
@@ -223,16 +235,48 @@ Exports.AvgList = {
    Xrakes_copy = regentlib.newsymbol(),
    Yrakes_copy = regentlib.newsymbol(),
    Zrakes_copy = regentlib.newsymbol(),
+   -- partitions for average collection
+   p_Xrakes = regentlib.newsymbol(),
+   p_Yrakes = regentlib.newsymbol(),
+   p_Zrakes = regentlib.newsymbol(),
+   -- considered partitions of the Fluid domain
+   p_Fluid_YZAvg = regentlib.newsymbol("p_Fluid_YZAvg"),
+   p_Fluid_XZAvg = regentlib.newsymbol("p_Fluid_XZAvg"),
+   p_Fluid_XYAvg = regentlib.newsymbol("p_Fluid_XYAvg"),
+   -- tiles of Fluid where the average kernels will be launched
+   YZAvg_tiles = regentlib.newsymbol(),
+   XZAvg_tiles = regentlib.newsymbol(),
+   XYAvg_tiles = regentlib.newsymbol(),
 
-   XAverages_local = regentlib.newsymbol(),
-   YAverages_local = regentlib.newsymbol(),
-   ZAverages_local = regentlib.newsymbol(),
-   is_Xrakes_local = regentlib.newsymbol(),
-   is_Yrakes_local = regentlib.newsymbol(),
-   is_Zrakes_local = regentlib.newsymbol(),
-   p_Xrakes_local = regentlib.newsymbol(),
-   p_Yrakes_local = regentlib.newsymbol(),
-   p_Zrakes_local = regentlib.newsymbol(),
+   -- 1D averages
+   XAverages = regentlib.newsymbol(),
+   YAverages = regentlib.newsymbol(),
+   ZAverages = regentlib.newsymbol(),
+   XAverages_copy = regentlib.newsymbol(),
+   YAverages_copy = regentlib.newsymbol(),
+   ZAverages_copy = regentlib.newsymbol(),
+   -- partitions for average collection
+   YZplanes = regentlib.newsymbol(),
+   XZplanes = regentlib.newsymbol(),
+   XYplanes = regentlib.newsymbol(),
+   -- partitions for IO
+   is_IO_YZplanes = regentlib.newsymbol(),
+   is_IO_XZplanes = regentlib.newsymbol(),
+   is_IO_XYplanes = regentlib.newsymbol(),
+   IO_YZplanes = regentlib.newsymbol(),
+   IO_XZplanes = regentlib.newsymbol(),
+   IO_XYplanes = regentlib.newsymbol(),
+   IO_YZplanes_copy = regentlib.newsymbol(),
+   IO_XZplanes_copy = regentlib.newsymbol(),
+   IO_XYplanes_copy = regentlib.newsymbol(),
+   -- considered partitions of the Fluid domain
+   p_Fluid_XAvg = regentlib.newsymbol("p_Fluid_XAvg"),
+   p_Fluid_YAvg = regentlib.newsymbol("p_Fluid_YAvg"),
+   p_Fluid_ZAvg = regentlib.newsymbol("p_Fluid_ZAvg"),
+   -- tiles of Fluid where the average kernels will be launched
+   XAvg_tiles = regentlib.newsymbol(),
+   YAvg_tiles = regentlib.newsymbol(),
+   ZAvg_tiles = regentlib.newsymbol()
 }
 
 -------------------------------------------------------------------------------
@@ -246,6 +290,8 @@ local function mkInitializeAverages(nd)
       writes(Averages)
    do
       fill(Averages.weight, 0.0)
+      -- Grid point
+      fill(Averages.centerCoordinates, array(0.0, 0.0, 0.0))
       -- Primitive variables
       fill(Averages.pressure_avg, 0.0)
       fill(Averages.pressure_rms, 0.0)
@@ -320,336 +366,398 @@ local function mkInitializeAverages(nd)
    return InitializeAverages
 end
 
+local function emitAddAvg1(r, c, avg, c_avg, Integrator_deltaTime) return rquote
+
+   var weight = r[c].cellWidth[0]*r[c].cellWidth[1]*r[c].cellWidth[2]*Integrator_deltaTime
+   var rhoWeight = weight*r[c].rho
+
+   avg[c_avg].weight += weight
+
+   -- Grid point
+   avg[c_avg].centerCoordinates += [UTIL.mkArrayConstant(3, weight)]*r[c].centerCoordinates
+
+   -- Primitive variables
+   avg[c_avg].pressure_avg    += weight*r[c].pressure
+   avg[c_avg].pressure_rms    += weight*r[c].pressure*r[c].pressure
+   avg[c_avg].temperature_avg += weight*r[c].temperature
+   avg[c_avg].temperature_rms += weight*r[c].temperature*r[c].temperature
+   avg[c_avg].MolarFracs_avg += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MolarFracs
+   avg[c_avg].MolarFracs_rms += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MolarFracs*r[c].MolarFracs
+   avg[c_avg].velocity_avg += [UTIL.mkArrayConstant(3, weight)]*r[c].velocity
+   avg[c_avg].velocity_rms += [UTIL.mkArrayConstant(3, weight)]*r[c].velocity*r[c].velocity
+   avg[c_avg].velocity_rey += array(r[c].velocity[0]*r[c].velocity[1]*weight,
+                                    r[c].velocity[0]*r[c].velocity[2]*weight,
+                                    r[c].velocity[1]*r[c].velocity[2]*weight)
+
+   -- Favre averaged primitives
+   avg[c_avg].pressure_favg    += rhoWeight*r[c].pressure
+   avg[c_avg].pressure_frms    += rhoWeight*r[c].pressure*r[c].pressure
+   avg[c_avg].temperature_favg += rhoWeight*r[c].temperature
+   avg[c_avg].temperature_frms += rhoWeight*r[c].temperature*r[c].temperature
+   avg[c_avg].MolarFracs_favg  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MolarFracs
+   avg[c_avg].MolarFracs_frms  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MolarFracs*r[c].MolarFracs
+   avg[c_avg].velocity_favg += [UTIL.mkArrayConstant(3, rhoWeight)]*r[c].velocity
+   avg[c_avg].velocity_frms += [UTIL.mkArrayConstant(3, rhoWeight)]*r[c].velocity*r[c].velocity
+   avg[c_avg].velocity_frey += array(r[c].velocity[0]*r[c].velocity[1]*rhoWeight,
+                                          r[c].velocity[0]*r[c].velocity[2]*rhoWeight,
+                                          r[c].velocity[1]*r[c].velocity[2]*rhoWeight)
+
+   -- Kinetic energy budgets (y is the inhomogeneous direction)
+   var tau_xx = r[c].mu*(4.0*r[c].velocityGradientX[0] - 2.0*r[c].velocityGradientY[1] - 2.0*r[c].velocityGradientZ[2])/3.0
+   var tau_yy = r[c].mu*(4.0*r[c].velocityGradientY[1] - 2.0*r[c].velocityGradientX[0] - 2.0*r[c].velocityGradientZ[2])/3.0
+   var tau_zz = r[c].mu*(4.0*r[c].velocityGradientZ[2] - 2.0*r[c].velocityGradientX[0] - 2.0-r[c].velocityGradientY[1])/3.0
+   var tau_xy = r[c].mu*(r[c].velocityGradientX[1] + r[c].velocityGradientY[0])
+   var tau_yz = r[c].mu*(r[c].velocityGradientY[2] + r[c].velocityGradientZ[1])
+   var tau_xz = r[c].mu*(r[c].velocityGradientZ[0] + r[c].velocityGradientX[2])
+
+   avg[c_avg].rhoUUv += array(r[c].rho*r[c].velocity[0]*r[c].velocity[0]*r[c].velocity[1]*weight,
+                              r[c].rho*r[c].velocity[1]*r[c].velocity[1]*r[c].velocity[1]*weight,
+                              r[c].rho*r[c].velocity[2]*r[c].velocity[2]*r[c].velocity[1]*weight)
+   avg[c_avg].Up += array(r[c].velocity[0]*r[c].pressure*weight,
+                          r[c].velocity[1]*r[c].pressure*weight,
+                          r[c].velocity[2]*r[c].pressure*weight)
+   avg[c_avg].tau += [UTIL.mkArrayConstant(6, weight)]*array(tau_xx, tau_yy, tau_zz, tau_xy, tau_yz, tau_xz)
+   avg[c_avg].utau_y += array(r[c].velocity[0]*tau_xy*weight,
+                              r[c].velocity[1]*tau_yy*weight,
+                              r[c].velocity[2]*tau_yz*weight)
+   avg[c_avg].tauGradU += array((tau_xx*r[c].velocityGradientX[0] + tau_xy*r[c].velocityGradientY[0] + tau_xz*r[c].velocityGradientZ[0])*weight,
+                                (tau_xy*r[c].velocityGradientX[1] + tau_yy*r[c].velocityGradientY[1] + tau_yz*r[c].velocityGradientZ[1])*weight,
+                                (tau_xz*r[c].velocityGradientX[2] + tau_yz*r[c].velocityGradientY[2] + tau_zz*r[c].velocityGradientZ[2])*weight)
+   avg[c_avg].pGradU += array(r[c].pressure*r[c].velocityGradientX[0]*weight,
+                              r[c].pressure*r[c].velocityGradientY[1]*weight,
+                              r[c].pressure*r[c].velocityGradientZ[2]*weight)
+
+   -- Fluxes
+   avg[c_avg].q += array( -r[c].lam*r[c].temperatureGradient[0]*weight,
+                          -r[c].lam*r[c].temperatureGradient[1]*weight,
+                          -r[c].lam*r[c].temperatureGradient[2]*weight)
+end end
+
+local function emitAddAvg2(r, c, avg, c_avg, Integrator_deltaTime, mix) return rquote
+
+   var weight = r[c].cellWidth[0]*r[c].cellWidth[1]*r[c].cellWidth[2]*Integrator_deltaTime
+   var rhoWeight = weight*r[c].rho
+
+   -- Properties
+   var cp   = MIX.GetHeatCapacity(r[c].temperature, r[c].MassFracs, mix)
+   var hi : double[nSpec]
+   var Ent  = 0.0
+   for i=0, nSpec do
+      hi[i] = MIX.GetSpeciesEnthalpy(i, r[c].temperature, mix)
+      Ent += r[c].MassFracs[i]*hi[i]
+   end
+   avg[c_avg].rho_avg += weight*r[c].rho
+   avg[c_avg].rho_rms += weight*r[c].rho*r[c].rho
+   avg[c_avg].mu_avg  += weight*r[c].mu
+   avg[c_avg].lam_avg += weight*r[c].lam
+   avg[c_avg].Di_avg  += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].Di
+   avg[c_avg].SoS_avg += weight*r[c].SoS
+   avg[c_avg].cp_avg  += weight*cp
+   avg[c_avg].Ent_avg += weight*Ent
+
+   -- Mass fractions
+   avg[c_avg].MassFracs_avg  += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MassFracs
+   avg[c_avg].MassFracs_rms  += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MassFracs*r[c].MassFracs
+
+   -- Favre averaged properties
+   avg[c_avg].mu_favg  += rhoWeight*r[c].mu
+   avg[c_avg].lam_favg += rhoWeight*r[c].lam
+   avg[c_avg].Di_favg  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].Di
+   avg[c_avg].SoS_favg += rhoWeight*r[c].SoS
+   avg[c_avg].cp_favg  += rhoWeight*cp
+   avg[c_avg].Ent_favg += rhoWeight*Ent
+
+   -- Favre averaged mass fractions
+   avg[c_avg].MassFracs_favg += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MassFracs
+   avg[c_avg].MassFracs_frms += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MassFracs*r[c].MassFracs
+
+   -- Chemical production rates
+   var w    = MIX.GetProductionRates(r[c].rho, r[c].pressure, r[c].temperature, r[c].MassFracs, mix)
+   var HR = 0.0
+   for i=0, nSpec do
+      HR -= w[i]*hi[i]
+   end
+   avg[c_avg].ProductionRates_avg += [UTIL.mkArrayConstant(nSpec, weight)]*w
+   avg[c_avg].ProductionRates_rms += [UTIL.mkArrayConstant(nSpec, weight)]*w*w
+   avg[c_avg].HeatReleaseRate_avg += weight*HR
+   avg[c_avg].HeatReleaseRate_rms += weight*HR*HR
+
+   -- Dimensionless numbers
+   var u2 = MACRO.dot(r[c].velocity, r[c].velocity)
+   var Pr = cp*r[c].mu/r[c].lam
+   var Ec = u2/(cp*r[c].temperature)
+   var nu = r[c].mu/r[c].rho
+   var Sc : double[nSpec]
+   for i=0, nSpec do
+      Sc[i] = nu/r[c].Di[i]
+   end
+   avg[c_avg].Pr     += weight*Pr
+   avg[c_avg].Pr_rms += weight*Pr*Pr
+   avg[c_avg].Ec     += weight*Ec
+   avg[c_avg].Ec_rms += weight*Ec*Ec
+   avg[c_avg].Ma     += weight*sqrt(u2)/r[c].SoS
+   avg[c_avg].Sc     += [UTIL.mkArrayConstant(nSpec, weight)]*Sc
+
+   -- Correlations
+   var weightU    = weight*r[c].velocity[0]
+   var weightV    = weight*r[c].velocity[1]
+   var weightW    = weight*r[c].velocity[2]
+   var weightRhoU = weight*r[c].velocity[0]*r[c].rho
+   var weightRhoV = weight*r[c].velocity[1]*r[c].rho
+   var weightRhoW = weight*r[c].velocity[2]*r[c].rho
+
+   avg[c_avg].uT_avg  += array(   weightU*r[c].temperature,
+                                  weightV*r[c].temperature,
+                                  weightW*r[c].temperature)
+   avg[c_avg].uT_favg += array(weightRhoU*r[c].temperature,
+                               weightRhoV*r[c].temperature,
+                               weightRhoW*r[c].temperature)
+
+   avg[c_avg].uYi_avg  += [UTIL.mkArrayConstant(nSpec, weightU)]*r[c].MassFracs
+   avg[c_avg].vYi_avg  += [UTIL.mkArrayConstant(nSpec, weightV)]*r[c].MassFracs
+   avg[c_avg].wYi_avg  += [UTIL.mkArrayConstant(nSpec, weightW)]*r[c].MassFracs
+   avg[c_avg].uYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoU)]*r[c].MassFracs
+   avg[c_avg].vYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoV)]*r[c].MassFracs
+   avg[c_avg].wYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoW)]*r[c].MassFracs
+
+end end
+
 local function mkAddAverages(dir)
    local AddAverages
    __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
    task AddAverages(Fluid : region(ispace(int3d), Fluid_columns),
-                    Averages : region(ispace(int4d), Averages_columns),
+                    Averages : region(ispace(int2d), Averages_columns),
                     mix : MIX.Mixture,
-                    rake : SCHEMA.Volume,
                     Integrator_deltaTime : double)
    where
+      reads(Fluid.centerCoordinates),
       reads(Fluid.cellWidth),
       reads(Fluid.[Primitives]),
+      reads(Fluid.MassFracs),
       reads(Fluid.[Properties]),
       reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
       reads(Fluid.temperatureGradient),
-      reads writes(Averages.[AveragesVars])
+      reduces+(Averages.[AveragesVars])
    do
-      var fromCell = rake.fromCell
-      var uptoCell = rake.uptoCell
       __demand(__openmp)
       for c in Fluid do
-         if fromCell[0] <= c.x and c.x <= uptoCell[0] and
-            fromCell[1] <= c.y and c.y <= uptoCell[1] and
-            fromCell[2] <= c.z and c.z <= uptoCell[2] then
-
-            var c_avg = int4d{c.[dir], Averages.bounds.lo.y, Averages.bounds.lo.z, Averages.bounds.lo.w}
-            var weight = Fluid[c].cellWidth[0]*Fluid[c].cellWidth[1]*Fluid[c].cellWidth[2]*Integrator_deltaTime
-            var rhoWeight = weight*Fluid[c].rho
-
-            Averages[c_avg].weight += weight
-
-            -- Primitive variables
-            Averages[c_avg].pressure_avg    += weight*Fluid[c].pressure
-            Averages[c_avg].pressure_rms    += weight*Fluid[c].pressure*Fluid[c].pressure
-            Averages[c_avg].temperature_avg += weight*Fluid[c].temperature
-            Averages[c_avg].temperature_rms += weight*Fluid[c].temperature*Fluid[c].temperature
-            Averages[c_avg].MolarFracs_avg += [UTIL.mkArrayConstant(nSpec, weight)]*Fluid[c].MolarFracs
-            Averages[c_avg].MolarFracs_rms += [UTIL.mkArrayConstant(nSpec, weight)]*Fluid[c].MolarFracs*Fluid[c].MolarFracs
-            Averages[c_avg].velocity_avg += [UTIL.mkArrayConstant(3, weight)]*Fluid[c].velocity
-            Averages[c_avg].velocity_rms += [UTIL.mkArrayConstant(3, weight)]*Fluid[c].velocity*Fluid[c].velocity
-            Averages[c_avg].velocity_rey += array(Fluid[c].velocity[0]*Fluid[c].velocity[1]*weight,
-                                                  Fluid[c].velocity[0]*Fluid[c].velocity[2]*weight,
-                                                  Fluid[c].velocity[1]*Fluid[c].velocity[2]*weight)
-
-            -- Favre averaged primitives
-            Averages[c_avg].pressure_favg    += rhoWeight*Fluid[c].pressure
-            Averages[c_avg].pressure_frms    += rhoWeight*Fluid[c].pressure*Fluid[c].pressure
-            Averages[c_avg].temperature_favg += rhoWeight*Fluid[c].temperature
-            Averages[c_avg].temperature_frms += rhoWeight*Fluid[c].temperature*Fluid[c].temperature
-            Averages[c_avg].MolarFracs_favg  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*Fluid[c].MolarFracs
-            Averages[c_avg].MolarFracs_frms  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*Fluid[c].MolarFracs*Fluid[c].MolarFracs
-            Averages[c_avg].velocity_favg += [UTIL.mkArrayConstant(3, rhoWeight)]*Fluid[c].velocity
-            Averages[c_avg].velocity_frms += [UTIL.mkArrayConstant(3, rhoWeight)]*Fluid[c].velocity*Fluid[c].velocity
-            Averages[c_avg].velocity_frey += array(Fluid[c].velocity[0]*Fluid[c].velocity[1]*rhoWeight,
-                                                   Fluid[c].velocity[0]*Fluid[c].velocity[2]*rhoWeight,
-                                                   Fluid[c].velocity[1]*Fluid[c].velocity[2]*rhoWeight)
-
-            -- Kinetic energy budgets (y is the inhomogeneous direction)
-            var tau_xx = Fluid[c].mu*(4.0*Fluid[c].velocityGradientX[0] - 2.0*Fluid[c].velocityGradientY[1] - 2.0*Fluid[c].velocityGradientZ[2])/3.0
-            var tau_yy = Fluid[c].mu*(4.0*Fluid[c].velocityGradientY[1] - 2.0*Fluid[c].velocityGradientX[0] - 2.0*Fluid[c].velocityGradientZ[2])/3.0
-            var tau_zz = Fluid[c].mu*(4.0*Fluid[c].velocityGradientZ[2] - 2.0*Fluid[c].velocityGradientX[0] - 2.0-Fluid[c].velocityGradientY[1])/3.0
-            var tau_xy = Fluid[c].mu*(Fluid[c].velocityGradientX[1] + Fluid[c].velocityGradientY[0])
-            var tau_yz = Fluid[c].mu*(Fluid[c].velocityGradientY[2] + Fluid[c].velocityGradientZ[1])
-            var tau_xz = Fluid[c].mu*(Fluid[c].velocityGradientZ[0] + Fluid[c].velocityGradientX[2])
-
-            Averages[c_avg].rhoUUv += array(Fluid[c].rho*Fluid[c].velocity[0]*Fluid[c].velocity[0]*Fluid[c].velocity[1]*weight,
-                                            Fluid[c].rho*Fluid[c].velocity[1]*Fluid[c].velocity[1]*Fluid[c].velocity[1]*weight,
-                                            Fluid[c].rho*Fluid[c].velocity[2]*Fluid[c].velocity[2]*Fluid[c].velocity[1]*weight)
-            Averages[c_avg].Up += array(Fluid[c].velocity[0]*Fluid[c].pressure*weight,
-                                        Fluid[c].velocity[1]*Fluid[c].pressure*weight,
-                                        Fluid[c].velocity[2]*Fluid[c].pressure*weight)
-            Averages[c_avg].tau += [UTIL.mkArrayConstant(6, weight)]*array(tau_xx, tau_yy, tau_zz, tau_xy, tau_yz, tau_xz)
-            Averages[c_avg].utau_y += array(Fluid[c].velocity[0]*tau_xy*weight,
-                                            Fluid[c].velocity[1]*tau_yy*weight,
-                                            Fluid[c].velocity[2]*tau_yz*weight)
-            Averages[c_avg].tauGradU += array((tau_xx*Fluid[c].velocityGradientX[0] + tau_xy*Fluid[c].velocityGradientY[0] + tau_xz*Fluid[c].velocityGradientZ[0])*weight,
-                                              (tau_xy*Fluid[c].velocityGradientX[1] + tau_yy*Fluid[c].velocityGradientY[1] + tau_yz*Fluid[c].velocityGradientZ[1])*weight,
-                                              (tau_xz*Fluid[c].velocityGradientX[2] + tau_yz*Fluid[c].velocityGradientY[2] + tau_zz*Fluid[c].velocityGradientZ[2])*weight)
-            Averages[c_avg].pGradU += array(Fluid[c].pressure*Fluid[c].velocityGradientX[0]*weight,
-                                            Fluid[c].pressure*Fluid[c].velocityGradientY[1]*weight,
-                                            Fluid[c].pressure*Fluid[c].velocityGradientZ[2]*weight)
-
-            -- Fluxes
-            Averages[c_avg].q += array( -Fluid[c].lam*Fluid[c].temperatureGradient[0]*weight, 
-                                        -Fluid[c].lam*Fluid[c].temperatureGradient[1]*weight,
-                                        -Fluid[c].lam*Fluid[c].temperatureGradient[2]*weight)
-
-         end
+         var c_avg = int2d{c.[dir], Averages.bounds.lo.y};
+         [emitAddAvg1(Fluid, c, Averages, c_avg, Integrator_deltaTime)]
       end
 
       __demand(__openmp)
       for c in Fluid do
-         if fromCell[0] <= c.x and c.x <= uptoCell[0] and
-            fromCell[1] <= c.y and c.y <= uptoCell[1] and
-            fromCell[2] <= c.z and c.z <= uptoCell[2] then
-
-            var c_avg = int4d{c.[dir], Averages.bounds.lo.y, Averages.bounds.lo.z, Averages.bounds.lo.w}
-            var weight = Fluid[c].cellWidth[0]*Fluid[c].cellWidth[1]*Fluid[c].cellWidth[2]*Integrator_deltaTime
-            var rhoWeight = weight*Fluid[c].rho
-
-            -- Properties
-            var MixW = MIX.GetMolarWeightFromXi(Fluid[c].MolarFracs, mix)
-            var Yi   = MIX.GetMassFractions(MixW, Fluid[c].MolarFracs, mix)
-            var cp   = MIX.GetHeatCapacity(Fluid[c].temperature, Yi, mix)
-            var hi : double[nSpec]
-            var Ent  = 0.0
-            for i=0, nSpec do
-               hi[i] = MIX.GetSpeciesEnthalpy(i, Fluid[c].temperature, mix)
-               Ent += Yi[i]*hi[i]
-            end
-            Averages[c_avg].rho_avg += weight*Fluid[c].rho
-            Averages[c_avg].rho_rms += weight*Fluid[c].rho*Fluid[c].rho
-            Averages[c_avg].mu_avg  += weight*Fluid[c].mu
-            Averages[c_avg].lam_avg += weight*Fluid[c].lam
-            Averages[c_avg].Di_avg  += [UTIL.mkArrayConstant(nSpec, weight)]*Fluid[c].Di
-            Averages[c_avg].SoS_avg += weight*Fluid[c].SoS
-            Averages[c_avg].cp_avg  += weight*cp
-            Averages[c_avg].Ent_avg += weight*Ent
-
-            -- Mass fractions
-            Averages[c_avg].MassFracs_avg  += [UTIL.mkArrayConstant(nSpec, weight)]*Yi
-            Averages[c_avg].MassFracs_rms  += [UTIL.mkArrayConstant(nSpec, weight)]*Yi*Yi
-
-            -- Favre averaged properties
-            Averages[c_avg].mu_favg  += rhoWeight*Fluid[c].mu
-            Averages[c_avg].lam_favg += rhoWeight*Fluid[c].lam
-            Averages[c_avg].Di_favg  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*Fluid[c].Di
-            Averages[c_avg].SoS_favg += rhoWeight*Fluid[c].SoS
-            Averages[c_avg].cp_favg  += rhoWeight*cp
-            Averages[c_avg].Ent_favg += rhoWeight*Ent
-
-            -- Favre averaged mass fractions
-            Averages[c_avg].MassFracs_favg += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*Yi
-            Averages[c_avg].MassFracs_frms += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*Yi*Yi
-
-            -- Chemical production rates
-            var w    = MIX.GetProductionRates(Fluid[c].rho, Fluid[c].pressure, Fluid[c].temperature, Yi, mix)
-            var HR = 0.0
-            for i=0, nSpec do
-               HR -= w[i]*hi[i]
-            end
-            Averages[c_avg].ProductionRates_avg += [UTIL.mkArrayConstant(nSpec, weight)]*w
-            Averages[c_avg].ProductionRates_rms += [UTIL.mkArrayConstant(nSpec, weight)]*w*w
-            Averages[c_avg].HeatReleaseRate_avg += weight*HR
-            Averages[c_avg].HeatReleaseRate_rms += weight*HR*HR
-
-            -- Dimensionless numbers
-            var u2 = MACRO.dot(Fluid[c].velocity, Fluid[c].velocity)
-            var Pr = cp*Fluid[c].mu/Fluid[c].lam
-            var Ec = u2/(cp*Fluid[c].temperature)
-            var nu = Fluid[c].mu/Fluid[c].rho
-            var Sc : double[nSpec]
-            for i=0, nSpec do
-               Sc[i] = nu/Fluid[c].Di[i]
-            end
-            Averages[c_avg].Pr     += weight*Pr
-            Averages[c_avg].Pr_rms += weight*Pr*Pr
-            Averages[c_avg].Ec     += weight*Ec
-            Averages[c_avg].Ec_rms += weight*Ec*Ec
-            Averages[c_avg].Ma     += weight*sqrt(u2)/Fluid[c].SoS
-            Averages[c_avg].Sc     += [UTIL.mkArrayConstant(nSpec, weight)]*Sc
-
-            -- Correlations
-            var weightU    = weight*Fluid[c].velocity[0]
-            var weightV    = weight*Fluid[c].velocity[1]
-            var weightW    = weight*Fluid[c].velocity[2]
-            var weightRhoU = weight*Fluid[c].velocity[0]*Fluid[c].rho
-            var weightRhoV = weight*Fluid[c].velocity[1]*Fluid[c].rho
-            var weightRhoW = weight*Fluid[c].velocity[2]*Fluid[c].rho
-
-            Averages[c_avg].uT_avg  += array(   weightU*Fluid[c].temperature,
-                                                weightV*Fluid[c].temperature,
-                                                weightW*Fluid[c].temperature)
-            Averages[c_avg].uT_favg += array(weightRhoU*Fluid[c].temperature,
-                                             weightRhoV*Fluid[c].temperature,
-                                             weightRhoW*Fluid[c].temperature)
-
-            Averages[c_avg].uYi_avg  += [UTIL.mkArrayConstant(nSpec, weightU)]*Yi
-            Averages[c_avg].vYi_avg  += [UTIL.mkArrayConstant(nSpec, weightV)]*Yi
-            Averages[c_avg].wYi_avg  += [UTIL.mkArrayConstant(nSpec, weightW)]*Yi
-            Averages[c_avg].uYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoU)]*Yi
-            Averages[c_avg].vYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoV)]*Yi
-            Averages[c_avg].wYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoW)]*Yi
-
-         end
+         var c_avg = int2d{c.[dir], Averages.bounds.lo.y};
+         [emitAddAvg2(Fluid, c, Averages, c_avg, Integrator_deltaTime, mix)]
       end
    end
    return AddAverages
 end
 
-local __demand(__leaf)
-task DummyAverages(Averages : region(ispace(int2d), Averages_columns))
-where
-   reads writes(Averages)
-do
-   -- Nothing
-   -- It is just to avoid the bug of HDF libraries with parallel reduction
-end
+local function mkAdd1DAverages(dir)
+   local Add1DAverages
+   local t1
+   local t2
+   if dir == "x" then
+      t1 = "y"
+      t2 = "z"
+   elseif dir == "y" then
+      t1 = "x"
+      t2 = "z"
+   elseif dir == "z" then
+      t1 = "x"
+      t2 = "y"
+   else assert(false) end
 
-local function mkReduceAverages(dir)
-   local dir1
-   local dir2
-   if dir=='x' then
-      dir1 = 'y'
-      dir2 = 'z'
-   elseif dir=='y' then
-      dir1 = 'x'
-      dir2 = 'z'
-   elseif dir=='z' then
-      dir1 = 'x'
-      dir2 = 'y'
-   end
-   local ReduceAverages
-   __demand(__leaf)
-   task ReduceAverages(Averages       : region(ispace(int2d), Averages_columns),
-                       Averages_local : region(ispace(int4d), Averages_columns),
-                       tiles : ispace(int3d))
+   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
+   task Add1DAverages(Fluid : region(ispace(int3d), Fluid_columns),
+                      Averages : region(ispace(int3d), Averages_columns),
+                      mix : MIX.Mixture,
+                      Integrator_deltaTime : double)
    where
-      reads(Averages_local),
-      reads writes(Averages)
+      reads(Fluid.centerCoordinates),
+      reads(Fluid.cellWidth),
+      reads(Fluid.[Primitives]),
+      reads(Fluid.MassFracs),
+      reads(Fluid.[Properties]),
+      reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
+      reads(Fluid.temperatureGradient),
+      reduces+(Averages.[AveragesVars])
    do
-      for t in tiles do
-         __demand(__openmp)
-         for c in Averages do
-            var c_buf = int4d{c.x, c.y, t.[dir1], t.[dir2]}
+      __demand(__openmp)
+      for c in Fluid do
+         var c_avg = int3d{c.[t1], c.[t2], Averages.bounds.lo.z};
+         [emitAddAvg1(Fluid, c, Averages, c_avg, Integrator_deltaTime)]
+      end
 
-            Averages[c].weight += Averages_local[c_buf].weight
-
-            -- Primitive variables
-            Averages[c].pressure_avg    += Averages_local[c_buf].pressure_avg    
-            Averages[c].pressure_rms    += Averages_local[c_buf].pressure_rms    
-            Averages[c].temperature_avg += Averages_local[c_buf].temperature_avg 
-            Averages[c].temperature_rms += Averages_local[c_buf].temperature_rms 
-            Averages[c].MolarFracs_avg  += Averages_local[c_buf].MolarFracs_avg  
-            Averages[c].MolarFracs_rms  += Averages_local[c_buf].MolarFracs_rms  
-            Averages[c].MassFracs_avg   += Averages_local[c_buf].MassFracs_avg
-            Averages[c].MassFracs_rms   += Averages_local[c_buf].MassFracs_rms
-            Averages[c].velocity_avg    += Averages_local[c_buf].velocity_avg    
-            Averages[c].velocity_rms    += Averages_local[c_buf].velocity_rms    
-            Averages[c].velocity_rey    += Averages_local[c_buf].velocity_rey    
-
-            -- Properties
-            Averages[c].rho_avg  += Averages_local[c_buf].rho_avg 
-            Averages[c].rho_rms  += Averages_local[c_buf].rho_rms 
-            Averages[c].mu_avg   += Averages_local[c_buf].mu_avg  
-            Averages[c].lam_avg  += Averages_local[c_buf].lam_avg 
-            Averages[c].Di_avg   += Averages_local[c_buf].Di_avg  
-            Averages[c].SoS_avg  += Averages_local[c_buf].SoS_avg 
-            Averages[c].cp_avg   += Averages_local[c_buf].cp_avg  
-            Averages[c].Ent_avg  += Averages_local[c_buf].Ent_avg 
-
-            -- Chemical production rates
-            Averages[c].ProductionRates_avg += Averages_local[c_buf].ProductionRates_avg
-            Averages[c].ProductionRates_rms += Averages_local[c_buf].ProductionRates_rms
-            Averages[c].HeatReleaseRate_avg += Averages_local[c_buf].HeatReleaseRate_avg
-            Averages[c].HeatReleaseRate_rms += Averages_local[c_buf].HeatReleaseRate_rms
-
-            -- Favre averaged primitives
-            Averages[c].pressure_favg    += Averages_local[c_buf].pressure_favg
-            Averages[c].pressure_frms    += Averages_local[c_buf].pressure_frms
-            Averages[c].temperature_favg += Averages_local[c_buf].temperature_favg
-            Averages[c].temperature_frms += Averages_local[c_buf].temperature_frms
-            Averages[c].MolarFracs_favg  += Averages_local[c_buf].MolarFracs_favg
-            Averages[c].MolarFracs_frms  += Averages_local[c_buf].MolarFracs_frms
-            Averages[c].MassFracs_favg   += Averages_local[c_buf].MassFracs_favg
-            Averages[c].MassFracs_frms   += Averages_local[c_buf].MassFracs_frms
-            Averages[c].velocity_favg    += Averages_local[c_buf].velocity_favg
-            Averages[c].velocity_frms    += Averages_local[c_buf].velocity_frms
-            Averages[c].velocity_frey    += Averages_local[c_buf].velocity_frey
-
-            -- Favre averaged properties
-            Averages[c].mu_favg  += Averages_local[c_buf].mu_favg
-            Averages[c].lam_favg += Averages_local[c_buf].lam_favg
-            Averages[c].Di_favg  += Averages_local[c_buf].Di_favg
-            Averages[c].SoS_favg += Averages_local[c_buf].SoS_favg
-            Averages[c].cp_favg  += Averages_local[c_buf].cp_favg
-            Averages[c].Ent_favg += Averages_local[c_buf].Ent_favg
-
-            -- Kinetic energy budgets (y is the inhomogeneous direction)
-            Averages[c].rhoUUv   += Averages_local[c_buf].rhoUUv
-            Averages[c].Up       += Averages_local[c_buf].Up
-            Averages[c].tau      += Averages_local[c_buf].tau
-            Averages[c].utau_y   += Averages_local[c_buf].utau_y
-            Averages[c].tauGradU += Averages_local[c_buf].tauGradU
-            Averages[c].pGradU   += Averages_local[c_buf].pGradU
-
-            -- Fluxes
-            Averages[c].q += Averages_local[c_buf].q
-   
-            -- Dimensionless numbers
-            Averages[c].Pr     += Averages_local[c_buf].Pr
-            Averages[c].Pr_rms += Averages_local[c_buf].Pr_rms
-            Averages[c].Ec     += Averages_local[c_buf].Ec
-            Averages[c].Ec_rms += Averages_local[c_buf].Ec_rms
-            Averages[c].Ma     += Averages_local[c_buf].Ma
-            Averages[c].Sc     += Averages_local[c_buf].Sc
-
-            -- Correlations
-            Averages[c].uT_avg   += Averages_local[c_buf].uT_avg
-            Averages[c].uYi_avg  += Averages_local[c_buf].uYi_avg
-            Averages[c].vYi_avg  += Averages_local[c_buf].vYi_avg
-            Averages[c].wYi_avg  += Averages_local[c_buf].wYi_avg
-
-            Averages[c].uT_favg  += Averages_local[c_buf].uT_favg
-            Averages[c].uYi_favg += Averages_local[c_buf].uYi_favg
-            Averages[c].vYi_favg += Averages_local[c_buf].vYi_favg
-            Averages[c].wYi_favg += Averages_local[c_buf].wYi_favg
-
-         end
+      __demand(__openmp)
+      for c in Fluid do
+         var c_avg = int3d{c.[t1], c.[t2], Averages.bounds.lo.z};
+         [emitAddAvg2(Fluid, c, Averages, c_avg, Integrator_deltaTime, mix)]
       end
    end
-   return ReduceAverages
+   return Add1DAverages
+end
+
+local function mkDummyAverages(nd)
+   local DummyAverages
+   __demand(__leaf)
+   task DummyAverages(Averages : region(ispace(nd), Averages_columns))
+   where
+      reads writes(Averages)
+   do
+      -- Nothing
+      -- It is just to avoid the bug of HDF libraries with parallel reduction
+   end
+   return DummyAverages
 end
 
 -------------------------------------------------------------------------------
 -- EXPORTED ROUTINES
 -------------------------------------------------------------------------------
-function Exports.DeclSymbols(s, Grid, config, MAPPER)
+function Exports.DeclSymbols(s, Grid, Fluid, p_All, config, MAPPER)
+
+   local function ColorFluid(inp, color) return rquote
+      for p=0, [inp].length do
+         -- Clip rectangles from the input
+         var vol = [inp].values[p]
+         vol.fromCell[0] max= 0
+         vol.fromCell[1] max= 0
+         vol.fromCell[2] max= 0
+         vol.uptoCell[0] min= config.Grid.xNum + 2*Grid.xBnum
+         vol.uptoCell[1] min= config.Grid.yNum + 2*Grid.yBnum
+         vol.uptoCell[2] min= config.Grid.zNum + 2*Grid.zBnum
+         -- add to the coloring
+         var rect = rect3d{
+            lo = int3d{vol.fromCell[0], vol.fromCell[1], vol.fromCell[2]},
+            hi = int3d{vol.uptoCell[0], vol.uptoCell[1], vol.uptoCell[2]}}
+         regentlib.c.legion_domain_point_coloring_color_domain(color, int1d(p), rect)
+      end
+      -- Add one point to avoid errors
+      if [inp].length == 0 then regentlib.c.legion_domain_point_coloring_color_domain(color, int1d(0), rect3d{lo = int3d{0,0,0}, hi = int3d{0,0,0}}) end
+   end end
+
    return rquote
 
       var sampleId = config.Mapping.sampleId
 
+      -------------------------------------------------------------------------
+      -- 2D Averages
+      -------------------------------------------------------------------------
+
       -- Create averages regions
-      var is_XAverages = ispace(int2d, {x = config.Grid.xNum + 2*Grid.xBnum,
-                                        y = config.IO.YZAverages.length    })
+      var is_YZAverages = ispace(int2d, {x = config.Grid.xNum + 2*Grid.xBnum,
+                                         y = config.IO.YZAverages.length    })
 
-      var is_YAverages = ispace(int2d, {x = config.Grid.yNum + 2*Grid.yBnum,
-                                        y = config.IO.XZAverages.length    })
+      var is_XZAverages = ispace(int2d, {x = config.Grid.yNum + 2*Grid.yBnum,
+                                         y = config.IO.XZAverages.length    })
 
-      var is_ZAverages = ispace(int2d, {x = config.Grid.zNum + 2*Grid.zBnum,
-                                        y = config.IO.XYAverages.length    })
+      var is_XYAverages = ispace(int2d, {x = config.Grid.zNum + 2*Grid.zBnum,
+                                         y = config.IO.XYAverages.length    })
+
+      var [s.YZAverages] = region(is_YZAverages, Averages_columns)
+      var [s.XZAverages] = region(is_XZAverages, Averages_columns)
+      var [s.XYAverages] = region(is_XYAverages, Averages_columns)
+      var [s.YZAverages_copy] = region(is_YZAverages, Averages_columns)
+      var [s.XZAverages_copy] = region(is_XZAverages, Averages_columns)
+      var [s.XYAverages_copy] = region(is_XYAverages, Averages_columns);
+
+      [UTIL.emitRegionTagAttach(s.YZAverages,      MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+      [UTIL.emitRegionTagAttach(s.XZAverages,      MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+      [UTIL.emitRegionTagAttach(s.XYAverages,      MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+      [UTIL.emitRegionTagAttach(s.YZAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+      [UTIL.emitRegionTagAttach(s.XZAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+      [UTIL.emitRegionTagAttach(s.XYAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+
+      -- Partitioning averages in rakes for IO
+      var [s.is_Xrakes] = ispace(int2d, {1, max(config.IO.YZAverages.length, 1)})
+      var [s.is_Yrakes] = ispace(int2d, {1, max(config.IO.XZAverages.length, 1)})
+      var [s.is_Zrakes] = ispace(int2d, {1, max(config.IO.XYAverages.length, 1)})
+
+      var [s.Xrakes] = partition(equal, s.YZAverages, s.is_Xrakes)
+      var [s.Yrakes] = partition(equal, s.XZAverages, s.is_Yrakes)
+      var [s.Zrakes] = partition(equal, s.XYAverages, s.is_Zrakes)
+
+      var [s.Xrakes_copy] = partition(equal, s.YZAverages_copy, s.is_Xrakes)
+      var [s.Yrakes_copy] = partition(equal, s.XZAverages_copy, s.is_Yrakes)
+      var [s.Zrakes_copy] = partition(equal, s.XYAverages_copy, s.is_Zrakes)
+
+      -- Partitioning averages in rakes for kernels
+      var is_XrakesTiles = ispace(int2d, {Grid.NX, max(config.IO.YZAverages.length, 1)})
+      var is_YrakesTiles = ispace(int2d, {Grid.NY, max(config.IO.XZAverages.length, 1)})
+      var is_ZrakesTiles = ispace(int2d, {Grid.NZ, max(config.IO.XYAverages.length, 1)});
+
+      var [s.p_Xrakes] = [UTIL.mkPartitionByTile(int2d, int2d, Averages_columns)]
+                         (s.YZAverages, is_XrakesTiles, int2d{Grid.xBnum,0}, int2d{0,0})
+      var [s.p_Yrakes] = [UTIL.mkPartitionByTile(int2d, int2d, Averages_columns)]
+                         (s.XZAverages, is_YrakesTiles, int2d{Grid.yBnum,0}, int2d{0,0})
+      var [s.p_Zrakes] = [UTIL.mkPartitionByTile(int2d, int2d, Averages_columns)]
+                         (s.XYAverages, is_ZrakesTiles, int2d{Grid.zBnum,0}, int2d{0,0})
+
+      -- Partition the Fluid region based on the specified regions
+      -- One color for each type of rakes
+      var p_YZAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
+      var p_XZAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
+      var p_XYAvg_coloring = regentlib.c.legion_domain_point_coloring_create();
+
+      -- Color X rakes
+      [ColorFluid(rexpr config.IO.YZAverages end, p_YZAvg_coloring)];
+      -- Color Y rakes
+      [ColorFluid(rexpr config.IO.XZAverages end, p_XZAvg_coloring)];
+      -- Color Z rakes
+      [ColorFluid(rexpr config.IO.XYAverages end, p_XYAvg_coloring)];
+
+      -- Make partions of Fluid
+      var Fluid_YZAvg = partition(aliased, Fluid, p_YZAvg_coloring, ispace(int1d, max(config.IO.YZAverages.length, 1)))
+      var Fluid_XZAvg = partition(aliased, Fluid, p_XZAvg_coloring, ispace(int1d, max(config.IO.XZAverages.length, 1)))
+      var Fluid_XYAvg = partition(aliased, Fluid, p_XYAvg_coloring, ispace(int1d, max(config.IO.XYAverages.length, 1)))
+
+      -- Split over tiles
+      var [s.p_Fluid_YZAvg] = cross_product(Fluid_YZAvg, p_All)
+      var [s.p_Fluid_XZAvg] = cross_product(Fluid_XZAvg, p_All)
+      var [s.p_Fluid_XYAvg] = cross_product(Fluid_XYAvg, p_All)
+
+      -- Attach names for mapping
+      for r=0, config.IO.YZAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_YZAvg[r] end, "p_Fluid_YZAvg")];
+      end
+      for r=0, config.IO.XZAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_XZAvg[r] end, "p_Fluid_XZAvg")];
+      end
+      for r=0, config.IO.XYAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_XYAvg[r] end, "p_Fluid_XYAvg")];
+      end
+
+      -- Destroy colors
+      regentlib.c.legion_domain_point_coloring_destroy(p_YZAvg_coloring)
+      regentlib.c.legion_domain_point_coloring_destroy(p_XZAvg_coloring)
+      regentlib.c.legion_domain_point_coloring_destroy(p_XYAvg_coloring)
+
+      -- Extract relevant index spaces
+      var aux = region(p_All.colors, bool)
+      var [s.YZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_YZAvg, p_All, s.p_Fluid_YZAvg, aux)
+      var [s.XZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_XZAvg, p_All, s.p_Fluid_XZAvg, aux)
+      var [s.XYAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_XYAvg, p_All, s.p_Fluid_XYAvg, aux)
+
+      -------------------------------------------------------------------------
+      -- 1D Averages
+      -------------------------------------------------------------------------
+
+      -- Create averages regions
+      var is_XAverages = ispace(int3d, {x = config.Grid.yNum + 2*Grid.yBnum,
+                                        y = config.Grid.zNum + 2*Grid.zBnum,
+                                        z = config.IO.XAverages.length    })
+
+      var is_YAverages = ispace(int3d, {x = config.Grid.xNum + 2*Grid.xBnum,
+                                        y = config.Grid.zNum + 2*Grid.zBnum,
+                                        z = config.IO.YAverages.length    })
+
+      var is_ZAverages = ispace(int3d, {x = config.Grid.xNum + 2*Grid.xBnum,
+                                        y = config.Grid.yNum + 2*Grid.yBnum,
+                                        z = config.IO.ZAverages.length    })
 
       var [s.XAverages] = region(is_XAverages, Averages_columns)
       var [s.YAverages] = region(is_YAverages, Averages_columns)
@@ -665,177 +773,285 @@ function Exports.DeclSymbols(s, Grid, config, MAPPER)
       [UTIL.emitRegionTagAttach(s.YAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
       [UTIL.emitRegionTagAttach(s.ZAverages_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
 
-      -- Partitioning averages in rakes
-      var [s.is_Xrakes] = ispace(int2d, {1, max(config.IO.YZAverages.length, 1)})
-      var [s.is_Yrakes] = ispace(int2d, {1, max(config.IO.XZAverages.length, 1)})
-      var [s.is_Zrakes] = ispace(int2d, {1, max(config.IO.XYAverages.length, 1)})
+      -- Partitioning averages in planes for calculations
+      var is_YZplanes = ispace(int3d, {Grid.NY, Grid.NZ, max(config.IO.XAverages.length, 1)})
+      var is_XZplanes = ispace(int3d, {Grid.NX, Grid.NZ, max(config.IO.YAverages.length, 1)})
+      var is_XYplanes = ispace(int3d, {Grid.NX, Grid.NY, max(config.IO.ZAverages.length, 1)})
 
-      var [s.Xrakes] = partition(equal, s.XAverages, s.is_Xrakes)
-      var [s.Yrakes] = partition(equal, s.YAverages, s.is_Yrakes)
-      var [s.Zrakes] = partition(equal, s.ZAverages, s.is_Zrakes)
+      var [s.YZplanes] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "YZplanes")]
+                               (s.XAverages, is_YZplanes, int3d{Grid.yBnum,Grid.zBnum,0}, int3d{0,0,0})
+      var [s.XZplanes] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "XZplanes")]
+                               (s.YAverages, is_XZplanes, int3d{Grid.xBnum,Grid.zBnum,0}, int3d{0,0,0})
+      var [s.XYplanes] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "XYplanes")]
+                               (s.ZAverages, is_XYplanes, int3d{Grid.xBnum,Grid.yBnum,0}, int3d{0,0,0})
 
-      var [s.Xrakes_copy] = partition(equal, s.XAverages_copy, s.is_Xrakes)
-      var [s.Yrakes_copy] = partition(equal, s.YAverages_copy, s.is_Yrakes)
-      var [s.Zrakes_copy] = partition(equal, s.ZAverages_copy, s.is_Zrakes)
+      -- Partitioning averages in planes for IO
+      var [s.is_IO_YZplanes] = ispace(int3d, {Grid.NYout, Grid.NZout, max(config.IO.XAverages.length, 1)})
+      var [s.is_IO_XZplanes] = ispace(int3d, {Grid.NXout, Grid.NZout, max(config.IO.YAverages.length, 1)})
+      var [s.is_IO_XYplanes] = ispace(int3d, {Grid.NXout, Grid.NYout, max(config.IO.ZAverages.length, 1)})
 
---      -- TODO: in the future we might want to partition these also along the rakes
---      var is_XrakesTiles = ispace(int2d, {Grid.NX, config.IO.YZAverages.length})
---      var is_YrakesTiles = ispace(int2d, {Grid.NY, config.IO.XZAverages.length})
---      var is_ZrakesTiles = ispace(int2d, {Grid.NZ, config.IO.XYAverages.length});
---
---      var [s.p_Xrakes] = [UTIL.mkPartitionByTile(int2d, int2d, Averages_columns)]
---                         (s.Xrakes, is_XrakesTiles, int2d{Grid.xBnum,0}, int2d{0,0})
---      var [s.p_Yrakes] = [UTIL.mkPartitionByTile(int2d, int2d, Averages_columns)]
---                         (s.Yrakes, is_YrakesTiles, int2d{Grid.yBnum,0}, int2d{0,0})
---      var [s.p_Zrakes] = [UTIL.mkPartitionByTile(int2d, int2d, Averages_columns)]
---                         (s.Zrakes, is_ZrakesTiles, int2d{Grid.zBnum,0}, int2d{0,0})
+      var [s.IO_YZplanes] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "IO_YZplanes")]
+                               (s.XAverages, s.is_IO_YZplanes, int3d{Grid.yBnum,Grid.zBnum,0}, int3d{0,0,0})
+      var [s.IO_XZplanes] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "IO_XZplanes")]
+                               (s.YAverages, s.is_IO_XZplanes, int3d{Grid.xBnum,Grid.zBnum,0}, int3d{0,0,0})
+      var [s.IO_XYplanes] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "IO_XYplanes")]
+                               (s.ZAverages, s.is_IO_XYplanes, int3d{Grid.xBnum,Grid.yBnum,0}, int3d{0,0,0})
 
-      -- Create local buffers for averages regions
-      var is_XAverages_local = ispace(int4d, {x = config.Grid.xNum + 2*Grid.xBnum,
-                                              y = config.IO.YZAverages.length    ,
-                                              z = Grid.NY                        ,
-                                              w = Grid.NZ                         })
+      var [s.IO_YZplanes_copy] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "IO_YZplanes_copy")]
+                               (s.XAverages_copy, s.is_IO_YZplanes, int3d{Grid.yBnum,Grid.zBnum,0}, int3d{0,0,0})
+      var [s.IO_XZplanes_copy] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "IO_XZplanes_copy")]
+                               (s.YAverages_copy, s.is_IO_XZplanes, int3d{Grid.xBnum,Grid.zBnum,0}, int3d{0,0,0})
+      var [s.IO_XYplanes_copy] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "IO_XYplanes_copy")]
+                               (s.ZAverages_copy, s.is_IO_XYplanes, int3d{Grid.xBnum,Grid.yBnum,0}, int3d{0,0,0})
 
-      var is_YAverages_local = ispace(int4d, {x = config.Grid.yNum + 2*Grid.yBnum,
-                                              y = config.IO.XZAverages.length    ,
-                                              z = Grid.NX                        ,
-                                              w = Grid.NZ                        })
+      -- Partition the Fluid region based on the specified regions
+      -- One color for each type of rakes
+      var p_XAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
+      var p_YAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
+      var p_ZAvg_coloring = regentlib.c.legion_domain_point_coloring_create();
 
-      var is_ZAverages_local = ispace(int4d, {x = config.Grid.zNum + 2*Grid.zBnum,
-                                              y = config.IO.XYAverages.length    ,
-                                              z = Grid.NX                        ,
-                                              w = Grid.NY                        })
+      -- Color X planes
+      [ColorFluid(rexpr config.IO.XAverages end, p_XAvg_coloring)];
+      -- Color Y planes
+      [ColorFluid(rexpr config.IO.YAverages end, p_YAvg_coloring)];
+      -- Color Z rakes
+      [ColorFluid(rexpr config.IO.ZAverages end, p_ZAvg_coloring)];
 
-      var [s.XAverages_local] = region(is_XAverages_local, Averages_columns)
-      var [s.YAverages_local] = region(is_YAverages_local, Averages_columns)
-      var [s.ZAverages_local] = region(is_ZAverages_local, Averages_columns);
+      -- Make partions of Fluid
+      var Fluid_XAvg = partition(aliased, Fluid, p_XAvg_coloring, ispace(int1d, max(config.IO.XAverages.length, 1)))
+      var Fluid_YAvg = partition(aliased, Fluid, p_YAvg_coloring, ispace(int1d, max(config.IO.YAverages.length, 1)))
+      var Fluid_ZAvg = partition(aliased, Fluid, p_ZAvg_coloring, ispace(int1d, max(config.IO.ZAverages.length, 1)))
 
-      [UTIL.emitRegionTagAttach(s.XAverages_local, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(s.YAverages_local, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-      [UTIL.emitRegionTagAttach(s.ZAverages_local, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+      -- Split over tiles
+      var [s.p_Fluid_XAvg] = cross_product(Fluid_XAvg, p_All)
+      var [s.p_Fluid_YAvg] = cross_product(Fluid_YAvg, p_All)
+      var [s.p_Fluid_ZAvg] = cross_product(Fluid_ZAvg, p_All)
 
-      -- Partitioning local buffer in rakes
-      var [s.is_Xrakes_local] = ispace(int4d, {Grid.NX, max(config.IO.YZAverages.length, 1), Grid.NY, Grid.NZ})
-      var [s.is_Yrakes_local] = ispace(int4d, {Grid.NY, max(config.IO.XZAverages.length, 1), Grid.NX, Grid.NZ})
-      var [s.is_Zrakes_local] = ispace(int4d, {Grid.NZ, max(config.IO.XYAverages.length, 1), Grid.NX, Grid.NY})
+      -- Attach names for mapping
+      for r=0, config.IO.YZAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_XAvg[r] end, "p_Fluid_XAvg")];
+      end
+      for r=0, config.IO.XZAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_YAvg[r] end, "p_Fluid_YAvg")];
+      end
+      for r=0, config.IO.XYAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_ZAvg[r] end, "p_Fluid_ZAvg")];
+      end
 
-      var [s.p_Xrakes_local] = [UTIL.mkPartitionByTile(int4d, int4d, Averages_columns, "p_Xrakes_local")]
-                               (s.XAverages_local, s.is_Xrakes_local, int4d{Grid.xBnum,0,0,0}, int4d{0,0,0,0})
-      var [s.p_Yrakes_local] = [UTIL.mkPartitionByTile(int4d, int4d, Averages_columns, "p_Yrakes_local")]
-                               (s.YAverages_local, s.is_Yrakes_local, int4d{Grid.yBnum,0,0,0}, int4d{0,0,0,0})
-      var [s.p_Zrakes_local] = [UTIL.mkPartitionByTile(int4d, int4d, Averages_columns, "p_Zrakes_local")]
-                               (s.ZAverages_local, s.is_Zrakes_local, int4d{Grid.zBnum,0,0,0}, int4d{0,0,0,0})
+      -- Destroy colors
+      regentlib.c.legion_domain_point_coloring_destroy(p_XAvg_coloring)
+      regentlib.c.legion_domain_point_coloring_destroy(p_YAvg_coloring)
+      regentlib.c.legion_domain_point_coloring_destroy(p_ZAvg_coloring)
 
+      -- Extract relevant index spaces
+      --var aux = region(p_All.colors, bool) -- aux is defined earlier
+      var [s.XAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_XAvg, p_All, s.p_Fluid_XAvg, aux)
+      var [s.YAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_YAvg, p_All, s.p_Fluid_YAvg, aux)
+      var [s.ZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_ZAvg, p_All, s.p_Fluid_ZAvg, aux)
    end
 end
 
-function Exports.InitRakes(s)
+function Exports.InitRakesAndPlanes(s)
    return rquote
-      [mkInitializeAverages(int2d)](s.XAverages);
-      [mkInitializeAverages(int2d)](s.YAverages);
-      [mkInitializeAverages(int2d)](s.ZAverages);
-   end
-end
-
-function Exports.InitBuffers(s)
-   return rquote
-      [mkInitializeAverages(int4d)](s.XAverages_local);
-      [mkInitializeAverages(int4d)](s.YAverages_local);
-      [mkInitializeAverages(int4d)](s.ZAverages_local);
+      [mkInitializeAverages(int2d)](s.YZAverages);
+      [mkInitializeAverages(int2d)](s.XZAverages);
+      [mkInitializeAverages(int2d)](s.XYAverages);
+      [mkInitializeAverages(int3d)](s.XAverages);
+      [mkInitializeAverages(int3d)](s.YAverages);
+      [mkInitializeAverages(int3d)](s.ZAverages);
    end
 end
 
 function Exports.ReadAverages(s, config)
+   local function ReadAvg(avg, dirname)
+      local p
+      local HDF
+      if     avg == "YZAverages" then p = "Xrakes"; HDF = HDF_RAKES
+      elseif avg == "XZAverages" then p = "Yrakes"; HDF = HDF_RAKES
+      elseif avg == "XYAverages" then p = "Zrakes"; HDF = HDF_RAKES
+      elseif avg == "XAverages" then p = "IO_YZplanes"; HDF = HDF_PLANES
+      elseif avg == "YAverages" then p = "IO_XZplanes"; HDF = HDF_PLANES
+      elseif avg == "ZAverages" then p = "IO_XYplanes"; HDF = HDF_PLANES
+      else assert(false) end
+      local is = "is_"..p
+      local acopy = avg.."_copy"
+      local pcopy = p.."_copy"
+      return rquote
+         if config.IO.[avg].length ~= 0 then
+            var restartDir = config.Flow.initCase.u.Restart.restartDir
+            format.snprint(dirname, 256, "{}/{}", [&int8](restartDir), [avg])
+            HDF.load(0, s.[is], dirname, s.[avg], s.[acopy], s.[p], s.[pcopy])
+         end
+      end
+   end
    return rquote
       if not config.IO.ResetAverages then
-         var dirname = [&int8](C.malloc(256))
-         if config.IO.YZAverages.length ~= 0 then
-            C.snprintf(dirname, 256, '%s/YZAverages', config.Flow.restartDir)
-            HDF.load(0, s.is_Xrakes, dirname, s.XAverages, s.XAverages_copy, s.Xrakes, s.Xrakes_copy)
-         end
-         if config.IO.XZAverages.length ~= 0 then
-            C.snprintf(dirname, 256, '%s/XZAverages', config.Flow.restartDir)
-            HDF.load(0, s.is_Yrakes, dirname, s.YAverages, s.YAverages_copy, s.Yrakes, s.Yrakes_copy)
-         end
-         if config.IO.XYAverages.length ~= 0 then
-            C.snprintf(dirname, 256, '%s/XYAverages', config.Flow.restartDir)
-            HDF.load(0, s.is_Zrakes, dirname, s.ZAverages, s.ZAverages_copy, s.Zrakes, s.Zrakes_copy)
-         end
+         regentlib.assert(config.Flow.initCase.type == SCHEMA.FlowInitCase_Restart,
+                          "Flow.initCase needs to be equal to Restart in order to read some averages")
+         var dirname = [&int8](C.malloc(256));
+         -- 2D averages
+         [ReadAvg("YZAverages", dirname)];
+         [ReadAvg("XZAverages", dirname)];
+         [ReadAvg("XYAverages", dirname)];
+         -- 1D averages
+         [ReadAvg("XAverages", dirname)];
+         [ReadAvg("YAverages", dirname)];
+         [ReadAvg("ZAverages", dirname)];
          C.free(dirname)
       end
    end
 end
 
-function Exports.AddAverages(s, tiles, p_All, deltaTime, config, Mix)
+function Exports.AddAverages(s, deltaTime, config, Mix)
+   local function Add2DAvg(dir)
+      local avg
+      local p1
+      local p2
+      local mk_c
+      if     dir == "x" then
+         avg = "YZAverages"
+         p1 = "p_Xrakes"
+         p2 = "YZAvg"
+         mk_c = function(c, rake) return rexpr int2d{c.x,rake} end end
+      elseif dir == "y" then
+         avg = "XZAverages"
+         p1 = "p_Yrakes"
+         p2 = "XZAvg"
+         mk_c = function(c, rake) return rexpr int2d{c.y,rake} end end
+      elseif dir == "z" then
+         avg = "XYAverages"
+         p1 = "p_Zrakes"
+         p2 = "XYAvg"
+         mk_c = function(c, rake) return rexpr int2d{c.z,rake} end end
+      else assert(false) end
+      local fp = "p_Fluid_"..p2
+      local t = p2.."_tiles"
+      return rquote
+         for rake=0, config.IO.[avg].length do
+            var cs = s.[t][rake].ispace
+            __demand(__index_launch)
+            for c in cs do
+               [mkAddAverages(dir)](s.[fp][rake][c], s.[p1][ [mk_c(c, rake)] ],
+                                    Mix, deltaTime)
+            end
+         end
+      end
+   end
+   local function Add1DAvg(dir)
+      local avg
+      local p1
+      local p2
+      local mk_c
+      if     dir == "x" then
+         avg = "XAverages"
+         p1 = "YZplanes"
+         p2 = "XAvg"
+         mk_c = function(c, plane) return rexpr int3d{c.y, c.z, plane} end end
+      elseif dir == "y" then
+         avg = "YAverages"
+         p1 = "XZplanes"
+         p2 = "YAvg"
+         mk_c = function(c, plane) return rexpr int3d{c.x, c.z, plane} end end
+      elseif dir == "z" then
+         avg = "ZAverages"
+         p1 = "XYplanes"
+         p2 = "ZAvg"
+         mk_c = function(c, plane) return rexpr int3d{c.x, c.y, plane} end end
+      else assert(false) end
+      local fp = "p_Fluid_"..p2
+      local t = p2.."_tiles"
+      return rquote
+         for plane=0, config.IO.[avg].length do
+            var cs = s.[t][plane].ispace
+            __demand(__index_launch)
+            for c in cs do
+               [mkAdd1DAverages(dir)](s.[fp][plane][c], s.[p1][ [mk_c(c, plane)] ],
+                                    Mix, deltaTime)
+            end
+         end
+      end
+   end
    return rquote
-      for rake=0, config.IO.YZAverages.length do
-         __demand(__index_launch)
-         for c in tiles do
-            [mkAddAverages('x')](p_All[c], s.p_Xrakes_local[int4d{c.x,rake,c.y,c.z}], Mix,
-                                 config.IO.YZAverages.values[rake], deltaTime)
-         end
-      end
-      for rake=0, config.IO.XZAverages.length do
-         __demand(__index_launch)
-         for c in tiles do
-            [mkAddAverages('y')](p_All[c], s.p_Yrakes_local[int4d{c.y,rake,c.x,c.z}], Mix,
-                                 config.IO.XZAverages.values[rake], deltaTime)
-         end
-      end
-      for rake=0, config.IO.XYAverages.length do
-         __demand(__index_launch)
-         for c in tiles do
-            [mkAddAverages('z')](p_All[c], s.p_Zrakes_local[int4d{c.z,rake,c.x,c.y}], Mix,
-                                 config.IO.XYAverages.values[rake], deltaTime)
-         end
-      end
+      -- 2D averages
+      [Add2DAvg("x")];
+      [Add2DAvg("y")];
+      [Add2DAvg("z")];
+      -- 1D averages
+      [Add1DAvg("x")];
+      [Add1DAvg("y")];
+      [Add1DAvg("z")];
    end
 end
 
 function Exports.WriteAverages(s, tiles, dirname, IO, SpeciesNames, config)
+   local function write2DAvg(dir)
+      local avg
+      local p
+      if     dir == "x" then avg = "YZAverages" p = "Xrakes"
+      elseif dir == "y" then avg = "XZAverages" p = "Yrakes"
+      elseif dir == "z" then avg = "XYAverages" p = "Zrakes"
+      else assert(false) end
+      local is = "is_"..p
+      local alocal = avg.."_local"
+      local acopy = avg.."_copy"
+      local pcopy = p.."_copy"
+      return rquote
+         if config.IO.[avg].length ~= 0 then
+            ---------------------------------
+            -- Workaroud to Legion issue #521
+            [mkDummyAverages(int2d)](s.[avg])
+            ---------------------------------
+            var Avgdirname = [&int8](C.malloc(256))
+            format.snprint(Avgdirname, 256, "{}/{}", dirname, [avg])
+            var _1 = IO.createDir(Avgdirname)
+            _1 = HDF_RAKES.dump(               _1, s.[is], Avgdirname, s.[avg], s.[acopy], s.[p], s.[pcopy])
+            _1 = HDF_RAKES.write.SpeciesNames( _1, s.[is], Avgdirname, s.[avg], s.[p], SpeciesNames)
+            C.free(Avgdirname)
+         end
+      end
+   end
+   local function write1DAvg(dir)
+      local avg
+      local p
+      local p2
+      local mk_c
+      local mk_c1
+      if     dir == "x" then avg = "XAverages" p = "YZplanes" p2 = "XAvg"
+      elseif dir == "y" then avg = "YAverages" p = "XZplanes" p2 = "YAvg"
+      elseif dir == "z" then avg = "ZAverages" p = "XYplanes" p2 = "ZAvg"
+      else assert(false) end
+      local acopy = avg.."_copy"
+      local iop = "IO_"..p
+      local iopcopy = iop.."_copy"
+      local is = "is_"..iop
+      local t = p2.."_tiles"
+      return rquote
+         if config.IO.[avg].length ~= 0 then
+            ----------------------------------------------
+            -- Add a dummy task to avoid Legion issue #521
+            [mkDummyAverages(int3d)](s.[avg])
+            ----------------------------------------------
+            var Avgdirname = [&int8](C.malloc(256))
+            format.snprint(Avgdirname, 256, "{}/{}", dirname, [avg])
+            var _1 = IO.createDir(Avgdirname)
+            _1 = HDF_PLANES.dump(               _1, s.[is], Avgdirname, s.[avg], s.[acopy], s.[iop], s.[iopcopy])
+            _1 = HDF_PLANES.write.SpeciesNames( _1, s.[is], Avgdirname, s.[avg], s.[iop], SpeciesNames)
+            C.free(Avgdirname)
+         end
+      end
+   end
    return rquote
-      if config.IO.YZAverages.length ~= 0 then
---         DummyAverages(s.XAverages)
-         -- Reduce from reduction buffers
-         [mkReduceAverages('x')](s.XAverages, s.XAverages_local, tiles);
-         -- Reinitialize reduction buffers
-         [mkInitializeAverages(int4d)](s.XAverages_local)
-
-         var Avgdirname = [&int8](C.malloc(256))
-         C.snprintf(Avgdirname, 256, '%s/YZAverages', dirname)
-         var _1 = IO.createDir(Avgdirname)
-         _1 = HDF.dump(               _1, s.is_Xrakes, Avgdirname, s.XAverages, s.XAverages_copy, s.Xrakes, s.Xrakes_copy)
-         _1 = HDF.write.SpeciesNames( _1, s.is_Xrakes, Avgdirname, s.XAverages, s.Xrakes, SpeciesNames)
-         C.free(Avgdirname)
-      end
-      if config.IO.XZAverages.length ~= 0 then
---         DummyAverages(s.YAverages)
-         -- Reduce from reduction buffers
-         [mkReduceAverages('y')](s.YAverages, s.YAverages_local, tiles);
-         -- Reinitialize reduction buffers
-         [mkInitializeAverages(int4d)](s.YAverages_local)
-
-         var Avgdirname = [&int8](C.malloc(256))
-         C.snprintf(Avgdirname, 256, '%s/XZAverages', dirname)
-         var _1 = IO.createDir(Avgdirname)
-         _1 = HDF.dump(               _1, s.is_Yrakes, Avgdirname, s.YAverages, s.YAverages_copy, s.Yrakes, s.Yrakes_copy)
-         _1 = HDF.write.SpeciesNames( _1, s.is_Yrakes, Avgdirname, s.YAverages, s.Yrakes, SpeciesNames)
-         C.free(Avgdirname)
-      end
-      if config.IO.XYAverages.length ~= 0 then
---         DummyAverages(s.ZAverages)
-         -- Reduce from reduction buffers
-         [mkReduceAverages('z')](s.ZAverages, s.ZAverages_local, tiles);
-         -- Reinitialize reduction buffers
-         [mkInitializeAverages(int4d)](s.ZAverages_local)
-
-         var Avgdirname = [&int8](C.malloc(256))
-         C.snprintf(Avgdirname, 256, '%s/XYAverages', dirname)
-         var _1 = IO.createDir(Avgdirname)
-         _1 = HDF.dump(               _1, s.is_Zrakes, Avgdirname, s.ZAverages, s.ZAverages_copy, s.Zrakes, s.Zrakes_copy)
-         _1 = HDF.write.SpeciesNames( _1, s.is_Zrakes, Avgdirname, s.ZAverages, s.Zrakes, SpeciesNames)
-         C.free(Avgdirname)
-      end
+      -- 2D averages
+      [write2DAvg("x")];
+      [write2DAvg("y")];
+      [write2DAvg("z")];
+      -- 1D averages
+      [write1DAvg("x")];
+      [write1DAvg("y")];
+      [write1DAvg("z")];
    end
 end
 

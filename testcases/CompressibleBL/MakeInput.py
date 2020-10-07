@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import argparse
 import sys
@@ -35,12 +35,12 @@ TB = CBL["T"][:].values
 # Read base config
 config = json.load(args.base_json)
 
-gamma = config["Flow"]["gamma"]
-R     = config["Flow"]["gasConstant"]
-Pr    = config["Flow"]["prandtl"]
+gamma = config["Flow"]["mixture"]["gamma"]
+R     = config["Flow"]["mixture"]["gasConstant"]
+Pr    = config["Flow"]["mixture"]["prandtl"]
 
-assert config["Flow"]["initCase"] == "Restart"
-restartDir = config["Flow"]["restartDir"]
+assert config["Flow"]["initCase"]["type"] == "Restart"
+restartDir = config["Flow"]["initCase"]["restartDir"]
 
 config["BC"]["xBCLeft"]["VelocityProfile"]["FileDir"] = restartDir
 config["BC"]["xBCLeft"]["TemperatureProfile"]["FileDir"] = restartDir
@@ -73,19 +73,26 @@ yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yNum"], 
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
-                            False)
+                            False,
+                            StagMinus=True)
 
 zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
                             config["Grid"]["zWidth"],
                             config["Grid"]["zNum"], 
                             config["Grid"]["zType"],
                             config["Grid"]["zStretching"],
-                            False)
+                            True)
 
 # Load mapping
+assert config["Mapping"]["tiles"][0] % config["Mapping"]["tilesPerRank"][0] == 0
+assert config["Mapping"]["tiles"][1] % config["Mapping"]["tilesPerRank"][1] == 0
+assert config["Mapping"]["tiles"][2] % config["Mapping"]["tilesPerRank"][2] == 0
 Ntiles = config["Mapping"]["tiles"]
+Ntiles[0] = int(Ntiles[0]/config["Mapping"]["tilesPerRank"][0])
+Ntiles[1] = int(Ntiles[1]/config["Mapping"]["tilesPerRank"][1])
+Ntiles[2] = int(Ntiles[2]/config["Mapping"]["tilesPerRank"][2])
 
-assert config["Grid"]["xNum"] % Ntiles[0] == 0 
+assert config["Grid"]["xNum"] % Ntiles[0] == 0
 assert config["Grid"]["yNum"] % Ntiles[1] == 0
 assert config["Grid"]["zNum"] % Ntiles[2] == 0
 
@@ -109,6 +116,14 @@ for i in range(etaB.size):
 
 x0 = Rex0*nuInf/UInf
 vB = 0.5*yB/x0*uB - TB/np.sqrt(2*Rex0)*fB
+
+# Get VorticityScale
+delta = 0.0
+for i in range(Np):
+   if (uB[i] > 0.99):
+      delta = yB[i]
+      break
+config["Integrator"]["vorticityScale"] = UInf/delta
 
 uB *= UInf
 vB *= UInf

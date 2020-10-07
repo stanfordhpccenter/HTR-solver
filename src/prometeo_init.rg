@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -57,7 +57,9 @@ local Primitives = CONST.Primitives
 
 __demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
 task Exports.InitializeUniform(Fluid : region(ispace(int3d), Fluid_columns),
-                               Flow_initParams : double[5],
+                               initPressure : double,
+                               initTemperature : double,
+                               initVelocity : double[3],
                                initMolarFracs : double[nSpec])
 where
    writes(Fluid.pressure),
@@ -66,27 +68,28 @@ do
    __demand(__openmp)
    for c in Fluid do
       var i = 0
-      Fluid[c].pressure    = Flow_initParams[i]; i+=1
-      Fluid[c].temperature = Flow_initParams[i]; i+=1
-      Fluid[c].velocity = array(Flow_initParams[i], Flow_initParams[i+1], Flow_initParams[i+2]); i+=3
-      Fluid[c].MolarFracs = initMolarFracs
+      Fluid[c].pressure    = initPressure
+      Fluid[c].temperature = initTemperature
+      Fluid[c].velocity    = initVelocity
+      Fluid[c].MolarFracs  = initMolarFracs
    end
 end
 
 __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.InitializeRandom(Fluid : region(ispace(int3d), Fluid_columns),
-                      Flow_initParams : double[5],
-                      initMolarFracs : double[nSpec])
+                              initPressure : double,
+                              initTemperature : double,
+                              magnitude : double,
+                              initMolarFracs : double[nSpec])
 where
    writes(Fluid.[Primitives])
 do
-   var magnitude = Flow_initParams[2]
    var rngState : C.drand48_data
    C.srand48_r(C.legion_get_current_time_in_nanos(), &rngState)
    for c in Fluid do
       Fluid[c].MolarFracs  = initMolarFracs
-      Fluid[c].pressure    = Flow_initParams[0]
-      Fluid[c].temperature = Flow_initParams[1]
+      Fluid[c].pressure    = initPressure
+      Fluid[c].temperature = initTemperature
       Fluid[c].velocity = array(2 * (MACRO.drand48_r(&rngState) - 0.5) * magnitude,
                                 2 * (MACRO.drand48_r(&rngState) - 0.5) * magnitude,
                                 2 * (MACRO.drand48_r(&rngState) - 0.5) * magnitude)
@@ -95,8 +98,10 @@ end
 
 __demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
 task Exports.InitializeTaylorGreen2D(Fluid : region(ispace(int3d), Fluid_columns),
-                             Flow_initParams : double[5],
-                             initMolarFracs : double[nSpec],
+                             taylorGreenPressure : double,
+                             taylorGreenTemperature : double,
+                             taylorGreenVelocity : double,
+                             taylorGreenMolarFracs : double[nSpec],
                              mix : MIX.Mixture,
                              Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
                              Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
@@ -107,11 +112,6 @@ where
 do
    __demand(__openmp)
    for c in Fluid do
-      var i = 0
-      var taylorGreenPressure    = Flow_initParams[i]; i+=1
-      var taylorGreenTemperature = Flow_initParams[i]; i+=1
-      var taylorGreenVelocity    = Flow_initParams[i]; i+=1
-      var taylorGreenMolarFracs  = initMolarFracs
       MIX.ClipYi(taylorGreenMolarFracs)
       var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, mix)
       var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, mix)
@@ -128,8 +128,11 @@ end
 
 __demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
 task Exports.InitializeTaylorGreen3D(Fluid : region(ispace(int3d), Fluid_columns),
-                             Flow_initParams : double[5],
-                             initMolarFracs : double[nSpec], mix : MIX.Mixture,
+                             taylorGreenPressure : double,
+                             taylorGreenTemperature : double,
+                             taylorGreenVelocity : double,
+                             taylorGreenMolarFracs : double[nSpec],
+                             mix : MIX.Mixture,
                              Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
                              Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
                              Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
@@ -139,11 +142,6 @@ where
 do
    __demand(__openmp)
    for c in Fluid do
-      var i = 0
-      var taylorGreenPressure    = Flow_initParams[i]; i+=1
-      var taylorGreenTemperature = Flow_initParams[i]; i+=1
-      var taylorGreenVelocity    = Flow_initParams[i]; i+=1
-      var taylorGreenMolarFracs  = initMolarFracs
       MIX.ClipYi(taylorGreenMolarFracs)
       var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, mix)
       var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, mix)
@@ -161,8 +159,10 @@ end
 
 __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.InitializePerturbed(Fluid : region(ispace(int3d), Fluid_columns),
-                         Flow_initParams : double[5],
-                         initMolarFracs : double[nSpec])
+                                 initPressure : double,
+                                 initTemperature : double,
+                                 initVelocity : double[3],
+                                 initMolarFracs : double[nSpec])
 where
    writes(Fluid.[Primitives])
 do
@@ -170,11 +170,11 @@ do
    C.srand48_r(C.legion_get_current_time_in_nanos(), &rngState)
    for c in Fluid do
       Fluid[c].MolarFracs  = initMolarFracs
-      Fluid[c].pressure    = Flow_initParams[0]
-      Fluid[c].temperature = Flow_initParams[1]
-      Fluid[c].velocity = array(Flow_initParams[2] + (MACRO.drand48_r(&rngState)-0.5)*10.0,
-                                Flow_initParams[3] + (MACRO.drand48_r(&rngState)-0.5)*10.0,
-                                Flow_initParams[4] + (MACRO.drand48_r(&rngState)-0.5)*10.0)
+      Fluid[c].pressure    = initPressure
+      Fluid[c].temperature = initTemperature
+      Fluid[c].velocity = array(initVelocity[0] + (MACRO.drand48_r(&rngState)-0.5)*10.0,
+                                initVelocity[1] + (MACRO.drand48_r(&rngState)-0.5)*10.0,
+                                initVelocity[2] + (MACRO.drand48_r(&rngState)-0.5)*10.0)
    end
 end
 
@@ -302,8 +302,11 @@ end
 
 __demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
 task Exports.InitializeVortexAdvection2D(Fluid : region(ispace(int3d), Fluid_columns),
-                                         Flow_initParams : double[5],
-                                         initMolarFracs : double[nSpec],
+                                         VortexPressure : double,
+                                         VortexTemperature : double,
+                                         VortexXVelocity : double,
+                                         VortexYVelocity : double,
+                                         VortexMolarFracs : double[nSpec],
                                          mix : MIX.Mixture)
 where
    reads(Fluid.centerCoordinates),
@@ -311,13 +314,6 @@ where
 do
    __demand(__openmp)
    for c in Fluid do
-      var i = 0
-      var VortexPressure    = Flow_initParams[i]; i+=1
-      var VortexTemperature = Flow_initParams[i]; i+=1
-      var VortexXVelocity   = Flow_initParams[i]; i+=1
-      var VortexYVelocity   = Flow_initParams[i]; i+=1
-      var VortexMolarFracs  = initMolarFracs
-
       var Beta = 5.0
       var x0 = 0.0
       var y0 = 0.0
@@ -329,11 +325,11 @@ do
       var MixW = MIX.GetMolarWeightFromXi(VortexMolarFracs, mix)
       var Yi = MIX.GetMassFractions(MixW, VortexMolarFracs, mix)
       var gamma = MIX.GetGamma(VortexTemperature, MixW, Yi, mix)
-      VortexTemperature *= (1.0 - (gamma - 1.0)*Beta*Beta/(8*PI*PI*gamma)*exp(1.0 - r2))
-      VortexPressure *= pow(VortexTemperature, gamma/(gamma - 1.0))
+      var T = VortexTemperature*(1.0 - (gamma - 1.0)*Beta*Beta/(8*PI*PI*gamma)*exp(1.0 - r2))
+      var P = VortexPressure*pow(T, gamma/(gamma - 1.0))
 
-      Fluid[c].pressure = VortexPressure
-      Fluid[c].temperature = VortexTemperature
+      Fluid[c].pressure = P
+      Fluid[c].temperature = T
       Fluid[c].MolarFracs = VortexMolarFracs
       Fluid[c].velocity = MACRO.vv_add(array((-Beta/(2.0*PI)*exp(0.5*(1.0 - r2))*(ry)),
                                              ( Beta/(2.0*PI)*exp(0.5*(1.0 - r2))*(rx)), 0.0),
@@ -396,7 +392,11 @@ end
 
 __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.InitializeChannelFlow(Fluid : region(ispace(int3d), Fluid_columns),
-                                   Flow_initParams : double[5],
+                                   bulkPressure : double,
+                                   bulkTemperature : double,
+                                   bulkVelocity : double,
+                                   StreaksIntensity : double,
+                                   RandomIntensity : double,
                                    initMolarFracs : double[nSpec],
                                    mix : MIX.Mixture,
                                    Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
@@ -409,13 +409,6 @@ do
    -- Initializes the channel with a streamwise velocity profile ~y^4
    -- streaks and random noise are used for the spanwise and wall-normal directions
    -- the fluid composition is uniform
-   var i = 0
-   var bulkPressure     = Flow_initParams[i]; i+=1
-   var bulkTemperature  = Flow_initParams[i]; i+=1
-   var bulkVelocity     = Flow_initParams[i]; i+=1
-   var StreaksIntensity = Flow_initParams[i]; i+=1
-   var RandomIntensity  = Flow_initParams[i]; i+=1
-
    MIX.ClipYi(initMolarFracs)
 
    var rngState : C.drand48_data

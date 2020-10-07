@@ -34,9 +34,9 @@ yType  = data["Grid"]["yType"]
 xStretching  = data["Grid"]["xStretching"]
 yStretching  = data["Grid"]["yStretching"]
 
-gamma = data["Flow"]["gamma"]
-R = data["Flow"]["gasConstant"]
-Pr    = data["Flow"]["prandtl"]
+gamma = data["Flow"]["mixture"]["gamma"]
+R     = data["Flow"]["mixture"]["gasConstant"]
+Pr    = data["Flow"]["mixture"]["prandtl"]
 
 TInf = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
 Tw   = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
@@ -96,7 +96,8 @@ y, dy = gridGen.GetGrid(data["Grid"]["origin"][1],
                         data["Grid"]["yNum"],
                         data["Grid"]["yType"],
                         data["Grid"]["yStretching"],
-                        False)
+                        False,
+                        StagMinus=True)
 
 ##############################################################################
 #                     Compute the profile on this grid                       #
@@ -107,6 +108,14 @@ yB = etaB*x/np.sqrt(Re)
 uB *= U
 vB *= U/np.sqrt(Re)
 TB *= TInf
+
+# Get VorticityScale
+delta = 0.0
+for i in range(len(uB)):
+   if (uB[i] > 0.99*U):
+      delta = yB[i]
+      break
+data["Integrator"]["vorticityScale"] = U/delta
 
 u = np.interp(y, yB, uB)
 v = np.interp(y, yB, vB)

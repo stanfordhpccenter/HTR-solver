@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -104,61 +104,46 @@ task Exports.Console_WriteFooter(config_Mapping : SCHEMA.MappingStruct,
                      rexpr (endTime - startTime) % 1000 end)];
 end
 
----- regentlib.rexpr, regentlib.rexpr, regentlib.rexpr, regentlib.rexpr*
-----   -> regentlib.rquote
---local function emitProbeWrite(config, probeId, format, ...)
---  local args = terralib.newlist{...}
---  return rquote
---    var filename = [&int8](C.malloc(256))
---    C.snprintf(filename, 256, '%s/probe%d.csv', config.Mapping.outDir, probeId)
---    var file = UTIL.openFile(filename, 'a')
---    C.free(filename)
---    C.fprintf(file, format, [args])
---    C.fflush(file)
---    C.fclose(file)
---  end
---end
---
---__demand(__parallel, __cuda)
---task Exports.Probe_AvgFluidT(Fluid : region(ispace(int3d), Fluid_columns),
---                             probe : SCHEMA.Volume,
---                             totalCells : int)
---where
---   reads(Fluid.temperature)
---do
---   var fromCell = probe.fromCell
---   var uptoCell = probe.uptoCell
---   var acc = 0.0
---   __demand(__openmp)
---   for c in Fluid do
---      if fromCell[0] <= c.x and c.x <= uptoCell[0] and
---         fromCell[1] <= c.y and c.y <= uptoCell[1] and
---         fromCell[2] <= c.z and c.z <= uptoCell[2] then
---         acc += Fluid[c].temperature / totalCells
---      end
---   end
---   return acc
---end
---
----- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
---task Exports.Probe_WriteHeader(config : Config,
---                               probeId : int)
---   [emitProbeWrite(config, probeId, 'Iter\t'..
---                                    'AvgFluidT\t'..
---                                    'AvgParticleT\t'..
---                                    'AvgCellOfParticleT\n')];
---end
---
----- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
---task Exports.Probe_Write(config : Config,
---                         probeId : int,
---                         Integrator_timeStep : int,
---                         avgFluidT : double)
---   [emitProbeWrite(config, probeId, '%d\t'..
---                                    '%e\n',
---                                    Integrator_timeStep,
---                                    avgFluidT)];
---end
+-- regentlib.rexpr, regentlib.rexpr, regentlib.rexpr, regentlib.rexpr*
+--   -> regentlib.rquote
+local function emitProbeWrite(config_Mapping, probeId, format, ...)
+  local args = terralib.newlist{...}
+  return rquote
+    var filename = [&int8](C.malloc(256))
+    C.snprintf(filename, 256, '%s/probe%d.csv', config_Mapping.outDir, probeId)
+    var file = UTIL.openFile(filename, 'a')
+    C.free(filename)
+    C.fprintf(file, format, [args])
+    C.fflush(file)
+    C.fclose(file)
+  end
+end
+
+-- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Exports.Probe_WriteHeader(config_Mapping : SCHEMA.MappingStruct,
+                               probeId : int)
+   [emitProbeWrite(config_Mapping, probeId, 'Iter\t'..
+                                            'Time\t'..
+                                            'Temperature\t'..
+                                            'Pressure\n')];
+end
+
+-- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Exports.Probe_Write(config_Mapping : SCHEMA.MappingStruct,
+                         probeId : int,
+                         Integrator_timeStep : int,
+                         Integrator_simTime : double,
+                         avgTemperature : double,
+                         avgPressure : double)
+   [emitProbeWrite(config_Mapping, probeId, '%6d\t'..
+                                            '%12.7e\t' ..
+                                            '%12.7e\t' ..
+                                            '%12.7e\n',
+                                            Integrator_timeStep,
+                                            Integrator_simTime,
+                                            avgTemperature,
+                                            avgPressure)];
+end
 
 -- regentlib.rexpr, regentlib.rexpr, regentlib.rexpr* -> regentlib.rquote
 local function emitTimingWrite(config_Mapping, format, ...)

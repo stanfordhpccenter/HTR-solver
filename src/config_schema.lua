@@ -1,10 +1,11 @@
 -- Copyright (c) "2019, by Stanford University
---               Contributors: Mario Di Renzo
+--               Developer: Mario Di Renzo
 --               Affiliation: Center for Turbulence Research, Stanford University
 --               URL: https://ctr.stanford.edu
---               Citation: Di Renzo M., Lin F. and Urzay J. "HTR solver: An open-source
---                         exascale-oriented task-based multi-GPU high-order code for
---                         hypersonic aerothermodynamics." Computer Physics Communications XXX  (2020)"
+--               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
+--                         HTR solver: An open-source exascale-oriented task-based
+--                         multi-GPU high-order code for hypersonic aerothermodynamics.
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -36,6 +37,11 @@ Exports.Volume = {
 Exports.Window = {
    fromCell = Array(2,int),
    uptoCell = Array(2,int),
+}
+Exports.VolumeProbe = {
+   outDir = String(256),
+   interval = int,
+   volume = Exports.Volume,
 }
 Exports.Species = {
    Name = String(10),
@@ -109,6 +115,21 @@ Exports.FlowBC = Union{
       omega = UpTo(20, double),
       beta  = UpTo(20, double),
    },
+   IncomingShock = {
+      iShock = int,
+      beta = double,
+      Mixture = Exports.Mixture,
+      velocity0 = Array(3,double),
+      pressure0 = double,
+      temperature0 = double,
+   },
+   RecycleRescaling = {
+      iRecycle = int,
+      VelocityProfile = Exports.InflowProfile,
+      TemperatureProfile = Exports.TempProfile,
+      MixtureProfile = Exports.MixtureProfile,
+      P = double,
+   },
 }
 
 Exports.ViscosityModel = Union{
@@ -134,7 +155,77 @@ Exports.TurbForcingModel = Union{
   },
 }
 
-Exports.FlowInitCase = Enum('Uniform','Random','Restart','Perturbed','TaylorGreen2DVortex','TaylorGreen3DVortex','RiemannTestOne','RiemannTestTwo','SodProblem','LaxProblem','ShuOsherProblem','VortexAdvection2D','GrossmanCinnellaProblem','ChannelFlow')
+Exports.MixtureModel = Union{
+   ConstPropMix = {
+      gasConstant = double,
+      gamma = double,
+      prandtl = double,
+      viscosityModel = Exports.ViscosityModel,
+   },
+   IsentropicMix = {
+      gasConstant = double,
+      gamma = double,
+   },
+   AirMix = {},
+   CH41StMix = {},
+}
+
+Exports.FlowInitCase = Union{
+   Uniform = {
+      pressure = double,
+      temperature = double,
+      velocity = Array(3,double),
+      molarFracs = Exports.Mixture,
+   },
+   Random = {
+      pressure = double,
+      temperature = double,
+      magnitude = double,
+      molarFracs = Exports.Mixture,
+   },
+   TaylorGreen2DVortex = {
+      pressure = double,
+      temperature = double,
+      velocity = double,
+      molarFracs = Exports.Mixture,
+   },
+   TaylorGreen3DVortex = {
+      pressure = double,
+      temperature = double,
+      velocity = double,
+      molarFracs = Exports.Mixture,
+   },
+   Perturbed = {
+      pressure = double,
+      temperature = double,
+      velocity = Array(3,double),
+      molarFracs = Exports.Mixture,
+   },
+   RiemannTestOne = {},
+   RiemannTestTwo = {},
+   SodProblem = {},
+   LaxProblem = {},
+   ShuOsherProblem = {},
+   VortexAdvection2D = {
+      pressure = double,
+      temperature = double,
+      velocity = Array(2,double),
+      molarFracs = Exports.Mixture,
+   },
+   GrossmanCinnellaProblem = {},
+   ChannelFlow = {
+      pressure = double,
+      temperature = double,
+      velocity = double,
+      StreaksIntensity = double,
+      RandomIntensity = double,
+      molarFracs = Exports.Mixture,
+   },
+   Restart = {
+      restartDir = String(256),
+   },
+}
+
 Exports.GridType = Enum('Uniform','Cosine','TanhMinus','TanhPlus','Tanh','SinhMinus','SinhPlus','Sinh')
 
 -- Sections of config struct
@@ -194,17 +285,15 @@ Exports.IntegratorStruct = {
    fixedDeltaTime = double,
    -- implicit or explicit approach for chemistry
    implicitChemistry = bool,
+   ---- flag to activate the hybrid scheme
+   hybridScheme = bool,
+   -- vorticity scale for the Ducros sensor
+   vorticityScale = double,
 }
 
 Exports.FlowStruct = {
-   mixture = String(20),
-   gasConstant = double,
-   gamma = double,
-   prandtl = double,
-   viscosityModel = Exports.ViscosityModel,
+   mixture = Exports.MixtureModel,
    initCase = Exports.FlowInitCase,
-   restartDir = String(256),
-   initParams = Array(5,double),
    resetMixture = bool,
    initMixture = Exports.Mixture,
    bodyForce = Array(3,double),
@@ -216,14 +305,21 @@ Exports.IOStruct = {
    wrtRestart = bool,
    -- how often to write restart files
    restartEveryTimeSteps = int,
-   -- temperature probes
+   -- Probes
+   probesSamplingInterval = int,
    probes = UpTo(5, Exports.Volume),
-   -- One-diemnsional averages
+   -- Two-diemnsional averages
    AveragesSamplingInterval = int,
    ResetAverages = bool,
    YZAverages = UpTo(10, Exports.Volume),
    XZAverages = UpTo(10, Exports.Volume),
    XYAverages = UpTo(10, Exports.Volume),
+   -- One-diemnsional averages
+   XAverages = UpTo(10, Exports.Volume),
+   YAverages = UpTo(10, Exports.Volume),
+   ZAverages = UpTo(10, Exports.Volume),
+   -- Volume probes
+   volumeProbes = UpTo(10, Exports.VolumeProbe),
 }
 
 -- Main config struct

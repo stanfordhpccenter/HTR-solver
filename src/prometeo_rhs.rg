@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -29,7 +29,8 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns, ATOMIC) local Exports = {}
+return function(SCHEMA, MIX, METRIC, Fluid_columns,
+                zones_partitions, ghost_partitions, ATOMIC) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -37,7 +38,7 @@ return function(SCHEMA, MIX, Fluid_columns, ATOMIC) local Exports = {}
 local UTIL = require 'util-desugared'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
-local OP    = require "prometeo_operators"
+local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -58,509 +59,397 @@ else
 end
 
 -------------------------------------------------------------------------------
--- FLUX-DIVERGENCE ROUTINES
+-- EULER FLUX-DIVERGENCE ROUTINES
 -------------------------------------------------------------------------------
 
-Exports.mkUpdateUsingFlux = terralib.memoize(function(dir)
-   local UpdateUsingFlux
+local mkUpdateUsingHybridEulerFlux = terralib.memoize(function(dir)
+   local UpdateUsingHybridEulerFlux
 
-   local ind
-   local Flux
-   local stencil
+--   local FluxC
+   local shockSensor
+   local nType
+   local m_e
    if (dir == "x") then
-      ind = 0
-      Flux = "FluxX"
-      stencil = function(c, b) return rexpr (c + {-1, 0, 0}) % b end end
+--      FluxC = "FluxXCorr"
+      shockSensor = "shockSensorX"
+      nType = "nType_x"
+      m_e   = "dcsi_e"
    elseif (dir == "y") then
-      ind = 1
-      Flux = "FluxY"
-      stencil = function(c, b) return rexpr (c + { 0,-1, 0}) % b end end
+--      FluxC = "FluxYCorr"
+      shockSensor = "shockSensorY"
+      nType = "nType_y"
+      m_e   = "deta_e"
    elseif (dir == "z") then
-      ind = 2
-      Flux = "FluxZ"
-      stencil = function(c, b) return rexpr (c + { 0, 0,-1}) % b end end
+--      FluxC = "FluxZCorr"
+      shockSensor = "shockSensorZ"
+      nType = "nType_z"
+      m_e   = "dzet_e"
    else assert(false) end
 
-   local __demand(__parallel, __cuda, __leaf)
-   task UpdateUsingFlux([Fluid],
-                        ModCells : region(ispace(int3d), Fluid_columns),
-                        Fluid_bounds : rect3d)
+   extern task UpdateUsingHybridEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
+                                          SensorGhost : region(ispace(int3d), Fluid_columns),
+                                          DiffGhost : region(ispace(int3d), Fluid_columns),
+                                          FluxGhost : region(ispace(int3d), Fluid_columns),
+                                          [Fluid],
+                                          ModCells : region(ispace(int3d), Fluid_columns),
+                                          Fluid_bounds : rect3d,
+                                          mix : MIX.Mixture)
    where
-      ModCells <= Fluid,
-      reads(Fluid.cellWidth),
-      reads(Fluid.[Flux]),
+      reads(EulerGhost.Conserved),
+      reads(EulerGhost.rho),
+      reads(EulerGhost.MassFracs),
+      reads(EulerGhost.velocity),
+      reads(EulerGhost.pressure),
+      reads(EulerGhost.SoS),
+      reads(SensorGhost.[shockSensor]),
+      reads(DiffGhost.temperature),
+      reads(FluxGhost.[nType]),
+      reads(Fluid.[m_e]),
       reads writes(Fluid.Conserved_t),
       [coherence_mode]
-   do
-      __demand(__openmp)
-      for c in ModCells do
-         var CellWidthInv = 1.0/Fluid[c].cellWidth[ind]
-         var cm1 = [stencil(rexpr c end, rexpr Fluid_bounds end)]
-         for i=0, nEq do 
-            Fluid[c].Conserved_t[i] += (((Fluid[c].[Flux][i] - Fluid[cm1].[Flux][i]))*CellWidthInv)
-         end
-      end
    end
-   return UpdateUsingFlux
+   UpdateUsingHybridEulerFlux:set_calling_convention(regentlib.convention.manual())
+   --for k, v in pairs(UpdateUsingFlux:get_params_struct():getentries()) do
+   --   print(k, v)
+   --   for k2, v2 in pairs(v) do print(k2, v2) end
+   --end
+   if     (dir == "x") then
+      UpdateUsingHybridEulerFlux:set_task_id(TYPES.TID_UpdateUsingHybridEulerFluxX)
+   elseif (dir == "y") then
+      UpdateUsingHybridEulerFlux:set_task_id(TYPES.TID_UpdateUsingHybridEulerFluxY)
+   elseif (dir == "z") then
+      UpdateUsingHybridEulerFlux:set_task_id(TYPES.TID_UpdateUsingHybridEulerFluxZ)
+   end
+   return UpdateUsingHybridEulerFlux
 end)
+
+local mkUpdateUsingTENOAEulerFlux = terralib.memoize(function(dir)
+   local UpdateUsingTENOAEulerFlux
+
+--   local FluxC
+   local nType
+   local m_e
+   if (dir == "x") then
+--      FluxC = "FluxXCorr"
+      nType = "nType_x"
+      m_e   = "dcsi_e"
+   elseif (dir == "y") then
+--      FluxC = "FluxYCorr"
+      nType = "nType_y"
+      m_e   = "deta_e"
+   elseif (dir == "z") then
+--      FluxC = "FluxZCorr"
+      nType = "nType_z"
+      m_e   = "dzet_e"
+   else assert(false) end
+
+   extern task UpdateUsingTENOAEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
+                                         DiffGhost : region(ispace(int3d), Fluid_columns),
+                                         FluxGhost : region(ispace(int3d), Fluid_columns),
+                                         [Fluid],
+                                         ModCells : region(ispace(int3d), Fluid_columns),
+                                         Fluid_bounds : rect3d,
+                                         mix : MIX.Mixture)
+   where
+      reads(EulerGhost.Conserved),
+      reads(EulerGhost.rho),
+      reads(EulerGhost.velocity),
+      reads(EulerGhost.pressure),
+      reads(EulerGhost.SoS),
+      reads(DiffGhost.{MassFracs, temperature}),
+      reads(FluxGhost.[nType]),
+      reads(Fluid.[m_e]),
+      reads writes(Fluid.Conserved_t),
+      [coherence_mode]
+   end
+   UpdateUsingTENOAEulerFlux:set_calling_convention(regentlib.convention.manual())
+   --for k, v in pairs(UpdateUsingFlux:get_params_struct():getentries()) do
+   --   print(k, v)
+   --   for k2, v2 in pairs(v) do print(k2, v2) end
+   --end
+   if     (dir == "x") then
+      UpdateUsingTENOAEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxX)
+   elseif (dir == "y") then
+      UpdateUsingTENOAEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxY)
+   elseif (dir == "z") then
+      UpdateUsingTENOAEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxZ)
+   end
+   return UpdateUsingTENOAEulerFlux
+end)
+
+__demand(__inline)
+task Exports.UpdateUsingEulerFlux(Fluid : region(ispace(int3d), Fluid_columns),
+                                  tiles : ispace(int3d),
+                                  Fluid_Zones : zones_partitions(Fluid, tiles),
+                                  Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                  Mix : MIX.Mixture,
+                                  config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   -- Unpack the partitions that we are going to need
+   var {p_All, p_x_divg, p_y_divg, p_z_divg} = Fluid_Zones;
+   var {p_XFluxGhosts,     p_YFluxGhosts,   p_ZFluxGhosts,
+        p_XDiffGhosts,    p_YDiffGhosts,    p_ZDiffGhosts,
+        p_XEulerGhosts2,  p_YEulerGhosts2,  p_ZEulerGhosts2,
+        p_XSensorGhosts2, p_YSensorGhosts2, p_ZSensorGhosts2} = Fluid_Ghost;
+
+   if config.Integrator.hybridScheme then
+      -- Call tasks with hybrid scheme
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingHybridEulerFlux("z")](p_ZEulerGhosts2[c], p_ZSensorGhosts2[c], p_ZDiffGhosts[c],
+                                             p_ZFluxGhosts[c], p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingHybridEulerFlux("y")](p_YEulerGhosts2[c], p_YSensorGhosts2[c], p_YDiffGhosts[c],
+                                             p_YFluxGhosts[c], p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingHybridEulerFlux("x")](p_XEulerGhosts2[c], p_XSensorGhosts2[c], p_XDiffGhosts[c],
+                                             p_XFluxGhosts[c], p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+      end
+
+   else
+      -- Call tasks with TENO-A scheme
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOAEulerFlux("z")](p_ZEulerGhosts2[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
+                                            p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOAEulerFlux("y")](p_YEulerGhosts2[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
+                                            p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOAEulerFlux("x")](p_XEulerGhosts2[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
+                                            p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+      end
+
+   end
+end
+
+-------------------------------------------------------------------------------
+-- DIFFUSION FLUX-DIVERGENCE ROUTINES
+-------------------------------------------------------------------------------
+
+local mkUpdateUsingDiffusionFlux = terralib.memoize(function(dir)
+   local UpdateUsingDiffusionFlux
+
+   local nType
+   local m_d
+   local m_s
+   local vGrad1
+   local vGrad2
+   if (dir == "x") then
+      nType  = "nType_x"
+      m_d    = "dcsi_d"
+      m_s    = "dcsi_s"
+      vGrad1 = "velocityGradientY"
+      vGrad2 = "velocityGradientZ"
+   elseif (dir == "y") then
+      nType  = "nType_y"
+      m_d    = "deta_d"
+      m_s    =  "deta_s"
+      vGrad1 = "velocityGradientX"
+      vGrad2 = "velocityGradientZ"
+   elseif (dir == "z") then
+      nType  = "nType_z"
+      m_d    = "dzet_d"
+      m_s    = "dzet_s"
+      vGrad1 = "velocityGradientX"
+      vGrad2 = "velocityGradientY"
+   else assert(false) end
+
+   extern task UpdateUsingDiffusionFlux(DiffGhost : region(ispace(int3d), Fluid_columns),
+                                        FluxGhost : region(ispace(int3d), Fluid_columns),
+                                        [Fluid],
+                                        ModCells : region(ispace(int3d), Fluid_columns),
+                                        Fluid_bounds : rect3d,
+                                        mix : MIX.Mixture)
+   where
+      reads(DiffGhost.Conserved),
+      reads(DiffGhost.{temperature, velocity, MolarFracs}),
+      reads(DiffGhost.{rho, mu, lam, Di}),
+      reads(DiffGhost.{[vGrad1], [vGrad2]}),
+      reads(FluxGhost.[nType]),
+      reads(FluxGhost.[m_s]),
+      reads(Fluid.[m_d]),
+      reads writes(Fluid.Conserved_t),
+      [coherence_mode]
+   end
+   UpdateUsingDiffusionFlux:set_calling_convention(regentlib.convention.manual())
+   --for k, v in pairs(UpdateUsingDiffusionFlux:get_params_struct():getentries()) do
+   --   print(k, v)
+   --   for k2, v2 in pairs(v) do print(k2, v2) end
+   --end
+   if     (dir == "x") then
+      UpdateUsingDiffusionFlux:set_task_id(TYPES.TID_UpdateUsingDiffusionFluxX)
+   elseif (dir == "y") then
+      UpdateUsingDiffusionFlux:set_task_id(TYPES.TID_UpdateUsingDiffusionFluxY)
+   elseif (dir == "z") then
+      UpdateUsingDiffusionFlux:set_task_id(TYPES.TID_UpdateUsingDiffusionFluxZ)
+   end
+   return UpdateUsingDiffusionFlux
+end)
+
+__demand(__inline)
+task Exports.UpdateUsingDiffusionFlux(Fluid : region(ispace(int3d), Fluid_columns),
+                                      tiles : ispace(int3d),
+                                      Fluid_Zones : zones_partitions(Fluid, tiles),
+                                      Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                      Mix : MIX.Mixture,
+                                      config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   var {p_All, p_x_divg, p_y_divg, p_z_divg} = Fluid_Zones;
+   var {p_XFluxGhosts,     p_YFluxGhosts,   p_ZFluxGhosts,
+        p_XDiffGhosts,    p_YDiffGhosts,    p_ZDiffGhosts} = Fluid_Ghost;
+
+   __demand(__index_launch)
+   for c in tiles do
+      [mkUpdateUsingDiffusionFlux("z")](p_ZDiffGhosts[c], p_ZFluxGhosts[c],
+                                        p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+   end
+
+   __demand(__index_launch)
+   for c in tiles do
+      [mkUpdateUsingDiffusionFlux("y")](p_YDiffGhosts[c], p_YFluxGhosts[c],
+                                        p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+   end
+
+   __demand(__index_launch)
+   for c in tiles do
+      [mkUpdateUsingDiffusionFlux("x")](p_XDiffGhosts[c], p_XFluxGhosts[c],
+                                        p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+   end
+end
 
 -------------------------------------------------------------------------------
 -- NSCBC-FLUX ROUTINES
 -------------------------------------------------------------------------------
 -- Adds NSCBC fluxes to the inflow cells
-__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.UpdateUsingFluxNSCBCInflow(Fluid    : region(ispace(int3d), Fluid_columns),
-                                        Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                        mix : MIX.Mixture)
-where
-   reads(Fluid.gradX),
-   reads(Fluid.{rho, SoS}),
-   reads(Fluid.[Primitives]),
-   reads(Fluid.Conserved),
-   reads(Fluid.velocityGradientX),
-   reads(Fluid.{dudtBoundary, dTdtBoundary}),
-   reads(Fluid.{pressure, MolarFracs}),
-   reads writes(Fluid.Conserved_t)
-do
-   var BC   = Fluid_BC[0]
-   var BCst = Fluid_BC[1]
+Exports.mkUpdateUsingFluxNSCBCInflow = terralib.memoize(function(dir)
+   local UpdateUsingFluxNSCBCInflow
 
-   __demand(__openmp)
-   for c in BC do
-      if (BC[c].velocity[0] >= BC[c].SoS) then
-         -- Supersonic inlet
-         BC[c].Conserved_t = [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)]
-      else
-         -- Add in the x flux using NSCBC
-         var c_int = c + int3d{1, 0, 0}
-
-         -- Thermo-chemical quantities
-         var MixW_bnd = MIX.GetMolarWeightFromXi(      BC  [c    ].MolarFracs, mix)
-         var Yi_bnd   = MIX.GetMassFractions(MixW_bnd, BC  [c    ].MolarFracs, mix)
-         var MixW_int = MIX.GetMolarWeightFromXi(      BCst[c_int].MolarFracs, mix)
-         var Yi_int   = MIX.GetMassFractions(MixW_int, BCst[c_int].MolarFracs, mix)
-         var Cp_bnd   = MIX.GetHeatCapacity(BC[c].temperature, Yi_bnd, mix)
-
-         -- characteristic velocity leaving the domain
-         var lambda_1 = BC[c].velocity[0] - BC[c].SoS
-         var lambda   = BC[c].velocity[0]
-
-         -- compute amplitudes of waves
-         var dp_dx = [OP.emitderivLeftBCBase(rexpr BC  [c    ].gradX    end, 
-                                             rexpr BC  [c    ].pressure end, 
-                                             rexpr BCst[c_int].pressure end)]
-         var du_dx = BC[c].velocityGradientX[0]
-         var dY_dx : double[nSpec]
-         for i=0, nSpec do
-            dY_dx[i] = [OP.emitderivLeftBCBase(rexpr BC[c].gradX end,
-                                               rexpr Yi_bnd[i] end,
-                                               rexpr Yi_int[i] end)]
-         end
-
-         var L1 = lambda_1*(dp_dx - BC[c].rho*BC[c].SoS*du_dx)
-         var LS : double[nSpec]
-         for i=0, nSpec do
-            LS[i] = lambda*(dY_dx[i])
-         end
-         var LN = L1 - 2*BC[c].rho*BC[c].SoS*BC[c].dudtBoundary[0]
-
-         var L2 = BC[c].dTdtBoundary/BC[c].temperature
-                  +(LN+L1)/(2.0*BC[c].rho*Cp_bnd*BC[c].temperature)
-         for i=0, nSpec do
-            L2 -= MixW_bnd/MIX.GetSpeciesMolarWeight(i, mix)*LS[i]
-         end
-         L2 *= -BC[c].rho*BC[c].SoS*BC[c].SoS
-
-         -- update RHS of transport equation for boundary cell
-         var d1 = (0.5*(L1+LN)-L2)/(BC[c].SoS*BC[c].SoS)
-         var dS = LS
-
-         -- Set RHS to update the density in the ghost inflow cells
-         for i=0, nSpec do
-            BC[c].Conserved_t[i] -= d1*Yi_bnd[i] + BC[c].rho*dS[i]
-         end
+   if dir == "xNeg" then
+      extern task UpdateUsingFluxNSCBCInflow(Fluid    : region(ispace(int3d), Fluid_columns),
+                                             Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                             mix : MIX.Mixture)
+      where
+         reads(Fluid.{nType_x}),
+         reads(Fluid.dcsi_d),
+         reads(Fluid.{rho, SoS}),
+         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
+         reads(Fluid.velocityGradientX),
+         reads(Fluid.{dudtBoundary, dTdtBoundary}),
+         reads writes(Fluid.Conserved_t)
       end
-   end
-end
+      UpdateUsingFluxNSCBCInflow:set_calling_convention(regentlib.convention.manual())
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowXNeg)
+
+   elseif dir == "yPos" then
+      extern task UpdateUsingFluxNSCBCInflow(Fluid    : region(ispace(int3d), Fluid_columns),
+                                             Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                             mix : MIX.Mixture)
+      where
+         reads(Fluid.{nType_y}),
+         reads(Fluid.deta_d),
+         reads(Fluid.{rho, SoS}),
+         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
+         reads(Fluid.velocityGradientY),
+         reads(Fluid.{dudtBoundary, dTdtBoundary}),
+         reads writes(Fluid.Conserved_t)
+      end
+      UpdateUsingFluxNSCBCInflow:set_calling_convention(regentlib.convention.manual())
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowYPos)
+
+   else assert(false) end
+
+   return UpdateUsingFluxNSCBCInflow
+end)
 
 -- Adds NSCBC fluxes to the outflow cells
-function Exports.mkUpdateUsingFluxNSCBCOutflow(dir)
+Exports.mkUpdateUsingFluxNSCBCOutflow  = terralib.memoize(function(dir)
    local UpdateUsingFluxNSCBCOutflow
    local sigma = 0.25
 
    if dir == "xPos" then
-
-      __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-      task UpdateUsingFluxNSCBCOutflow([Fluid],
-                                       Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                       mix : MIX.Mixture,
-                                       MaxMach : double,
-                                       LengthScale : double,
-                                       Pinf : double)
+      extern task UpdateUsingFluxNSCBCOutflow([Fluid],
+                                              Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                              mix : MIX.Mixture,
+                                              MaxMach : double,
+                                              LengthScale : double,
+                                              Pinf : double)
       where
-         reads(Fluid.gradX),
+         reads(Fluid.{nType_x}),
+         reads(Fluid.dcsi_d),
          reads(Fluid.{rho, mu, SoS}),
-         reads(Fluid.[Primitives]),
+         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
          reads(Fluid.Conserved),
-         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads(Fluid.{MolarFracs, pressure, velocity}),
-         reads(Fluid.{rho, mu}),
          reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
          reads writes(Fluid.Conserved_t),
          [coherence_mode]
-      do
-         var BC   = Fluid_BC[0]
-         var BCst = Fluid_BC[1]
-
-         __demand(__openmp)
-         for c in BC do
-            -- Add in the x fluxes using NSCBC for outflow
-            var c_int = c + int3d{-1, 0, 0}
-      
-            -- Thermo-chemical quantities
-            var MixW_bnd = MIX.GetMolarWeightFromXi(      BC  [c    ].MolarFracs, mix)
-            var Yi_bnd   = MIX.GetMassFractions(MixW_bnd, BC  [c    ].MolarFracs, mix)
-            var MixW_int = MIX.GetMolarWeightFromXi(      BCst[c_int].MolarFracs, mix)
-            var Yi_int   = MIX.GetMassFractions(MixW_int, BCst[c_int].MolarFracs, mix)
-            var Cp_bnd   = MIX.GetHeatCapacity(BC[c].temperature, Yi_bnd, mix)
-      
-            var drho_dx = [OP.emitderivRightBCBase(rexpr BC  [c    ].gradX end, 
-                                                   rexpr BCst[c_int].rho   end, 
-                                                   rexpr BC  [c    ].rho   end)]
-            var dp_dx   = [OP.emitderivRightBCBase(rexpr BC  [c    ].gradX    end, 
-                                                   rexpr BCst[c_int].pressure end, 
-                                                   rexpr BC  [c    ].pressure end)]
-            var du_dx   = BC[c].velocityGradientX[0]
-            var dv_dx   = BC[c].velocityGradientX[1]
-            var dw_dx   = BC[c].velocityGradientX[2]
-            var dY_dx : double[nSpec]
-            for i=0, nSpec do
-               dY_dx[i] = [OP.emitderivRightBCBase(rexpr BC[c].gradX end,
-                                                   rexpr Yi_int[i] end,
-                                                   rexpr Yi_bnd[i] end)]
-            end
-      
-            var lambda_1 = BC[c].velocity[0] - BC[c].SoS
-            var lambda   = BC[c].velocity[0]
-            var lambda_N = BC[c].velocity[0] + BC[c].SoS
-      
-            var L1 : double
-            if lambda_1 > 0 then
-               -- We are supersonic
-               L1 = lambda_1*(dp_dx - BC[c].rho*BC[c].SoS*du_dx)
-            else
-               -- It is either a subsonic or partially subsonic outlet
-               var K = sigma*(1.0-MaxMach*MaxMach)*BC[c].SoS/LengthScale
-               if MaxMach > 0.99 then
-                  -- This means that MaxMach > 1.0
-                  -- Use the local Mach number for partialy supersonic outflows
-                  K = sigma*(BC[c].SoS-(BC[c].velocity[0]*BC[c].velocity[0])/BC[c].SoS)/LengthScale
-               end
-               L1 = K*(BC[c].pressure - Pinf)
-            end
-      
-            var L2 = lambda*(dp_dx - BC[c].SoS*BC[c].SoS*drho_dx)
-            var L3 = lambda*(dv_dx)
-            var L4 = lambda*(dw_dx)
-            var LS : double[nSpec]
-            for i=0, nSpec do
-               LS[i] = lambda*(dY_dx[i])
-            end
-            var LN = lambda_N*(dp_dx + BC[c].rho*BC[c].SoS*du_dx)
-      
-            var d1 = (0.5*(LN + L1) - L2)/(BC[c].SoS*BC[c].SoS)
-            var d2 = (LN - L1)/(2.0*BC[c].rho*BC[c].SoS)
-            var d3 = L3
-            var d4 = L4
-            var dS = LS
-            var dN = L2/(BC[c].SoS*BC[c].SoS)
-      
-            var tau11_bnd = BC[c].mu*(4.0*BC[c].velocityGradientX[0] - 2.0*BC[c].velocityGradientY[1] - 2.0*BC[c].velocityGradientZ[2])/3.0
-            var tau21_bnd = BC[c].mu*(BC[c].velocityGradientX[1] + BC[c].velocityGradientY[0])
-            var tau31_bnd = BC[c].mu*(BC[c].velocityGradientX[2] + BC[c].velocityGradientZ[0])
-      
-            var tau11_int = BCst[c_int].mu*(4.0*BCst[c_int].velocityGradientX[0] - 2.0*BCst[c_int].velocityGradientY[1] - 2.0*BCst[c_int].velocityGradientZ[2])/3.0
-      
-            -- Diffusion in momentum equations
-            var dtau11_dx = [OP.emitderivRightBCBase(rexpr BC[c].gradX end, rexpr tau11_int end, rexpr tau11_bnd end)]
-      
-            -- Source in energy equation
-            var energy_term_x = [OP.emitderivRightBCBase(rexpr BC[c].gradX end, 
-                                                         rexpr BCst[c_int].velocity[0]*tau11_int end,
-                                                         rexpr BC  [c    ].velocity[0]*tau11_bnd end)]
-                                + BC[c].velocityGradientX[1]*tau21_bnd
-                                + BC[c].velocityGradientX[2]*tau31_bnd
-      
-            -- Update the RHS of conservation equations with x fluxes
-            for i=0, nSpec do
-               BC[c].Conserved_t[i] -= d1*Yi_bnd[i] + BC[c].rho*dS[i]
-            end
-            BC[c].Conserved_t[irU+0] -= BC[c].velocity[0]*d1 + BC[c].rho*d2 - dtau11_dx
-            BC[c].Conserved_t[irU+1] -= BC[c].velocity[1]*d1 + BC[c].rho*d3
-            BC[c].Conserved_t[irU+2] -= BC[c].velocity[2]*d1 + BC[c].rho*d4
-            BC[c].Conserved_t[irE] -= (BC[c].Conserved[irE] + BC[c].pressure)*d1/BC[c].rho
-                                     + BC[c].Conserved[irU+0]*d2
-                                     + BC[c].Conserved[irU+1]*d3
-                                     + BC[c].Conserved[irU+2]*d4
-                                     + Cp_bnd*BC[c].temperature*dN
-                                     - energy_term_x
-            for i=0, nSpec do
-               var dedYi = MIX.GetSpecificInternalEnergy(i, BC[c].temperature, mix)
-               BC[c].Conserved_t[irE] -= BC[c].rho*dedYi*dS[i]
-            end
-         end
       end
+      UpdateUsingFluxNSCBCOutflow:set_calling_convention(regentlib.convention.manual())
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowXPos)
+--      for k, v in pairs(UpdateUsingFluxNSCBCOutflow:get_params_struct():getentries()) do
+--         print(k, v)
+--         for k2, v2 in pairs(v) do print(k2, v2) end
+--      end
 
    elseif dir == "yNeg" then
-
-      __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-      task UpdateUsingFluxNSCBCOutflow([Fluid],
-                                       Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                       mix : MIX.Mixture,
-                                       MaxMach : double,
-                                       LengthScale : double,
-                                       Pinf : double)
+      extern task UpdateUsingFluxNSCBCOutflow([Fluid],
+                                              Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                              mix : MIX.Mixture,
+                                              MaxMach : double,
+                                              LengthScale : double,
+                                              Pinf : double)
       where
-         reads(Fluid.gradY),
+         reads(Fluid.{nType_y}),
+         reads(Fluid.deta_d),
          reads(Fluid.{rho, mu, SoS}),
-         reads(Fluid.[Primitives]),
+         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
          reads(Fluid.Conserved),
-         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads(Fluid.{MolarFracs, pressure, velocity}),
-         reads(Fluid.{rho, mu}),
          reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
          reads writes(Fluid.Conserved_t),
          [coherence_mode]
-      do
-         var BC   = Fluid_BC[0]
-         var BCst = Fluid_BC[1]
-
-         __demand(__openmp)
-         for c in BC do
-            var c_int = c + int3d{ 0, 1, 0}
-
-            -- Thermo-chemical quantities
-            var MixW_bnd = MIX.GetMolarWeightFromXi(      BC  [c    ].MolarFracs, mix)
-            var Yi_bnd   = MIX.GetMassFractions(MixW_bnd, BC  [c    ].MolarFracs, mix)
-            var MixW_int = MIX.GetMolarWeightFromXi(      BCst[c_int].MolarFracs, mix)
-            var Yi_int   = MIX.GetMassFractions(MixW_int, BCst[c_int].MolarFracs, mix)
-            var Cp_bnd   = MIX.GetHeatCapacity(BC[c].temperature, Yi_bnd, mix)
-
-            var drho_dy = [OP.emitderivLeftBCBase(rexpr BC  [c    ].gradY end, 
-                                                  rexpr BC  [c    ].rho   end, 
-                                                  rexpr BCst[c_int].rho   end)]
-            var dp_dy   = [OP.emitderivLeftBCBase(rexpr BC  [c    ].gradY    end, 
-                                                  rexpr BC  [c    ].pressure end, 
-                                                  rexpr BCst[c_int].pressure end)]
-            var du_dy   = BC[c].velocityGradientY[0]
-            var dv_dy   = BC[c].velocityGradientY[1]
-            var dw_dy   = BC[c].velocityGradientY[2]
-            var dY_dy : double[nSpec]
-            for i=0, nSpec do
-               dY_dy[i] = [OP.emitderivLeftBCBase(rexpr BC[c].gradY end,
-                                                  rexpr Yi_bnd[i] end,
-                                                  rexpr Yi_int[i] end)]
-            end
-
-            var lambda_1 = BC[c].velocity[1] - BC[c].SoS
-            var lambda   = BC[c].velocity[1]
-            var lambda_N = BC[c].velocity[1] + BC[c].SoS
-
-
-            var L1 = lambda_1*(dp_dy - BC[c].rho*BC[c].SoS*dv_dy)
-            var L2 = lambda*(du_dy)
-            var L3 = lambda*(dp_dy - BC[c].SoS*BC[c].SoS*drho_dy)
-            var L4 = lambda*(dw_dy)
-            var LS : double[nSpec]
-            for i=0, nSpec do
-               LS[i] = lambda*(dY_dy[i])
-            end
-
-            var LN : double
-            if lambda_N > 0 then
-               -- We are supersonic
-               LN = lambda_N*(dp_dy + BC[c].rho*BC[c].SoS*dv_dy)
-            else
-               -- It is either a subsonic or partially subsonic outlet
-               var K = sigma*(1.0-MaxMach*MaxMach)*BC[c].SoS/LengthScale
-               if MaxMach > 0.99 then
-                  -- This means that MaxMach[0] > 1.0
-                  -- Use the local Mach number for partialy supersonic outflows
-                  K = sigma*(BC[c].SoS-(BC[c].velocity[1]*BC[c].velocity[1])/BC[c].SoS)/LengthScale
-               end
-               LN = K*(BC[c].pressure - Pinf)
-            end
-
-            var d1 = (0.5*(LN + L1) - L3)/(BC[c].SoS*BC[c].SoS)
-            var d2 = L2
-            var d3 = (LN - L1)/(2.0*BC[c].rho*BC[c].SoS)
-            var d4 = L4
-            var dS = LS
-            var dN = L3/(BC[c].SoS*BC[c].SoS)
-
-            var tau12_bnd = BC[c].mu*(BC[c].velocityGradientY[0] + BC[c].velocityGradientX[1])
-            var tau22_bnd = BC[c].mu*(4.0*BC[c].velocityGradientY[1] - 2.0*BC[c].velocityGradientX[0] - 2.0*BC[c].velocityGradientZ[2])/3.0
-            var tau32_bnd = BC[c].mu*(BC[c].velocityGradientY[2] + BC[c].velocityGradientZ[1])
-
-            var tau22_int = BCst[c_int].mu*(4.0*BCst[c_int].velocityGradientY[1] - 2.0*BCst[c_int].velocityGradientX[0] - 2.0*BCst[c_int].velocityGradientZ[2])/3.0
-
-            -- Diffusion in momentum equations
-            var dtau22_dy = [OP.emitderivLeftBCBase(rexpr BC[c].gradY end,
-                                                    rexpr tau22_bnd   end, 
-                                                    rexpr tau22_int   end)]
-
-            -- Source in energy equation
-            var energy_term_y = [OP.emitderivLeftBCBase(rexpr BC[c].gradY end, 
-                                                        rexpr BC  [c    ].velocity[1]*tau22_bnd end,
-                                                        rexpr BCst[c_int].velocity[1]*tau22_int end)]
-                                + BC[c].velocityGradientY[0]*tau12_bnd 
-                                + BC[c].velocityGradientY[2]*tau32_bnd
-
-            -- Update the RHS of conservation equations with x fluxes
-            for i=0, nSpec do
-               BC[c].Conserved_t[i] -= d1*Yi_bnd[i] + BC[c].rho*dS[i]
-            end
-            BC[c].Conserved_t[irU+0] -= BC[c].velocity[0]*d1 + BC[c].rho*d2
-            BC[c].Conserved_t[irU+1] -= BC[c].velocity[1]*d1 + BC[c].rho*d3 - dtau22_dy
-            BC[c].Conserved_t[irU+2] -= BC[c].velocity[2]*d1 + BC[c].rho*d4
-            BC[c].Conserved_t[irE] -= (BC[c].Conserved[irE] + BC[c].pressure)*d1/BC[c].rho
-                                     + BC[c].Conserved[irU+0]*d2
-                                     + BC[c].Conserved[irU+1]*d3
-                                     + BC[c].Conserved[irU+2]*d4
-                                     + Cp_bnd*BC[c].temperature*dN
-                                     - energy_term_y
-            for i=0, nSpec do
-               var dedYi = MIX.GetSpecificInternalEnergy(i, BC[c].temperature, mix)
-               BC[c].Conserved_t[irE] -= BC[c].rho*dedYi*dS[i]
-            end
-         end
       end
+      UpdateUsingFluxNSCBCOutflow:set_calling_convention(regentlib.convention.manual())
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYNeg)
 
    elseif dir == "yPos" then
-
-      __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-      task UpdateUsingFluxNSCBCOutflow([Fluid],
-                                       Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                       mix : MIX.Mixture,
-                                       MaxMach : double,
-                                       LengthScale : double,
-                                       Pinf : double)
+      extern task UpdateUsingFluxNSCBCOutflow([Fluid],
+                                              Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                              mix : MIX.Mixture,
+                                              MaxMach : double,
+                                              LengthScale : double,
+                                              Pinf : double)
       where
-         reads(Fluid.gradY),
+         reads(Fluid.{nType_y}),
+         reads(Fluid.deta_d),
          reads(Fluid.{rho, mu, SoS}),
-         reads(Fluid.[Primitives]),
+         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
          reads(Fluid.Conserved),
-         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads(Fluid.{MolarFracs, pressure, velocity}),
-         reads(Fluid.{rho, mu}),
          reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
          reads writes(Fluid.Conserved_t),
          [coherence_mode]
-      do
-         var BC   = Fluid_BC[0]
-         var BCst = Fluid_BC[1]
-
-         __demand(__openmp)
-         for c in BC do
-            var c_int = c + int3d{ 0,-1, 0}
-
-            -- Thermo-chemical quantities
-            var MixW_bnd = MIX.GetMolarWeightFromXi(      BC  [c    ].MolarFracs, mix)
-            var Yi_bnd   = MIX.GetMassFractions(MixW_bnd, BC  [c    ].MolarFracs, mix)
-            var MixW_int = MIX.GetMolarWeightFromXi(      BCst[c_int].MolarFracs, mix)
-            var Yi_int   = MIX.GetMassFractions(MixW_int, BCst[c_int].MolarFracs, mix)
-            var Cp_bnd   = MIX.GetHeatCapacity(BC[c].temperature, Yi_bnd, mix)
-
-            var drho_dy = [OP.emitderivRightBCBase(rexpr BC  [c    ].gradY end, 
-                                                   rexpr BCst[c_int].rho   end, 
-                                                   rexpr BC  [c    ].rho   end)]
-            var dp_dy   = [OP.emitderivRightBCBase(rexpr BC  [c    ].gradY    end, 
-                                                   rexpr BCst[c_int].pressure end, 
-                                                   rexpr BC  [c    ].pressure end)]
-            var du_dy   = BC[c].velocityGradientY[0]
-            var dv_dy   = BC[c].velocityGradientY[1]
-            var dw_dy   = BC[c].velocityGradientY[2]
-            var dY_dy : double[nSpec]
-            for i=0, nSpec do
-               dY_dy[i] = [OP.emitderivRightBCBase(rexpr BC[c].gradY end,
-                                                   rexpr Yi_int[i] end,
-                                                   rexpr Yi_bnd[i] end)]
-            end
-
-            var lambda_1 = BC[c].velocity[1] - BC[c].SoS
-            var lambda   = BC[c].velocity[1]
-            var lambda_N = BC[c].velocity[1] + BC[c].SoS
-
-            var L1 : double
-            if lambda_1 > 0 then
-               -- We are supersonic
-               L1 = lambda_1*(dp_dy - BC[c].rho*BC[c].SoS*dv_dy)
-            else
-               -- It is either a subsonic or partially subsonic outlet
-               var K = sigma*(1.0-MaxMach*MaxMach)*BC[c].SoS/LengthScale
-               if MaxMach > 0.99 then
-                  -- This means that MaxMach[0] > 1.0
-                  -- Use the local Mach number for partialy supersonic outflows
-                  K = sigma*(BC[c].SoS-(BC[c].velocity[1]*BC[c].velocity[1])/BC[c].SoS)/LengthScale
-               end
-               L1 = K*(BC[c].pressure - Pinf)
-            end
-
-            var L2 = lambda*(du_dy)
-            var L3 = lambda*(dp_dy - BC[c].SoS*BC[c].SoS*drho_dy)
-            var L4 = lambda*(dw_dy)
-            var LS : double[nSpec]
-            for i=0, nSpec do
-               LS[i] = lambda*(dY_dy[i])
-            end
-            var LN = lambda_N*(dp_dy + BC[c].rho*BC[c].SoS*dv_dy)
-
-            var d1 = (0.5*(LN + L1) - L3)/(BC[c].SoS*BC[c].SoS)
-            var d2 = L2
-            var d3 = (LN - L1)/(2.0*BC[c].rho*BC[c].SoS)
-            var d4 = L4
-            var dS = LS
-            var dN = L3/(BC[c].SoS*BC[c].SoS)
-
-            var tau12_bnd = BC[c].mu*(BC[c].velocityGradientY[0] + BC[c].velocityGradientX[1])
-            var tau22_bnd = BC[c].mu*(4.0*BC[c].velocityGradientY[1] - 2.0*BC[c].velocityGradientX[0] - 2.0*BC[c].velocityGradientZ[2])/3.0
-            var tau32_bnd = BC[c].mu*(BC[c].velocityGradientY[2] + BC[c].velocityGradientZ[1])
-
-            var tau22_int = BCst[c_int].mu*(4.0*BCst[c_int].velocityGradientY[1] - 2.0*BCst[c_int].velocityGradientX[0] - 2.0*BCst[c_int].velocityGradientZ[2])/3.0
-
-            -- Diffusion in momentum equations
-            var dtau22_dy = [OP.emitderivRightBCBase(rexpr BC[c].gradY end, rexpr tau22_int end, rexpr tau22_bnd end)]
-
-            -- Source in energy equation
-            var energy_term_y = [OP.emitderivRightBCBase(rexpr BC[c].gradY end, 
-                                                         rexpr BCst[c_int].velocity[1]*tau22_int end,
-                                                         rexpr BC  [c    ].velocity[1]*tau22_bnd end)]
-                                + BC[c].velocityGradientY[0]*tau12_bnd 
-                                + BC[c].velocityGradientY[2]*tau32_bnd
-
-            -- Update the RHS of conservation equations with x fluxes
-            for i=0, nSpec do
-               BC[c].Conserved_t[i] -= d1*Yi_bnd[i] + BC[c].rho*dS[i]
-            end
-            BC[c].Conserved_t[irU+0] -= BC[c].velocity[0]*d1 + BC[c].rho*d2
-            BC[c].Conserved_t[irU+1] -= BC[c].velocity[1]*d1 + BC[c].rho*d3 - dtau22_dy
-            BC[c].Conserved_t[irU+2] -= BC[c].velocity[2]*d1 + BC[c].rho*d4
-            BC[c].Conserved_t[irE] -= (BC[c].Conserved[irE] + BC[c].pressure)*d1/BC[c].rho
-                                     + BC[c].Conserved[irU+0]*d2
-                                     + BC[c].Conserved[irU+1]*d3
-                                     + BC[c].Conserved[irU+2]*d4
-                                     + Cp_bnd*BC[c].temperature*dN
-                                     - energy_term_y
-            for i=0, nSpec do
-               var dedYi = MIX.GetSpecificInternalEnergy(i, BC[c].temperature, mix)
-               BC[c].Conserved_t[irE] -= BC[c].rho*dedYi*dS[i]
-            end
-         end
       end
+      UpdateUsingFluxNSCBCOutflow:set_calling_convention(regentlib.convention.manual())
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYPos)
 
    end
    return UpdateUsingFluxNSCBCOutflow
-end
+end)
 
 -------------------------------------------------------------------------------
 -- FORCING ROUTINES
@@ -584,130 +473,122 @@ do
    end
 end
 
--------------------------------------------------------------------------------
--- CORRECTION ROUTINES
--------------------------------------------------------------------------------
-
-local __demand(__inline)
-task isValid(Conserved : double[nEq],
-             mix : MIX.Mixture)
-   var valid = [UTIL.mkArrayConstant(nSpec+1, true)];
-   var rhoYi : double[nSpec]
-   for i=0, nSpec do
-      if Conserved[i] < 0.0 then valid[i] = false end
-      rhoYi[i] = Conserved[i]
-   end
-   var rho = MIX.GetRhoFromRhoYi(rhoYi)
-   var Yi = MIX.GetYi(rho, rhoYi)
-   var rhoInv = 1.0/rho
-   var velocity = array(Conserved[irU+0]*rhoInv,
-                        Conserved[irU+1]*rhoInv,
-                        Conserved[irU+2]*rhoInv)
-   var kineticEnergy = (0.5*MACRO.dot(velocity, velocity))
-   var InternalEnergy = Conserved[irE]*rhoInv - kineticEnergy
-   valid[nSpec] = MIX.isValidInternalEnergy(InternalEnergy, Yi, mix)
-   return valid
-end
-
-Exports.mkCorrectUsingFlux = terralib.memoize(function(dir)
-   local CorrectUsingFlux
-
-   local ind
-   local Flux
-   local mk_cm1
-   local mk_cp1
-   if (dir == "x") then
-      ind = 0
-      Flux = "FluxXCorr"
-      mk_cm1 = function(c, b) return rexpr (c + {-1, 0, 0}) % b end end
-      mk_cp1 = function(c, b) return rexpr (c + { 1, 0, 0}) % b end end
-   elseif (dir == "y") then
-      ind = 1
-      Flux = "FluxYCorr"
-      mk_cm1 = function(c, b) return rexpr (c + { 0,-1, 0}) % b end end
-      mk_cp1 = function(c, b) return rexpr (c + { 0, 1, 0}) % b end end
-   elseif (dir == "z") then
-      ind = 2
-      Flux = "FluxZCorr"
-      mk_cm1 = function(c, b) return rexpr (c + { 0, 0,-1}) % b end end
-      mk_cp1 = function(c, b) return rexpr (c + { 0, 0, 1}) % b end end
-   else assert(false) end
-
-   __demand(__parallel, __cuda, __leaf)
-   task CorrectUsingFlux([Fluid],
-                         ModCells : region(ispace(int3d), Fluid_columns),
-                         Fluid_bounds : rect3d,
-                         mix : MIX.Mixture)
-   where
-      ModCells <= Fluid,
-      reads(Fluid.cellWidth),
-      reads(Fluid.Conserved_hat),
-      reads(Fluid.[Flux]),
-      reads writes(Fluid.Conserved_t),
-      [coherence_mode]
-   do
-      __demand(__openmp)
-      for c in ModCells do
-         -- Stencil
-         var cm1 = [mk_cm1(rexpr c end, rexpr Fluid_bounds end)];
-         var cp1 = [mk_cp1(rexpr c end, rexpr Fluid_bounds end)];
-
-         -- Do derivatives need to be corrected?
-         var correctC   = false
-         var correctCM1 = false
-
-         var valid_cm1 = isValid(Fluid[cm1].Conserved_hat, [mix])
-         var valid_c   = isValid(Fluid[c  ].Conserved_hat, [mix])
-         var valid_cp1 = isValid(Fluid[cp1].Conserved_hat, [mix])
-
-         for i=0, nSpec+1 do
-            if not (valid_cp1[i] and valid_c[i]) then correctC   = true end
-            if not (valid_cm1[i] and valid_c[i]) then correctCM1 = true end
-         end
-
-         -- Correct using Flux on i-1 face
-         if correctCM1 then
-            -- Correct time derivatives using fluxes between cm1 and c
-            var CellWidthInv = 1.0/Fluid[c].cellWidth[ind]
-            if not (valid_cm1[nSpec] and valid_c[nSpec]) then
-               -- Temeperature is going south
-               -- Correct everything
-               for i=0, nEq do
-                  Fluid[c].Conserved_t[i] -= Fluid[cm1].[Flux][i]*CellWidthInv
-               end
-            else
-               for i=0, nSpec do
-                  if not (valid_cm1[i] and valid_c[i]) then
-                     -- Correct single species flux
-                     Fluid[c].Conserved_t[i] -= Fluid[cm1].[Flux][i]*CellWidthInv
-                  end
-               end
-            end
-         end
-
-         -- Correct using Flux on i face
-         if correctC  then
-            -- Correct time derivatives using fluxes between c and cp1
-            var CellWidthInv = 1.0/Fluid[c].cellWidth[ind]
-            if not (valid_cp1[nSpec] and valid_c[nSpec]) then
-               -- Temeperature is going south
-               -- Correct everything
-               for i=0, nEq do
-                  Fluid[c].Conserved_t[i] += Fluid[c].[Flux][i]*CellWidthInv
-               end
-            else
-               for i=0, nSpec do
-                  if not (valid_cp1[i] and valid_c[i]) then
-                     -- Correct single species flux
-                     Fluid[c].Conserved_t[i] += Fluid[c].[Flux][i]*CellWidthInv
-                  end
-               end
-            end
-         end
-      end
-   end
-   return CorrectUsingFlux
-end)
+---------------------------------------------------------------------------------
+---- CORRECTION ROUTINES
+---------------------------------------------------------------------------------
+--
+--local __demand(__inline)
+--task isValid(Conserved : double[nEq],
+--             mix : MIX.Mixture)
+--   var valid = [UTIL.mkArrayConstant(nSpec+1, true)];
+--   var rhoYi : double[nSpec]
+--   for i=0, nSpec do
+--      if Conserved[i] < 0.0 then valid[i] = false end
+--      rhoYi[i] = Conserved[i]
+--   end
+--   var rho = MIX.GetRhoFromRhoYi(rhoYi)
+--   var Yi = MIX.GetYi(rho, rhoYi)
+--   var rhoInv = 1.0/rho
+--   var velocity = array(Conserved[irU+0]*rhoInv,
+--                        Conserved[irU+1]*rhoInv,
+--                        Conserved[irU+2]*rhoInv)
+--   var kineticEnergy = (0.5*MACRO.dot(velocity, velocity))
+--   var InternalEnergy = Conserved[irE]*rhoInv - kineticEnergy
+--   valid[nSpec] = MIX.isValidInternalEnergy(InternalEnergy, Yi, mix)
+--   return valid
+--end
+--
+--Exports.mkCorrectUsingFlux = terralib.memoize(function(dir)
+--   local CorrectUsingFlux
+--
+--   local Flux
+--   local nType
+--   if (dir == "x") then
+--      Flux = "FluxXCorr"
+--      nType = "nType_z"
+--   elseif (dir == "y") then
+--      Flux = "FluxYCorr"
+--      nType = "nType_y"
+--   elseif (dir == "z") then
+--      Flux = "FluxZCorr"
+--      nType = "nType_z"
+--   else assert(false) end
+--   local cm1_d = function(r, c, b) return METRIC.GetCm1(dir, c, rexpr [r][c].[nType] end, b) end
+--   local cp1_d = function(r, c, b) return METRIC.GetCp1(dir, c, rexpr [r][c].[nType] end, b) end
+--
+--   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
+--   task CorrectUsingFlux(Ghost : region(ispace(int3d), Fluid_columns),
+--                         [Fluid],
+--                         ModCells : region(ispace(int3d), Fluid_columns),
+--                         Fluid_bounds : rect3d,
+--                         mix : MIX.Mixture)
+--   where
+--      reads(Fluid.[nType]),
+--      reads(Ghost.Conserved_hat),
+--      reads(Ghost.[Flux]),
+--      reads writes(Fluid.Conserved_t),
+--      [coherence_mode]
+--   do
+--      __demand(__openmp)
+--      for c in ModCells do
+--         -- Stencil
+--         var cm1 = [cm1_d(rexpr Fluid end, rexpr c end, rexpr Fluid_bounds end)];
+--         var cp1 = [cp1_d(rexpr Fluid end, rexpr c end, rexpr Fluid_bounds end)];
+--
+--         -- Do derivatives need to be corrected?
+--         var correctC   = false
+--         var correctCM1 = false
+--
+--         var valid_cm1 = isValid(Ghost[cm1].Conserved_hat, [mix])
+--         var valid_c   = isValid(Ghost[c  ].Conserved_hat, [mix])
+--         var valid_cp1 = isValid(Ghost[cp1].Conserved_hat, [mix])
+--
+--         for i=0, nSpec+1 do
+--            if not (valid_cp1[i] and valid_c[i]) then correctC   = true end
+--            if not (valid_cm1[i] and valid_c[i]) then correctCM1 = true end
+--         end
+--
+--         -- Correct using Flux on i-1 face
+--         if correctCM1 then
+--            -- Correct time derivatives using fluxes between cm1 and c
+--            if not (valid_cm1[nSpec] and valid_c[nSpec]) then
+--               -- Temeperature is going south
+--               -- Correct everything
+--               for i=0, nEq do
+--                  Fluid[c].Conserved_t[i] -= Ghost[cm1].[Flux][i]
+--               end
+--            else
+--               for i=0, nSpec do
+--                  if not (valid_cm1[i] and valid_c[i]) then
+--                     -- Correct single species flux
+--                     Fluid[c].Conserved_t[i] -= Ghost[cm1].[Flux][i]
+--                  end
+--               end
+--            end
+--         end
+--
+--         -- Correct using Flux on i face
+--         if correctC  then
+--            -- Correct time derivatives using fluxes between c and cp1
+--            if not (valid_cp1[nSpec] and valid_c[nSpec]) then
+--               -- Temeperature is going south
+--               -- Correct everything
+--               for i=0, nEq do
+--                  Fluid[c].Conserved_t[i] += Ghost[c].[Flux][i]
+--               end
+--            else
+--               for i=0, nSpec do
+--                  if not (valid_cp1[i] and valid_c[i]) then
+--                     -- Correct single species flux
+--                     Fluid[c].Conserved_t[i] += Ghost[c].[Flux][i]
+--                  end
+--               end
+--            end
+--         end
+--      end
+--   end
+--   return CorrectUsingFlux
+--end)
 
 return Exports end
 

@@ -18,6 +18,7 @@ local struct Fluid_columns {
    -- Primitive variables
    pressure    : double;
    temperature : double;
+   MassFracs   : double[nSpec];
    MolarFracs  : double[nSpec];
    velocity    : double[3];
    -- Properties
@@ -49,6 +50,7 @@ do
    var rho = MIX.GetRho([P], [T], MixW, Mix)
    fill(Fluid.pressure, [P])
    fill(Fluid.temperature, [T])
+   fill(Fluid.MassFracs, [Yi])
    fill(Fluid.MolarFracs, Xi)
    fill(Fluid.velocity, array(0.0, 0.0, 0.0))
    fill(Fluid.rho, rho)
@@ -68,6 +70,7 @@ end
 task main()
    -- Init the mixture
    var config : Config
+   config.Flow.mixture.type = SCHEMA.MixtureModel_AirMix
    var Mix = MIX.InitMixture(config)
 
    -- Define the domain

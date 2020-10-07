@@ -33,9 +33,9 @@ yWidth  = data["Grid"]["yWidth"]
 xOrigin = data["Grid"]["origin"][0]
 yOrigin = data["Grid"]["origin"][1]
 
-gamma = data["Flow"]["gamma"]
-R     = data["Flow"]["gasConstant"]
-Pr    = data["Flow"]["prandtl"]
+gamma = data["Flow"]["mixture"]["gamma"]
+R     = data["Flow"]["mixture"]["gasConstant"]
+Pr    = data["Flow"]["mixture"]["prandtl"]
 
 TInf = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
 Tw   = data["BC"]["yBCLeft"]["TemperatureProfile"]["temperature"]

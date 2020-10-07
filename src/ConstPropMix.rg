@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -38,20 +38,11 @@ local pow  = regentlib.pow(double)
 local sqrt = regentlib.sqrt(double)
 
 -- Constants
-
-local ATom  =  1e-10          -- Angstrom to meter
-local DToCm =  3.33564e-30    -- Debye to Coulomb meter
-
 local RGAS = 8.3144598        -- [J/(mol K)]
-local Na   = 6.02214086e23    -- [1/mol]
-local kb   = 1.38064852e-23   -- [m^2 kg /( s^2 K)]
-local PI   = 3.1415926535898
 
 Exports.nSpec = 1
 
 struct Exports.Mixture {
-   nSpec : int
-   nReac : int
    -- Mixture properties
    R     : double
    gamma : double
@@ -75,24 +66,27 @@ struct Exports.Mixture {
 
 __demand(__inline)
 task Exports.InitMixture(config : SCHEMA.Config)
+   regentlib.assert(config.Flow.mixture.type == SCHEMA.MixtureModel_ConstPropMix,
+                    "This executable is expecting ConstPropMix in the input file");
+
    var Mix : Exports.Mixture
-   Mix.nSpec = Exports.nSpec
-   Mix.nReac = 0
-   Mix.R     = config.Flow.gasConstant
-   Mix.gamma = config.Flow.gamma
 
-   Mix.viscosityModel  = config.Flow.viscosityModel.type
+   Mix.R     = config.Flow.mixture.u.ConstPropMix.gasConstant
+   Mix.gamma = config.Flow.mixture.u.ConstPropMix.gamma
 
-   Mix.constantVisc    = config.Flow.viscosityModel.u.Constant.Visc
+   Mix.viscosityModel = config.Flow.mixture.u.ConstPropMix.viscosityModel.type
+   if (Mix.viscosityModel == SCHEMA.ViscosityModel_Constant) then
+      Mix.constantVisc    = config.Flow.mixture.u.ConstPropMix.viscosityModel.u.Constant.Visc
+   elseif (Mix.viscosityModel == SCHEMA.ViscosityModel_PowerLaw) then
+      Mix.powerlawTempRef = config.Flow.mixture.u.ConstPropMix.viscosityModel.u.PowerLaw.TempRef
+      Mix.powerlawViscRef = config.Flow.mixture.u.ConstPropMix.viscosityModel.u.PowerLaw.ViscRef
+   elseif (Mix.viscosityModel == SCHEMA.ViscosityModel_Sutherland) then
+      Mix.sutherlandSRef    = config.Flow.mixture.u.ConstPropMix.viscosityModel.u.Sutherland.SRef
+      Mix.sutherlandTempRef = config.Flow.mixture.u.ConstPropMix.viscosityModel.u.Sutherland.TempRef
+      Mix.sutherlandViscRef = config.Flow.mixture.u.ConstPropMix.viscosityModel.u.Sutherland.ViscRef
+   end
 
-   Mix.powerlawTempRef = config.Flow.viscosityModel.u.PowerLaw.TempRef
-   Mix.powerlawViscRef = config.Flow.viscosityModel.u.PowerLaw.ViscRef
-
-   Mix.sutherlandSRef    = config.Flow.viscosityModel.u.Sutherland.SRef
-   Mix.sutherlandTempRef = config.Flow.viscosityModel.u.Sutherland.TempRef
-   Mix.sutherlandViscRef = config.Flow.viscosityModel.u.Sutherland.ViscRef
-
-   Mix.Prandtl = config.Flow.prandtl
+   Mix.Prandtl = config.Flow.mixture.u.ConstPropMix.prandtl
 
    return Mix
 end

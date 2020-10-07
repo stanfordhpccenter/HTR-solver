@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import numpy as np
 from scipy.integrate import odeint
@@ -81,7 +81,7 @@ def GetGridFaces(Origin, Width, Num, Type, stretching, dx=1, xswitch=1, switch=1
       x = GenDoubleGeomMinus(stretch)
    return x
 
-def GetGrid(Origin, Width, Num, Type, stretching, periodic, dx=1, xswitch=1, switch=1):
+def GetGrid(Origin, Width, Num, Type, stretching, periodic, StagMinus=False, StagPlus=False, dx=1, xswitch=1, switch=1):
    x = GetGridFaces(Origin, Width, Num, Type, stretching, dx, xswitch, switch)
    if periodic:
       xc = np.zeros(Num)
@@ -95,10 +95,20 @@ def GetGrid(Origin, Width, Num, Type, stretching, periodic, dx=1, xswitch=1, swi
       for i in range(1,Num+1):
          xc[i] = 0.5*(x[i]+x[i-1])
          dx[i] =     (x[i]-x[i-1])
-      xc[0] = xc[1] - dx[1]
-      dx[0] = dx[1]
-      xc[Num+1] = xc[Num] + dx[Num]
-      dx[Num+1] = dx[Num]
+
+      if StagMinus:
+         xc[0] = x[0]
+         dx[0] = 1e-12
+      else:
+         xc[0] = xc[1] - dx[1]
+         dx[0] = dx[1]
+
+      if StagMinus:
+         xc[Num+1] = x[Num]
+         dx[Num+1] = 1e-12
+      else:
+         xc[Num+1] = xc[Num] + dx[Num]
+         dx[Num+1] = dx[Num]
    return xc, dx
 
 def GetGridBL(origin, n1, n2, n3, x1, x2, x3):

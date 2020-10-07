@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import numpy as np
 import json
@@ -46,7 +46,8 @@ yGrid, dy = gridGen.GetGrid(data["Grid"]["origin"][1],
                             data["Grid"]["yNum"],
                             data["Grid"]["yType"],
                             data["Grid"]["yStretching"],
-                            False)
+                            False,
+                            StagMinus=True)
 
 # Correct boundaries that are staggered
 yGrid[     0] += 0.5*dy[0]
@@ -62,7 +63,7 @@ sciacoEtAl = pandas.read_csv("sciacoEtAl.dat")
 #                          Load average files                                #
 ##############################################################################
 
-avg = Averages.avg(args.input_file, True)
+avg = Averages.avg2D(args.input_file, True)
 
 ##############################################################################
 #                           Print quantities                                 #

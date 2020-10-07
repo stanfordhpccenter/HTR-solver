@@ -75,8 +75,8 @@ It is strongly advised to run with one tile per GPU
 ```
 cd Coleman
 python MakeChannel.py base.json
-$HTR_DIR/src/prometeo.sh -i ChannelFlow.json
-$HTR_DIR/src/prometeo.sh -i ChannelFlowStats.json
+$HTR_DIR/prometeo.sh -i ChannelFlow.json
+$HTR_DIR/prometeo.sh -i ChannelFlowStats.json
 python postProc.py -json ChannelFlowStats.json -in [Averages files produced by the code]
 ```
 
@@ -88,8 +88,8 @@ It is strongly advised to run with one tile per GPU
 ```
 cd Sciacovelli
 python MakeChannel.py base.json
-$HTR_DIR/src/prometeo.sh -i ChannelFlow.json
-$HTR_DIR/src/prometeo.sh -i ChannelFlowStats.json
+$HTR_DIR/prometeo.sh -i ChannelFlow.json
+$HTR_DIR/prometeo.sh -i ChannelFlowStats.json
 python postProc.py -json ChannelFlowStats.json -in [Averages files produced by the code]
 ```
 
@@ -101,8 +101,8 @@ It is strongly advised to run with one tile per GPU
 ```
 cd Franko
 python MakeInput.py base.json
-$HTR_DIR/src/prometeo.sh -i NoStats.json
-$HTR_DIR/src/prometeo.sh -i   Stats.json
+$HTR_DIR/prometeo.sh -i NoStats.json
+$HTR_DIR/prometeo.sh -i   Stats.json
 python postProc.py -json Stats.json -in [Averages files produced by the code]
 ```
 
@@ -114,8 +114,8 @@ It is strongly advised to run with one tile per GPU
 ```
 cd MultispeciesTBL
 python MakeInput.py base.json
-$HTR_DIR/src/prometeo.sh -i NoStats.json
-$HTR_DIR/src/prometeo.sh -i   Stats.json
+$HTR_DIR/prometeo.sh -i NoStats.json
+$HTR_DIR/prometeo.sh -i   Stats.json
 python postProc.py -json Stats.json -in [Averages files produced by the code]
 ```
 

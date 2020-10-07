@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 from itertools import count
 import fileinput
@@ -10,4 +10,4 @@ for (line, lineno) in zip(fileinput.input(), count(start=1)):
     line = line.replace('@EMIT', '__quotes:insert(rquote')
     line = line.replace('@TIME', 'end)')
     line = line.replace('@LINE', str(lineno))
-    print line
+    print(line)

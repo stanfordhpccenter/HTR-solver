@@ -7,61 +7,31 @@ local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
+local REGISTRAR = terralib.includec("prometeo_metric.h")
 local UTIL = require 'util-desugared'
 local CONST = require "prometeo_const"
 
--- Stencil indices
-local Stencil1  = CONST.Stencil1
-local Stencil2  = CONST.Stencil2
-local Stencil3  = CONST.Stencil3
-local Stencil4  = CONST.Stencil4
-local nStencils = CONST.nStencils
+-- Reference solution
+local r_e = terralib.newlist({2.773390310366253e+01, 2.579843947566783e+01, 2.229889413558746e+01, 1.888724219452980e+01, 1.647943543824111e+01, 1.469875285148004e+01, 1.345279880561839e+01, 1.266326779792019e+01, 1.228053238740288e+01, 1.228053238740287e+01, 1.266326779792020e+01, 1.345279880561836e+01, 1.469875285148006e+01, 1.647943543824112e+01, 1.888724219452973e+01, 2.229889413558746e+01, 2.579843947566794e+01, 2.773390310366236e+01})
+local r_d = terralib.newlist({2.640364957342085e+01, 2.519516626875359e+01, 2.209511974977558e+01, 1.890177192361619e+01, 1.649926959969077e+01, 1.473669983655983e+01, 1.350335594761413e+01, 1.272177886064925e+01, 1.234288654510126e+01, 1.234288654510126e+01, 1.272177886064925e+01, 1.350335594761413e+01, 1.473669983655983e+01, 1.649926959969077e+01, 1.890177192361617e+01, 2.209511974977559e+01, 2.519516626875359e+01, 2.640364957342077e+01})
+local r_s = terralib.newlist({2.640364957342085e+01, 2.409246486105948e+01, 2.040359422842343e+01, 1.760587770347194e+01, 1.552354538893888e+01, 1.402577225886651e+01, 1.301845891939099e+01, 1.243831970142641e+01, 1.224890666257680e+01, 1.243831970142641e+01, 1.301845891939099e+01, 1.402577225886651e+01, 1.552354538893888e+01, 1.760587770347192e+01, 2.040359422842341e+01, 2.409246486105955e+01, 2.640364957342077e+01, 1.000000000000000e+00})
+local Ref_e = terralib.global(`arrayof(double, [r_e]))
+local Ref_d = terralib.global(`arrayof(double, [r_d]))
+local Ref_s = terralib.global(`arrayof(double, [r_s]))
 
-local struct Fluid_columns {
-   -- Grid point
-   centerCoordinates : double[3];
-   cellWidth : double[3];
-   -- Face reconstruction operators [c-2, ..., c+3]
-   reconXFacePlus : double[nStencils*6];
-   reconYFacePlus : double[nStencils*6];
-   reconZFacePlus : double[nStencils*6];
-   reconXFaceMinus : double[nStencils*6];
-   reconYFaceMinus : double[nStencils*6];
-   reconZFaceMinus : double[nStencils*6];
-   -- Blending coefficients to obtain sixth order reconstruction
-   TENOCoeffsXPlus : double[nStencils];
-   TENOCoeffsYPlus : double[nStencils];
-   TENOCoeffsZPlus : double[nStencils];
-   TENOCoeffsXMinus : double[nStencils];
-   TENOCoeffsYMinus : double[nStencils];
-   TENOCoeffsZMinus : double[nStencils];
-   -- Flags for modified reconstruction on BCs
-   BCStencilX : bool;
-   BCStencilY : bool;
-   BCStencilZ : bool;
-   -- Face interpolation operator [c, c+1]
-   interpXFace : double[2];
-   interpYFace : double[2];
-   interpZFace : double[2];
-   -- Face derivative operator [c+1 - c]
-   derivXFace : double;
-   derivYFace : double;
-   derivZFace : double;
-   -- Cell center gradient operator [c - c-1, c+1 - c]
-   gradX : double[2];
-   gradY : double[2];
-   gradZ : double[2];
-}
+local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
+local Fluid_columns = TYPES.Fluid_columns
 
 --External modules
 local MACRO = require "prometeo_macro"
-local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns)
 local METRIC = (require 'prometeo_metric')(SCHEMA, Fluid_columns)
+local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
+local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns, PART.zones_partitions)
 
 -- Test parameters
-local Npx = 32
-local Npy = 32
-local Npz = 32
+local Npx = 16
+local Npy = 16
+local Npz = 16
 local Nx = 2
 local Ny = 2
 local Nz = 2
@@ -71,131 +41,9 @@ local zO = 0.0
 local xW = 1.0
 local yW = 1.0
 local zW = 1.0
-
-function checkInternal(r, c, sdir)
-   local dir
-   local reconPlus
-   local reconMinus
-   local TENOCoeffsPlus
-   local TENOCoeffsMinus
-   local BCStencil
-   local interp
-   local deriv
-   local grad
-   if sdir == "x" then
-      dir = 0
-      reconPlus = "reconXFacePlus"
-      reconMinus = "reconXFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsXPlus"
-      TENOCoeffsMinus = "TENOCoeffsXMinus"
-      BCStencil = "BCStencilX"
-      interp = "interpXFace"
-      deriv = "derivXFace"
-      grad = "gradX"
-   elseif sdir == "y" then
-      dir = 1
-      reconPlus = "reconYFacePlus"
-      reconMinus = "reconYFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsYPlus"
-      TENOCoeffsMinus = "TENOCoeffsYMinus"
-      BCStencil = "BCStencilY"
-      interp = "interpYFace"
-      deriv = "derivYFace"
-      grad = "gradY"
-   elseif sdir == "z" then
-      dir = 2
-      reconPlus = "reconZFacePlus"
-      reconMinus = "reconZFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsZPlus"
-      TENOCoeffsMinus = "TENOCoeffsZMinus"
-      BCStencil = "BCStencilZ"
-      interp = "interpZFace"
-      deriv = "derivZFace"
-      grad = "gradZ"
-   end
-   return rquote
-      -- Face reconstruction operators
-      -- Plus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+1]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+0]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+1]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+2]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+3]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+4]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+5]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+0]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+1]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+2]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+3]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+4]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+5]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconPlus])
-      -- Minus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+1]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+0]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+1]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+2]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+3]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+4]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+5]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+0]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+1]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+2]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+3]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+4]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+5]           )      ) < 1e-8, ["metricTest: error in Internal Metric on " .. reconMinus])
-      -- TENO blending coefficients
-      -- Plus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil1]/(9.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil2]/(6.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil3]/(1.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil4]/(4.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsPlus])
-      -- Minus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil1]/(9.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil2]/(6.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil3]/(1.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil4]/(4.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. TENOCoeffsMinus])
-      -- BC flag
-      regentlib.assert(r[c].[BCStencil] == false, ["metricTest: error in Internal Metric on " .. BCStencil])
-      -- Face interpolation operator
-      regentlib.assert(fabs((r[c].[interp][0]*2.0) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. interp])
-      regentlib.assert(fabs((r[c].[interp][1]*2.0) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. interp])
-      -- Face derivative operator
-      regentlib.assert(fabs((r[c].[deriv]*r[c].cellWidth[dir]) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. deriv])
-      -- Gradient operator
-      regentlib.assert(fabs((r[c].[grad][0]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. grad])
-      regentlib.assert(fabs((r[c].[grad][1]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in Internal Metric on " .. grad])
-   end
-end
+local xGrid = SCHEMA.GridType_Tanh
+local yGrid = SCHEMA.GridType_Tanh
+local zGrid = SCHEMA.GridType_Tanh
 
 __demand(__inline)
 task InitializeCell(Fluid : region(ispace(int3d), Fluid_columns))
@@ -204,722 +52,55 @@ where
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
    fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
-   fill(Fluid.reconXFacePlus,  [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconYFacePlus,  [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconZFacePlus,  [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconXFaceMinus, [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconYFaceMinus, [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.reconZFaceMinus, [UTIL.mkArrayConstant(nStencils*6, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsXPlus,  [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsYPlus,  [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsZPlus,  [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsXMinus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsYMinus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.TENOCoeffsZMinus, [UTIL.mkArrayConstant(nStencils, rexpr 0.0 end)])
-   fill(Fluid.BCStencilX, false)
-   fill(Fluid.BCStencilY, false)
-   fill(Fluid.BCStencilZ, false)
-   fill(Fluid.interpXFace, array(0.0, 0.0))
-   fill(Fluid.interpYFace, array(0.0, 0.0))
-   fill(Fluid.interpZFace, array(0.0, 0.0))
-   fill(Fluid.derivXFace, 0.0)
-   fill(Fluid.derivYFace, 0.0)
-   fill(Fluid.derivZFace, 0.0)
-   fill(Fluid.gradX, array(0.0, 0.0))
-   fill(Fluid.gradY, array(0.0, 0.0))
-   fill(Fluid.gradZ, array(0.0, 0.0))
+   fill(Fluid.nType_x, 0)
+   fill(Fluid.nType_y, 0)
+   fill(Fluid.nType_z, 0)
+   fill(Fluid.dcsi_e, 0.0)
+   fill(Fluid.deta_e, 0.0)
+   fill(Fluid.dzet_e, 0.0)
+   fill(Fluid.dcsi_d, 0.0)
+   fill(Fluid.deta_d, 0.0)
+   fill(Fluid.dzet_d, 0.0)
+   fill(Fluid.dcsi_s, 0.0)
+   fill(Fluid.deta_s, 0.0)
+   fill(Fluid.dzet_s, 0.0)
 end
 
-local function checkLeft(r, c, sdir)
-   local dir
-   local reconPlus
-   local reconMinus
-   local TENOCoeffsPlus
-   local TENOCoeffsMinus
-   local BCStencil
-   local interp
-   local deriv
-   local grad
-   if sdir == "x" then
-      dir = 0
-      reconPlus = "reconXFacePlus"
-      reconMinus = "reconXFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsXPlus"
-      TENOCoeffsMinus = "TENOCoeffsXMinus"
-      BCStencil = "BCStencilX"
-      interp = "interpXFace"
-      deriv = "derivXFace"
-      grad = "gradX"
-   elseif sdir == "y" then
-      dir = 1
-      reconPlus = "reconYFacePlus"
-      reconMinus = "reconYFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsYPlus"
-      TENOCoeffsMinus = "TENOCoeffsYMinus"
-      BCStencil = "BCStencilY"
-      interp = "interpYFace"
-      deriv = "derivYFace"
-      grad = "gradY"
-   elseif sdir == "z" then
-      dir = 2
-      reconPlus = "reconZFacePlus"
-      reconMinus = "reconZFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsZPlus"
-      TENOCoeffsMinus = "TENOCoeffsZMinus"
-      BCStencil = "BCStencilZ"
-      interp = "interpZFace"
-      deriv = "derivZFace"
-      grad = "gradZ"
-   end
-   return rquote
-      -- Face reconstruction operators
-      -- Plus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+1]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+2]           ) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+3]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+0]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+1]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+2]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+3]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+5]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+0]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+1]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+2]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+3]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+4]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+5]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconPlus])
-      -- Minus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+1]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+2]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+3]           ) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+0]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+1]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+2]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+3]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+4]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+5]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+0]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+1]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+2]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+3]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+5]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. reconMinus])
-      -- TENO blending coefficients
-      -- Plus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil1]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil2]           ) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil3]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. TENOCoeffsPlus])
-      -- Minus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil1]           ) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil2]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil3]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil4]           )      ) < 1e-8, ["metricTest: error in Left Metric on " .. TENOCoeffsMinus])
-      -- BC flag
-      regentlib.assert(r[c].[BCStencil] == true, ["metricTest: error in Left Metric on " .. BCStencil])
-      -- Face interpolation operator
-      regentlib.assert(fabs((r[c].[interp][0]*2.0) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. interp])
-      regentlib.assert(fabs((r[c].[interp][1]*2.0) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. interp])
-      -- Face derivative operator
-      regentlib.assert(fabs((r[c].[deriv]*r[c].cellWidth[dir]) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. deriv])
-      -- Gradient operator
-      regentlib.assert(fabs((r[c].[grad][0]                        )      ) < 1e-8, ["metricTest: error in Left Metric on " .. grad])
-      regentlib.assert(fabs((r[c].[grad][1]*r[c].cellWidth[dir]    ) - 1.0) < 1e-3, ["metricTest: error in Left Metric on " .. grad])
-   end
-end
-
-local function checkLeftPlusOne(r, c, sdir)
-   local dir
-   local reconPlus
-   local reconMinus
-   local TENOCoeffsPlus
-   local TENOCoeffsMinus
-   local BCStencil
-   local interp
-   local deriv
-   local grad
-   if sdir == "x" then
-      dir = 0
-      reconPlus = "reconXFacePlus"
-      reconMinus = "reconXFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsXPlus"
-      TENOCoeffsMinus = "TENOCoeffsXMinus"
-      BCStencil = "BCStencilX"
-      interp = "interpXFace"
-      deriv = "derivXFace"
-      grad = "gradX"
-   elseif sdir == "y" then
-      dir = 1
-      reconPlus = "reconYFacePlus"
-      reconMinus = "reconYFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsYPlus"
-      TENOCoeffsMinus = "TENOCoeffsYMinus"
-      BCStencil = "BCStencilY"
-      interp = "interpYFace"
-      deriv = "derivYFace"
-      grad = "gradY"
-   elseif sdir == "z" then
-      dir = 2
-      reconPlus = "reconZFacePlus"
-      reconMinus = "reconZFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsZPlus"
-      TENOCoeffsMinus = "TENOCoeffsZMinus"
-      BCStencil = "BCStencilZ"
-      interp = "interpZFace"
-      deriv = "derivZFace"
-      grad = "gradZ"
-   end
-   return rquote
-      -- Face reconstruction operators
-      -- Plus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+1]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+0]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+1]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+2]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+3]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+4]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+5]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+0]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+1]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+2]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+3]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+4]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+5]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconPlus])
-      -- Minus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+1]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+0]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+1]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+2]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+3]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+4]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+5]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+0]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+1]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+2]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+3]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+4]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+5]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. reconMinus])
-      -- TENO blending coefficients
-      -- Plus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil1]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil2]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil3]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil4]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsPlus])
-      -- Minus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil1]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil2]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil3]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil4]           )      ) < 1e-8, ["metricTest: error in LeftPlusOne Metric on " .. TENOCoeffsMinus])
-      -- BC flag
-      regentlib.assert(r[c].[BCStencil] == true, ["metricTest: error in LeftPlusOne Metric on " .. BCStencil])
-      -- Face interpolation operator
-      regentlib.assert(fabs((r[c].[interp][0]*2.0) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. interp])
-      regentlib.assert(fabs((r[c].[interp][1]*2.0) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. interp])
-      -- Face derivative operator
-      regentlib.assert(fabs((r[c].[deriv]*r[c].cellWidth[dir]) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. deriv])
-      -- Gradient operator
-      regentlib.assert(fabs((r[c].[grad][0]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. grad])
-      regentlib.assert(fabs((r[c].[grad][1]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in LeftPlusOne Metric on " .. grad])
-   end
-end
-
-local function checkRightMinusTwo(r, c, sdir)
-   local dir
-   local reconPlus
-   local reconMinus
-   local TENOCoeffsPlus
-   local TENOCoeffsMinus
-   local BCStencil
-   local interp
-   local deriv
-   local grad
-   if sdir == "x" then
-      dir = 0
-      reconPlus = "reconXFacePlus"
-      reconMinus = "reconXFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsXPlus"
-      TENOCoeffsMinus = "TENOCoeffsXMinus"
-      BCStencil = "BCStencilX"
-      interp = "interpXFace"
-      deriv = "derivXFace"
-      grad = "gradX"
-   elseif sdir == "y" then
-      dir = 1
-      reconPlus = "reconYFacePlus"
-      reconMinus = "reconYFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsYPlus"
-      TENOCoeffsMinus = "TENOCoeffsYMinus"
-      BCStencil = "BCStencilY"
-      interp = "interpYFace"
-      deriv = "derivYFace"
-      grad = "gradY"
-   elseif sdir == "z" then
-      dir = 2
-      reconPlus = "reconZFacePlus"
-      reconMinus = "reconZFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsZPlus"
-      TENOCoeffsMinus = "TENOCoeffsZMinus"
-      BCStencil = "BCStencilZ"
-      interp = "interpZFace"
-      deriv = "derivZFace"
-      grad = "gradZ"
-   end
-   return rquote
-      -- Face reconstruction operators
-      -- Plus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+0]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+1]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+2]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+3]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+2]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+3]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+4]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+5]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconPlus])
-      -- Minus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+2]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+3]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+4]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+5]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+0]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+1]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+2]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+3]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. reconMinus])
-      -- TENO blending coefficients
-      -- Plus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil1]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil2]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil3]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil4]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsPlus])
-      -- Minus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil1]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil2]/(0.5     )) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil3]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil4]           )      ) < 1e-8, ["metricTest: error in RightMinusTwo Metric on " .. TENOCoeffsMinus])
-      -- BC flag
-      regentlib.assert(r[c].[BCStencil] == true, ["metricTest: error in RightMinusTwo Metric on " .. BCStencil])
-      -- Face interpolation operator
-      regentlib.assert(fabs((r[c].[interp][0]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. interp])
-      regentlib.assert(fabs((r[c].[interp][1]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. interp])
-      -- Face derivative operator
-      regentlib.assert(fabs((r[c].[deriv]*r[c].cellWidth[dir]) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. deriv])
-      -- Gradient operator
-      regentlib.assert(fabs((r[c].[grad][0]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. grad])
-      regentlib.assert(fabs((r[c].[grad][1]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusTwo Metric on " .. grad])
-   end
-end
-
-local function checkRightMinusOne(r, c, sdir)
-   local dir
-   local reconPlus
-   local reconMinus
-   local TENOCoeffsPlus
-   local TENOCoeffsMinus
-   local BCStencil
-   local interp
-   local deriv
-   local grad
-   if sdir == "x" then
-      dir = 0
-      reconPlus = "reconXFacePlus"
-      reconMinus = "reconXFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsXPlus"
-      TENOCoeffsMinus = "TENOCoeffsXMinus"
-      BCStencil = "BCStencilX"
-      interp = "interpXFace"
-      deriv = "derivXFace"
-      grad = "gradX"
-   elseif sdir == "y" then
-      dir = 1
-      reconPlus = "reconYFacePlus"
-      reconMinus = "reconYFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsYPlus"
-      TENOCoeffsMinus = "TENOCoeffsYMinus"
-      BCStencil = "BCStencilY"
-      interp = "interpYFace"
-      deriv = "derivYFace"
-      grad = "gradY"
-   elseif sdir == "z" then
-      dir = 2
-      reconPlus = "reconZFacePlus"
-      reconMinus = "reconZFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsZPlus"
-      TENOCoeffsMinus = "TENOCoeffsZMinus"
-      BCStencil = "BCStencilZ"
-      interp = "interpZFace"
-      deriv = "derivZFace"
-      grad = "gradZ"
-   end
-   return rquote
-      -- Face reconstruction operators
-      -- Plus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+2]           ) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+3]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+0]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+1]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+2]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+3]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+2]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+3]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+4]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+5]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconPlus])
-      -- Minus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+2]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+3]           ) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+0]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+1]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+2]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+3]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+4]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+5]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+0]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+1]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+2]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+3]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+5]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. reconMinus])
-      -- TENO blending coefficients
-      -- Plus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil1]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil2]           ) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil3]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsPlus])
-      -- Minus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil1]           ) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil2]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil3]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil4]           )      ) < 1e-8, ["metricTest: error in RightMinusOne Metric on " .. TENOCoeffsMinus])
-      -- BC flag
-      regentlib.assert(r[c].[BCStencil] == true, ["metricTest: error in RightMinusOne Metric on " .. BCStencil])
-      -- Face interpolation operator
-      regentlib.assert(fabs((r[c].[interp][0]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. interp])
-      regentlib.assert(fabs((r[c].[interp][1]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. interp])
-      -- Face derivative operator
-      regentlib.assert(fabs((r[c].[deriv]*r[c].cellWidth[dir]) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. deriv])
-      -- Gradient operator
-      regentlib.assert(fabs((r[c].[grad][0]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. grad])
-      regentlib.assert(fabs((r[c].[grad][1]*r[c].cellWidth[dir]*2.0) - 1.0) < 1e-3, ["metricTest: error in RightMinusOne Metric on " .. grad])
-   end
-end
-
-local function checkRight(r, c, sdir)
-   local dir
-   local reconPlus
-   local reconMinus
-   local TENOCoeffsPlus
-   local TENOCoeffsMinus
-   local BCStencil
-   local interp
-   local deriv
-   local grad
-   if sdir == "x" then
-      dir = 0
-      reconPlus = "reconXFacePlus"
-      reconMinus = "reconXFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsXPlus"
-      TENOCoeffsMinus = "TENOCoeffsXMinus"
-      BCStencil = "BCStencilX"
-      interp = "interpXFace"
-      deriv = "derivXFace"
-      grad = "gradX"
-   elseif sdir == "y" then
-      dir = 1
-      reconPlus = "reconYFacePlus"
-      reconMinus = "reconYFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsYPlus"
-      TENOCoeffsMinus = "TENOCoeffsYMinus"
-      BCStencil = "BCStencilY"
-      interp = "interpYFace"
-      deriv = "derivYFace"
-      grad = "gradY"
-   elseif sdir == "z" then
-      dir = 2
-      reconPlus = "reconZFacePlus"
-      reconMinus = "reconZFaceMinus"
-      TENOCoeffsPlus = "TENOCoeffsZPlus"
-      TENOCoeffsMinus = "TENOCoeffsZMinus"
-      BCStencil = "BCStencilZ"
-      interp = "interpZFace"
-      deriv = "derivZFace"
-      grad = "gradZ"
-   end
-   return rquote
-      -- Face reconstruction operators
-      -- Plus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+4]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+1]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+0]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+1]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+2]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+3]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+4]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil3*6+5]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+0]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+1]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+2]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+3]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+4]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      regentlib.assert(fabs((r[c].[reconPlus][Stencil4*6+5]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconPlus])
-      -- Minus side
-      -- Stencil1
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+0]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+1]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+2]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+3]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+4]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil1*6+5]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      -- Stencil2
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+0]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+1]/(-1.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+2]/( 5.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+3]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+4]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil2*6+5]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      -- Stencil3
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+0]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+1]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+2]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+3]/(11.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+4]/(-7.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil3*6+5]/( 2.0/6.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      -- Stencil4
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+0]/( 1.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+1]/(-5.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+2]/(13.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+3]/( 3.0/12.0))- 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+4]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      regentlib.assert(fabs((r[c].[reconMinus][Stencil4*6+5]           )      ) < 1e-8, ["metricTest: error in Right Metric on " .. reconMinus])
-      -- TENO blending coefficients
-      -- Plus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil1]/(9.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil2]/(6.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil3]/(1.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsPlus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsPlus][Stencil4]/(4.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsPlus])
-      -- Minus side
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil1]/(9.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil2]/(6.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil3]/(1.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsMinus])
-      regentlib.assert(fabs((r[c].[TENOCoeffsMinus][Stencil4]/(4.0/20.0)) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. TENOCoeffsMinus])
-      -- BC flag
-      regentlib.assert(r[c].[BCStencil] == false, ["metricTest: error in Right Metric on " .. BCStencil])
-      -- Face interpolation operator
-      regentlib.assert(fabs((r[c].[interp][0]*2.0) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. interp])
-      regentlib.assert(fabs((r[c].[interp][1]*2.0) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. interp])
-      -- Face derivative operator
-      regentlib.assert(fabs((r[c].[deriv]*r[c].cellWidth[dir]) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. deriv])
-      -- Gradient operator
-      regentlib.assert(fabs((r[c].[grad][0]*r[c].cellWidth[dir]    ) - 1.0) < 1e-3, ["metricTest: error in Right Metric on " .. grad])
-      regentlib.assert(fabs((r[c].[grad][1]                        )      ) < 1e-8, ["metricTest: error in Right Metric on " .. grad])
-   end
-end
-
-local task checkMetric(Fluid : region(ispace(int3d), Fluid_columns))
+__demand(__inline)
+task checkMetric(Fluid : region(ispace(int3d), Fluid_columns))
 where
-reads(Fluid.centerCoordinates),
-reads(Fluid.cellWidth),
-reads(Fluid.{reconXFacePlus, reconXFaceMinus}),
-reads(Fluid.{reconYFacePlus, reconYFaceMinus}),
-reads(Fluid.{reconZFacePlus, reconZFaceMinus}),
-reads(Fluid.{TENOCoeffsXPlus, TENOCoeffsXMinus}),
-reads(Fluid.{TENOCoeffsYPlus, TENOCoeffsYMinus}),
-reads(Fluid.{TENOCoeffsZPlus, TENOCoeffsZMinus}),
-reads(Fluid.{BCStencilX, BCStencilY, BCStencilZ}),
-reads(Fluid.{interpXFace, interpYFace, interpZFace}),
-reads(Fluid.{ derivXFace,  derivYFace,  derivZFace}),
-reads(Fluid.{  gradX,       gradY,       gradZ})
-
+   reads(Fluid.centerCoordinates),
+   reads(Fluid.{dcsi_e, deta_e, dzet_e}),
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
+   reads(Fluid.{dcsi_s, deta_s, dzet_s})
 do
    for c in Fluid do
       -- Check x-direction
-      if c.x == 0 then
-         [checkLeft(rexpr Fluid end, rexpr c end, "x")];
-      elseif c.x == 1 then
-         [checkLeftPlusOne(rexpr Fluid end, rexpr c end, "x")];
-      elseif c.x == Npx-1 then
-         [checkRightMinusTwo(rexpr Fluid end, rexpr c end, "x")];
-      elseif c.x == Npx   then
-         [checkRightMinusOne(rexpr Fluid end, rexpr c end, "x")];
-      elseif c.x == Npx+1 then
-         [checkRight(rexpr Fluid end, rexpr c end, "x")];
-      else
-         [checkInternal(rexpr Fluid end, rexpr c end, "x")];
-      end
+      regentlib.assert(fabs(Fluid[c].dcsi_e/Ref_e[c.x] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on dcsi_e")
+      regentlib.assert(fabs(Fluid[c].dcsi_d/Ref_d[c.x] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on dcsi_d")
+      regentlib.assert(fabs(Fluid[c].dcsi_s/Ref_s[c.x] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on dcsi_s")
       -- Check y-direction
-      if c.y == 0 then
-         [checkLeft(rexpr Fluid end, rexpr c end, "y")];
-      elseif c.y == 1 then
-         [checkLeftPlusOne(rexpr Fluid end, rexpr c end, "y")];
-      elseif c.y == Npy-1 then
-         [checkRightMinusTwo(rexpr Fluid end, rexpr c end, "y")];
-      elseif c.y == Npy   then
-         [checkRightMinusOne(rexpr Fluid end, rexpr c end, "y")];
-      elseif c.y == Npy+1 then
-         [checkRight(rexpr Fluid end, rexpr c end, "y")];
-      else
-         [checkInternal(rexpr Fluid end, rexpr c end, "y")];
-      end
+      regentlib.assert(fabs(Fluid[c].deta_e/Ref_e[c.y] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on deta_e")
+      regentlib.assert(fabs(Fluid[c].deta_d/Ref_d[c.y] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on deta_d")
+      regentlib.assert(fabs(Fluid[c].deta_s/Ref_s[c.y] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on deta_s")
       -- Check z-direction
-      if c.z == 0 then
-         [checkLeft(rexpr Fluid end, rexpr c end, "z")];
-      elseif c.z == 1 then
-         [checkLeftPlusOne(rexpr Fluid end, rexpr c end, "z")];
-      elseif c.z == Npz-1 then
-         [checkRightMinusTwo(rexpr Fluid end, rexpr c end, "z")];
-      elseif c.z == Npz   then
-         [checkRightMinusOne(rexpr Fluid end, rexpr c end, "z")];
-      elseif c.z == Npz+1 then
-         [checkRight(rexpr Fluid end, rexpr c end, "z")];
-      else
-         [checkInternal(rexpr Fluid end, rexpr c end, "z")];
-      end
+      regentlib.assert(fabs(Fluid[c].dzet_e/Ref_e[c.z] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on dzet_e")
+      regentlib.assert(fabs(Fluid[c].dzet_d/Ref_d[c.z] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on dzet_d")
+      regentlib.assert(fabs(Fluid[c].dzet_s/Ref_s[c.z] - 1.0) < 1e-12, "metricTest: error in Collocated Metric on dzet_s")
    end
 end
 
 task main()
 
-   C.printf("metricTest_Collocated: run...")
+   C.printf("metricTest_Collocated: run...\n")
+
+   var config : SCHEMA.Config
+   config.BC.xBCLeft.type  = SCHEMA.FlowBC_NSCBC_Inflow
+   config.BC.xBCRight.type = SCHEMA.FlowBC_NSCBC_Outflow
+   config.BC.yBCLeft.type  = SCHEMA.FlowBC_NSCBC_Outflow
+   config.BC.yBCRight.type = SCHEMA.FlowBC_NSCBC_Outflow
+   config.BC.zBCLeft.type  = SCHEMA.FlowBC_NSCBC_Inflow
+   config.BC.zBCRight.type = SCHEMA.FlowBC_NSCBC_Inflow
 
    -- No ghost cells
    var xBnum = 1
@@ -930,66 +111,64 @@ task main()
    var is_Fluid = ispace(int3d, {x = Npx + 2*xBnum,
                                  y = Npy + 2*yBnum,
                                  z = Npz + 2*zBnum})
-   var Fluid = region(is_Fluid, Fluid_columns);
+   var Fluid = region(is_Fluid, Fluid_columns)
    var Fluid_bounds = Fluid.bounds
 
    -- Partitioning domain
    var tiles = ispace(int3d, {Nx, Ny, Nz})
 
    -- Fluid Partitioning
-   var p_Fluid =
-      [UTIL.mkPartitionByTile(int3d, int3d, Fluid_columns, "p_All")]
-      (Fluid, tiles, int3d{xBnum,yBnum,zBnum}, int3d{0,0,0})
+   var Fluid_Zones = PART.PartitionZones(Fluid, tiles, config, xBnum, yBnum, zBnum)
+   var {p_All} = Fluid_Zones
 
-   __parallelize_with
-      tiles,
-      disjoint(p_Fluid),
-      complete(p_Fluid, Fluid)
-   do
+   InitializeCell(Fluid)
 
-      InitializeCell(Fluid)
+   METRIC.InitializeOperators(Fluid, tiles, p_All)
 
-      __demand(__index_launch)
-      for c in tiles do
-         GRID.InitializeGeometry(p_Fluid[c],
-                                 SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                                 1.0, 1.0, 1.0,
-                                 xBnum, Npx, xO, xW,
-                                 yBnum, Npy, yO, yW,
-                                 zBnum, Npz, zO, zW)
-      end
+   -- Enforce BCs on the operators
+   __demand(__index_launch)
+   for c in tiles do [METRIC.mkCorrectGhostOperators("x")](p_All[c], Fluid_bounds, config.BC.xBCLeft.type, config.BC.xBCRight.type, xBnum, Npx) end
+   __demand(__index_launch)
+   for c in tiles do [METRIC.mkCorrectGhostOperators("y")](p_All[c], Fluid_bounds, config.BC.yBCLeft.type, config.BC.yBCRight.type, yBnum, Npy) end
+   __demand(__index_launch)
+   for c in tiles do [METRIC.mkCorrectGhostOperators("z")](p_All[c], Fluid_bounds, config.BC.zBCLeft.type, config.BC.zBCRight.type, zBnum, Npz) end
 
-      __demand(__index_launch)
-      for c in tiles do
-         GRID.InitializeGhostGeometry(p_Fluid[c],
-                                      SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                                      1.0, 1.0, 1.0,
-                                      xBnum, Npx, xO, xW,
-                                      yBnum, Npy, yO, yW,
-                                      zBnum, Npz, zO, zW)
-      end
+   -- Create partitions to support stencils
+   var Fluid_Ghosts = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
+   var {p_MetricGhosts, p_XFluxGhosts, p_YFluxGhosts, p_ZFluxGhosts} = Fluid_Ghosts
 
-      METRIC.InitializeMetric(Fluid,
-                              Fluid_bounds,
-                              xBnum, Npx,
-                              yBnum, Npy,
-                              zBnum, Npz);
-
-      -- Enforce BCs on the metric
-      [METRIC.mkCorrectGhostMetric("x")](Fluid,
-                                         Fluid_bounds,
-                                         SCHEMA.FlowBC_NSCBC_Inflow, SCHEMA.FlowBC_NSCBC_Inflow,
-                                         xBnum, Npx);
-      [METRIC.mkCorrectGhostMetric("y")](Fluid,
-                                         Fluid_bounds,
-                                         SCHEMA.FlowBC_NSCBC_Inflow, SCHEMA.FlowBC_NSCBC_Inflow,
-                                         yBnum, Npy);
-      [METRIC.mkCorrectGhostMetric("z")](Fluid,
-                                         Fluid_bounds,
-                                         SCHEMA.FlowBC_NSCBC_Inflow, SCHEMA.FlowBC_NSCBC_Inflow,
-                                         zBnum, Npz);
-
+   __demand(__index_launch)
+   for c in tiles do
+      GRID.InitializeGeometry(p_All[c],
+                              xGrid, yGrid, zGrid,
+                              1.0, 1.0, 1.0,
+                              xBnum, Npx, xO, xW,
+                              yBnum, Npy, yO, yW,
+                              zBnum, Npz, zO, zW)
    end
+
+   -- Enforce BCs
+   GRID.InitializeGhostGeometry(Fluid, tiles, Fluid_Zones, config)
+
+   __demand(__index_launch)
+   for c in tiles do
+      METRIC.InitializeMetric(p_MetricGhosts[c],
+                              p_XFluxGhosts[c],
+                              p_YFluxGhosts[c],
+                              p_ZFluxGhosts[c],
+                              p_All[c],
+                              Fluid_bounds,
+                              xW, yW, zW);
+   end
+
+   -- Enforce BCs on the metric
+   __demand(__index_launch)
+   for c in tiles do [METRIC.mkCorrectGhostMetric("x")](p_All[c]) end
+   __demand(__index_launch)
+   for c in tiles do [METRIC.mkCorrectGhostMetric("y")](p_All[c]) end
+   __demand(__index_launch)
+   for c in tiles do [METRIC.mkCorrectGhostMetric("z")](p_All[c]) end
+
    checkMetric(Fluid)
 
    __fence(__execution, __block)
@@ -1001,4 +180,4 @@ end
 -- COMPILATION CALL
 -------------------------------------------------------------------------------
 
-regentlib.saveobj(main, "metricTest_Collocated.o", "object")
+regentlib.saveobj(main, "metricTest_Collocated.o", "object", REGISTRAR.register_metric_tasks)

@@ -477,52 +477,53 @@ end
 function Exports.mkPartitionByTile(r_istype, cs_istype, fs, name)
   local partitionByTile
   local p = regentlib.newsymbol(name)
-  if r_istype == int4d and cs_istype == int4d then
-    __demand(__inline)
-    task partitionByTile(r : region(ispace(int4d), fs),
-                         cs : ispace(int4d),
-                         halo : int4d,
-                         offset : int4d)
-      var Nx = r.bounds.hi.x - 2*halo.x + 1; var ntx = cs.bounds.hi.x + 1
-      var Ny = r.bounds.hi.y - 2*halo.y + 1; var nty = cs.bounds.hi.y + 1
-      var Nz = r.bounds.hi.z - 2*halo.z + 1; var ntz = cs.bounds.hi.z + 1
-      var Nw = r.bounds.hi.w - 2*halo.w + 1; var ntw = cs.bounds.hi.w + 1
-      regentlib.assert(r.bounds.lo == int4d{0,0,0,0}, "Can only partition root region")
-      regentlib.assert(Nx % ntx == 0, "Uneven partitioning on x")
-      regentlib.assert(Ny % nty == 0, "Uneven partitioning on y")
-      regentlib.assert(Nz % ntz == 0, "Uneven partitioning on z")
-      regentlib.assert(Nw % ntw == 0, "Uneven partitioning on w")
-      regentlib.assert(-ntx <= offset.x and offset.x <= ntx, "offset.x too large")
-      regentlib.assert(-nty <= offset.y and offset.y <= nty, "offset.y too large")
-      regentlib.assert(-ntz <= offset.z and offset.z <= ntz, "offset.z too large")
-      regentlib.assert(-ntw <= offset.w and offset.w <= ntw, "offset.w too large")
-      var coloring = regentlib.c.legion_domain_point_coloring_create()
-      for c_real in cs do
-        var c = (c_real - offset + {ntx,nty,ntz,ntw}) % {ntx,nty,ntz,ntw}
-        var rect = rect4d{
-          lo = int4d{halo.x + (Nx/ntx)*(c.x),
-                     halo.y + (Ny/nty)*(c.y),
-                     halo.z + (Nz/ntz)*(c.z),
-                     halo.w + (Nz/ntz)*(c.w)},
-          hi = int4d{halo.x + (Nx/ntx)*(c.x+1) - 1,
-                     halo.y + (Ny/nty)*(c.y+1) - 1,
-                     halo.z + (Nz/ntz)*(c.z+1) - 1,
-                     halo.w + (Nw/ntw)*(c.w+1) - 1}}
-        if c.x == 0 then rect.lo.x -= halo.x end
-        if c.y == 0 then rect.lo.y -= halo.y end
-        if c.z == 0 then rect.lo.z -= halo.z end
-        if c.w == 0 then rect.lo.w -= halo.w end
-        if c.x == ntx-1 then rect.hi.x += halo.x end
-        if c.y == nty-1 then rect.hi.y += halo.y end
-        if c.z == ntz-1 then rect.hi.z += halo.z end
-        if c.w == ntw-1 then rect.hi.w += halo.w end
-        regentlib.c.legion_domain_point_coloring_color_domain(coloring, c_real, rect)
-      end
-      var [p] = partition(disjoint, r, coloring, cs)
-      regentlib.c.legion_domain_point_coloring_destroy(coloring)
-      return [p]
-    end
-  elseif r_istype == int3d and cs_istype == int3d then
+--  if r_istype == int4d and cs_istype == int4d then
+--    __demand(__inline)
+--    task partitionByTile(r : region(ispace(int4d), fs),
+--                         cs : ispace(int4d),
+--                         halo : int4d,
+--                         offset : int4d)
+--      var Nx = r.bounds.hi.x - 2*halo.x + 1; var ntx = cs.bounds.hi.x + 1
+--      var Ny = r.bounds.hi.y - 2*halo.y + 1; var nty = cs.bounds.hi.y + 1
+--      var Nz = r.bounds.hi.z - 2*halo.z + 1; var ntz = cs.bounds.hi.z + 1
+--      var Nw = r.bounds.hi.w - 2*halo.w + 1; var ntw = cs.bounds.hi.w + 1
+--      regentlib.assert(r.bounds.lo == int4d{0,0,0,0}, "Can only partition root region")
+--      regentlib.assert(Nx % ntx == 0, "Uneven partitioning on x")
+--      regentlib.assert(Ny % nty == 0, "Uneven partitioning on y")
+--      regentlib.assert(Nz % ntz == 0, "Uneven partitioning on z")
+--      regentlib.assert(Nw % ntw == 0, "Uneven partitioning on w")
+--      regentlib.assert(-ntx <= offset.x and offset.x <= ntx, "offset.x too large")
+--      regentlib.assert(-nty <= offset.y and offset.y <= nty, "offset.y too large")
+--      regentlib.assert(-ntz <= offset.z and offset.z <= ntz, "offset.z too large")
+--      regentlib.assert(-ntw <= offset.w and offset.w <= ntw, "offset.w too large")
+--      var coloring = regentlib.c.legion_domain_point_coloring_create()
+--      for c_real in cs do
+--        var c = (c_real - offset + {ntx,nty,ntz,ntw}) % {ntx,nty,ntz,ntw}
+--        var rect = rect4d{
+--          lo = int4d{halo.x + (Nx/ntx)*(c.x),
+--                     halo.y + (Ny/nty)*(c.y),
+--                     halo.z + (Nz/ntz)*(c.z),
+--                     halo.w + (Nz/ntz)*(c.w)},
+--          hi = int4d{halo.x + (Nx/ntx)*(c.x+1) - 1,
+--                     halo.y + (Ny/nty)*(c.y+1) - 1,
+--                     halo.z + (Nz/ntz)*(c.z+1) - 1,
+--                     halo.w + (Nw/ntw)*(c.w+1) - 1}}
+--        if c.x == 0 then rect.lo.x -= halo.x end
+--        if c.y == 0 then rect.lo.y -= halo.y end
+--        if c.z == 0 then rect.lo.z -= halo.z end
+--        if c.w == 0 then rect.lo.w -= halo.w end
+--        if c.x == ntx-1 then rect.hi.x += halo.x end
+--        if c.y == nty-1 then rect.hi.y += halo.y end
+--        if c.z == ntz-1 then rect.hi.z += halo.z end
+--        if c.w == ntw-1 then rect.hi.w += halo.w end
+--        regentlib.c.legion_domain_point_coloring_color_domain(coloring, c_real, rect)
+--      end
+--      var [p] = partition(disjoint, r, coloring, cs)
+--      regentlib.c.legion_domain_point_coloring_destroy(coloring)
+--      return [p]
+--    end
+--  elseif r_istype == int3d and cs_istype == int3d then
+  if r_istype == int3d and cs_istype == int3d then
     __demand(__inline)
     task partitionByTile(r : region(ispace(int3d), fs),
                          cs : ispace(int3d),
@@ -828,6 +829,86 @@ function Exports.mkPartitionIsInteriorOrGhost(r_istype, fs, name)
       end
   else assert(false) end
   return partitionIsInteriorOrGhost
+end
+
+-- string, intXd, intXd, terralib.struct, int -> regentlib.task
+function Exports.mkExtractRelevantIspace(p_type, r_istype, cs_istype, fs, ind)
+   local extractRelevantIspace
+
+   if p_type == "cross_product" and r_istype == int3d and cs_istype == int3d and ind == nil then
+      __demand(__inline)
+      task extractRelevantIspace(r  : region(ispace(int3d), fs),
+                                 p1 : partition(aliased, r, ispace(int1d)),
+                                 p2 : partition(disjoint, r, ispace(int3d)),
+                                 pr : cross_product(p1, p2),
+                                 aux : region(ispace(int3d), bool))
+
+         var cs1 = p1.colors
+         var cs2 = p2.colors
+         var isvalidAux = (aux.ispace.bounds.lo.x == cs2.bounds.lo.x) and
+                          (aux.ispace.bounds.lo.y == cs2.bounds.lo.y) and
+                          (aux.ispace.bounds.lo.z == cs2.bounds.lo.z) and
+                          (aux.ispace.bounds.hi.x == cs2.bounds.hi.x) and
+                          (aux.ispace.bounds.hi.y == cs2.bounds.hi.y) and
+                          (aux.ispace.bounds.hi.z == cs2.bounds.hi.z)
+         regentlib.assert(isvalidAux, "extractRelevantIspace: aux region must have the same index space as p2")
+         var coloring = regentlib.c.legion_multi_domain_point_coloring_create()
+         for c1 in cs1 do
+            for c2 in cs2 do
+               var p = pr[c1][c2]
+               if p.volume ~= 0 then
+                  regentlib.c.legion_multi_domain_point_coloring_color_domain(coloring, c1, rect3d{lo=c2, hi=c2})
+               end
+            end
+         end
+         var p_aux = partition(aliased, aux, coloring, cs1)
+         regentlib.c.legion_multi_domain_point_coloring_destroy(coloring)
+         return p_aux
+      end
+
+   elseif p_type == "cross_product" and r_istype == int3d and cs_istype == int3d  and ind ~= nil then
+      __demand(__inline)
+      task extractRelevantIspace(r  : region(ispace(int3d), fs),
+                                 p1 : partition(disjoint, r, ispace(int3d)),
+                                 p2 : partition(disjoint, r, ispace(int1d)),
+                                 pr : cross_product(p1, p2))
+
+         var cs = p1.colors
+         var aux = region(cs, bool)
+         var coloring = regentlib.c.legion_multi_domain_point_coloring_create()
+         for c in cs do
+            var p = pr[c][ind]
+            if p.volume ~= 0 then
+               regentlib.c.legion_multi_domain_point_coloring_color_domain(coloring, int1d(0), rect3d{lo=c, hi=c})
+            end
+         end
+         var p_aux = partition(disjoint, aux, coloring, ispace(int1d, 1))
+         regentlib.c.legion_multi_domain_point_coloring_destroy(coloring)
+         return p_aux[0].ispace
+      end
+
+   elseif p_type == "partition" and r_istype == int3d and cs_istype == int3d then
+      assert(ind == nil)
+      __demand(__inline)
+      task extractRelevantIspace(r  : region(ispace(int3d), fs),
+                                 p  : partition(disjoint, r, ispace(int3d)))
+
+         var cs = p1.colors
+         var aux = region(cs, bool)
+         var coloring = regentlib.c.legion_multi_domain_point_coloring_create()
+         for c in cs do
+            var p = p[c]
+            if p.volume ~= 0 then
+               regentlib.c.legion_multi_domain_point_coloring_color_domain(coloring, int1d(0), rect3d{lo=c, hi=c})
+            end
+         end
+         var p_aux = partition(disjoint, aux, coloring, ispace(int1d, 1))
+         regentlib.c.legion_multi_domain_point_coloring_destroy(coloring)
+         return p_aux[0].ispace
+      end
+
+   else assert(false) end
+   return extractRelevantIspace
 end
 
 -- int, string, regentlib.rexpr, regentlib.rexpr -> regentlib.rquote

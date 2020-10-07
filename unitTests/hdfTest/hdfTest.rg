@@ -79,6 +79,11 @@ task main()
       [UTIL.mkPartitionByTile(int3d, int3d, columns, "p_All")]
       (r1_copy, tiles, int3d{0,0,0}, int3d{0,0,0})
 
+   fill(r0.a, 0.0)
+   fill(r0.b, array(0.0, 0.0, 0.0))
+   fill(r1.a, 0.0)
+   fill(r1.b, array(0.0, 0.0, 0.0))
+
    init(r0, r1)
    var timeStep = 12345
    var simTime = 123.4567

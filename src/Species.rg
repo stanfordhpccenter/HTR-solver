@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -45,6 +45,13 @@ local PI   = CONST.PI
 
 -- Species geometries
 --Mixture.SpeciesGeom = Enum( 'Atom', 'Linear', 'NonLinear' )
+local SpeciesGeom_Atom      = 0
+local SpeciesGeom_Linear    = 1
+local SpeciesGeom_NonLinear = 2
+
+Exports.SpeciesGeom_Atom      = SpeciesGeom_Atom
+Exports.SpeciesGeom_Linear    = SpeciesGeom_Linear
+Exports.SpeciesGeom_NonLinear = SpeciesGeom_NonLinear
 
 -- NASA polynomials data structure
 local struct cpCoefficients
@@ -70,7 +77,7 @@ local struct DiffCoefficients
 
 -- Species structure
 struct Exports.Species {
-   Name      : regentlib.string -- Name of the species
+   Name      : int8[10]         -- regentlib.string -- Name of the species
    W         : double           -- Molar weight [kg/mol]
    inx       : int              -- Index in the species vector
    Geom      : int              -- = 0 (Atom), = 1 (Linear), = 2 (Non Linear)
@@ -122,23 +129,18 @@ task Exports.GetCp( s : Exports.Species, T : double )
 
    var rOvW = RGAS/s.W
    var Tinv = 1.0/T
-   var cp : double
+   var cpCoeff : double[9]
    if ( T > s.cpCoeff.TSwitch2 ) then
-      cp = rOvW*( s.cpCoeff.cpH[0]*Tinv*Tinv + s.cpCoeff.cpH[1]*Tinv + s.cpCoeff.cpH[2] + T*
-                                                                     ( s.cpCoeff.cpH[3] + T*
-                                                                     ( s.cpCoeff.cpH[4] + T*
-                                                                     ( s.cpCoeff.cpH[5] + T*s.cpCoeff.cpH[6]))))
+      cpCoeff = s.cpCoeff.cpH
    elseif ( T > s.cpCoeff.TSwitch1 ) then
-      cp = rOvW*( s.cpCoeff.cpM[0]*Tinv*Tinv + s.cpCoeff.cpM[1]*Tinv + s.cpCoeff.cpM[2] + T*
-                                                                     ( s.cpCoeff.cpM[3] + T*
-                                                                     ( s.cpCoeff.cpM[4] + T*
-                                                                     ( s.cpCoeff.cpM[5] + T*s.cpCoeff.cpM[6]))))
+      cpCoeff = s.cpCoeff.cpM
    else
-      cp = rOvW*( s.cpCoeff.cpL[0]*Tinv*Tinv + s.cpCoeff.cpL[1]*Tinv + s.cpCoeff.cpL[2] + T*
-                                                                     ( s.cpCoeff.cpL[3] + T*
-                                                                     ( s.cpCoeff.cpL[4] + T*
-                                                                     ( s.cpCoeff.cpL[5] + T*s.cpCoeff.cpL[6]))))
+      cpCoeff = s.cpCoeff.cpL
    end
+   var cp = rOvW*( cpCoeff[0]*Tinv*Tinv + cpCoeff[1]*Tinv + cpCoeff[2] + T*
+                                                          ( cpCoeff[3] + T*
+                                                          ( cpCoeff[4] + T*
+                                                          ( cpCoeff[5] + T*cpCoeff[6]))))
    return cp
 end
 
@@ -150,26 +152,21 @@ task Exports.GetFreeEnthalpy( s : Exports.Species, T : double )
 --   regentlib.assert(T > s.cpCoeff.TMin, "Exceeded minimum temeperature")
 
    var Tinv = 1.0/T
-   var G : double
+   var logT = log(T)
+   var cpCoeff : double[9]
    if ( T > s.cpCoeff.TSwitch2 ) then
-      G = -0.5*s.cpCoeff.cpH[0]*Tinv*Tinv + s.cpCoeff.cpH[1]*Tinv*( 1.0 + log(T) ) + s.cpCoeff.cpH[2]*( 1.0 - log(T) ) + s.cpCoeff.cpH[7]*Tinv - s.cpCoeff.cpH[8]
-      G -= 0.5 * T * ( s.cpCoeff.cpH[3]   + T*
-                     ( s.cpCoeff.cpH[4]/3 + T*
-                     ( s.cpCoeff.cpH[5]/6 + 0.1*T*s.cpCoeff.cpH[6] )))
-
+      cpCoeff = s.cpCoeff.cpH
    elseif ( T > s.cpCoeff.TSwitch1 ) then
-      G = -0.5*s.cpCoeff.cpM[0]*Tinv*Tinv + s.cpCoeff.cpM[1]*Tinv*( 1.0 + log(T) ) + s.cpCoeff.cpM[2]*( 1.0 - log(T) ) + s.cpCoeff.cpM[7]*Tinv - s.cpCoeff.cpM[8]
-      G -= 0.5 * T * ( s.cpCoeff.cpM[3]   + T*
-                     ( s.cpCoeff.cpM[4]/3 + T*
-                     ( s.cpCoeff.cpM[5]/6 + 0.1*T*s.cpCoeff.cpM[6] )))
-
+      cpCoeff = s.cpCoeff.cpM
    else
-      G = -0.5*s.cpCoeff.cpL[0]*Tinv*Tinv + s.cpCoeff.cpL[1]*Tinv*( 1.0 + log(T) ) + s.cpCoeff.cpL[2]*( 1.0 - log(T) ) + s.cpCoeff.cpL[7]*Tinv - s.cpCoeff.cpL[8]
-      G -= 0.5 * T * ( s.cpCoeff.cpL[3]   + T*
-                     ( s.cpCoeff.cpL[4]/3 + T*
-                     ( s.cpCoeff.cpL[5]/6 + 0.1*T*s.cpCoeff.cpL[6] )))
-
+      cpCoeff = s.cpCoeff.cpL
    end
+
+   var G = -0.5*cpCoeff[0]*Tinv*Tinv + cpCoeff[1]*Tinv*(1.0 + logT) + cpCoeff[2]*(1.0 - logT) + cpCoeff[7]*Tinv - cpCoeff[8]
+   G -= 0.5*T*( cpCoeff[3]   + T*
+              ( cpCoeff[4]/3 + T*
+              ( cpCoeff[5]/6 + 0.1*T*cpCoeff[6] )))
+
    return G
 end
 
@@ -181,28 +178,20 @@ task Exports.GetEnthalpy( s : Exports.Species, T : double )
 
    var rOvW = RGAS/s.W
    var Tinv = 1.0/T
-   var E : double
+   var cpCoeff : double[9]
    if ( T > s.cpCoeff.TSwitch2 ) then
-      E = -s.cpCoeff.cpH[0]/T + s.cpCoeff.cpH[1]*log(T) + s.cpCoeff.cpH[7]      + T*
-                                                        ( s.cpCoeff.cpH[2]      + T*
-                                                        ( s.cpCoeff.cpH[3]*0.50 + T*
-                                                        ( s.cpCoeff.cpH[4]/3    + T*
-                                                        ( s.cpCoeff.cpH[5]*0.25 + s.cpCoeff.cpH[6]/5*T)))) 
+      cpCoeff = s.cpCoeff.cpH
    elseif ( T > s.cpCoeff.TSwitch1 ) then
-      E = -s.cpCoeff.cpM[0]/T + s.cpCoeff.cpM[1]*log(T) + s.cpCoeff.cpM[7]      + T*
-                                                        ( s.cpCoeff.cpM[2]      + T*
-                                                        ( s.cpCoeff.cpM[3]*0.50 + T*
-                                                        ( s.cpCoeff.cpM[4]/3    + T*
-                                                        ( s.cpCoeff.cpM[5]*0.25 + s.cpCoeff.cpM[6]/5*T)))) 
-
+      cpCoeff = s.cpCoeff.cpM
    else
-      E = -s.cpCoeff.cpL[0]/T + s.cpCoeff.cpL[1]*log(T) + s.cpCoeff.cpL[7]      + T*
-                                                        ( s.cpCoeff.cpL[2]      + T*
-                                                        ( s.cpCoeff.cpL[3]*0.50 + T*
-                                                        ( s.cpCoeff.cpL[4]/3    + T*
-                                                        ( s.cpCoeff.cpL[5]*0.25 + s.cpCoeff.cpL[6]/5*T)))) 
-
+      cpCoeff = s.cpCoeff.cpL
    end
+
+   var E = -cpCoeff[0]/T + cpCoeff[1]*log(T) + cpCoeff[7]      + T*
+                                             ( cpCoeff[2]      + T*
+                                             ( cpCoeff[3]*0.50 + T*
+                                             ( cpCoeff[4]/3    + T*
+                                             ( cpCoeff[5]*0.25 + cpCoeff[6]/5*T))))
    return E*rOvW
 end
 
@@ -261,7 +250,7 @@ end
 local __demand(__inline)
 task GetLamAtom( s : Exports.Species, T : double )
    var mu = Exports.GetMu(s, T)
-   return 15/4*mu*RGAS/s.W
+   return 15.0/4*mu*RGAS/s.W
 end
 
 
@@ -318,9 +307,9 @@ end
 __demand(__inline)
 task Exports.GetLam( s : Exports.Species, T : double )
    var lam : double
-   if      ( s.Geom == 0 ) then lam = GetLamAtom(s, T)
-   elseif  ( s.Geom == 1 ) then lam = GetLamLinear(s, T)
-   elseif  ( s.Geom == 2 ) then lam = GetLamNonLinear(s, T) end
+   if      (s.Geom == SpeciesGeom_Atom)      then lam = GetLamAtom(s, T)
+   elseif  (s.Geom == SpeciesGeom_Linear)    then lam = GetLamLinear(s, T)
+   elseif  (s.Geom == SpeciesGeom_NonLinear) then lam = GetLamNonLinear(s, T) end
    return lam
 end
 

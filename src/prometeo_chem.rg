@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -156,15 +156,13 @@ task Exports.AddChemistrySources([Fluid],
                                  ModCells : region(ispace(int3d), Fluid_columns),
                                  mix : MIX.Mixture)
 where
-   reads(Fluid.{rho, MolarFracs, pressure, temperature}),
+   reads(Fluid.{rho, MassFracs, pressure, temperature}),
    reads writes (Fluid.Conserved_t),
    [coherence_mode]
 do
    __demand(__openmp)
    for c in ModCells do
-      var MixW = MIX.GetMolarWeightFromXi(Fluid[c].MolarFracs, mix)
-      var Yi   = MIX.GetMassFractions(MixW, Fluid[c].MolarFracs, mix)
-      var w    = MIX.GetProductionRates(Fluid[c].rho, Fluid[c].pressure, Fluid[c].temperature, Yi, mix)
+      var w    = MIX.GetProductionRates(Fluid[c].rho, Fluid[c].pressure, Fluid[c].temperature, Fluid[c].MassFracs, mix)
       for i = 0, nSpec do
          Fluid[c].Conserved_t[i] += w[i]
       end

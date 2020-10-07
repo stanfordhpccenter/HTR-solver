@@ -103,6 +103,9 @@ public:
    class Tiling3DFunctor;
    class Tiling2DFunctor;
    class HardcodedFunctor;
+   class RankTiling3DFunctor;
+   class RankTiling2DFunctor;
+   class RankHardcodedFunctor;
 
 public:
    SampleMapping(Runtime* rt, const Config& config, AddressSpace first_rank)
@@ -122,11 +125,26 @@ public:
                           {new Tiling2DFunctor(rt, *this, 1, false),
                            new Tiling2DFunctor(rt, *this, 1, true )},
                           {new Tiling2DFunctor(rt, *this, 2, false),
-                           new Tiling2DFunctor(rt, *this, 2, true )}} {
+                           new Tiling2DFunctor(rt, *this, 2, true )}},
+      rank_tiling_3d_functor_{new RankTiling3DFunctor(rt, *this, false),
+                              new RankTiling3DFunctor(rt, *this, true)},
+      rank_tiling_2d_functors_{{new RankTiling2DFunctor(rt, *this, 0, false),
+                                new RankTiling2DFunctor(rt, *this, 0, true )},
+                               {new RankTiling2DFunctor(rt, *this, 1, false),
+                                new RankTiling2DFunctor(rt, *this, 1, true )},
+                               {new RankTiling2DFunctor(rt, *this, 2, false),
+                                new RankTiling2DFunctor(rt, *this, 2, true )}} {
       for (unsigned x = 0; x < x_tiles(); ++x) {
          for (unsigned y = 0; y < y_tiles(); ++y) {
             for (unsigned z = 0; z < z_tiles(); ++z) {
                hardcoded_functors_.push_back(new HardcodedFunctor(rt, *this, Point<3>(x,y,z)));
+            }
+         }
+      }
+      for (unsigned x = 0; x < ranks_per_dim_[0]; ++x) {
+         for (unsigned y = 0; y < ranks_per_dim_[1]; ++y) {
+            for (unsigned z = 0; z < ranks_per_dim_[2]; ++z) {
+               rank_hardcoded_functors_.push_back(new RankHardcodedFunctor(rt, *this, Point<3>(x,y,z)));
             }
          }
       }
@@ -177,6 +195,25 @@ public:
       return hardcoded_functors_[tile[0] * y_tiles() * z_tiles() +
                                  tile[1] * z_tiles() +
                                  tile[2]];
+   }
+
+   RankTiling3DFunctor* rank_tiling_3d_functor(bool fold = false) {
+      return rank_tiling_3d_functor_[fold];
+   }
+
+   RankTiling2DFunctor* rank_tiling_2d_functor(int dim, bool dir) {
+      assert(0 <= dim && dim < 3);
+      return rank_tiling_2d_functors_[dim][dir];
+   }
+
+   RankHardcodedFunctor* rank_hardcoded_functor(const DomainPoint& tile) {
+      assert(tile.get_dim() == 3);
+      assert(0 <= tile[0] && tile[0] < ranks_per_dim_[0]);
+      assert(0 <= tile[1] && tile[1] < ranks_per_dim_[1]);
+      assert(0 <= tile[2] && tile[2] < ranks_per_dim_[2]);
+      return rank_hardcoded_functors_[tile[0] * ranks_per_dim_[1] * ranks_per_dim_[2] +
+                                      tile[1] * ranks_per_dim_[2] +
+                                      tile[2]];
    }
 
 public:
@@ -276,6 +313,111 @@ public:
       DomainPoint tile_;
    };
 
+   // Maps tasks in a 3D index space launch on ranks according to
+   // the default tiling logic (see description above).
+   class RankTiling3DFunctor : public SplinteringFunctor {
+   public:
+         RankTiling3DFunctor(Runtime* rt, SampleMapping& parent, bool fold)
+            : SplinteringFunctor(rt, parent), fold_(fold) {}
+   public:
+      virtual ShardID shard(const DomainPoint& point,
+                            const Domain& full_space,
+                            const size_t total_shards) {
+         assert(point.get_dim() == 3);
+         unsigned x = fold_ ? point[0] % parent_.ranks_per_dim_[0] : point[0];
+         unsigned y = fold_ ? point[1] % parent_.ranks_per_dim_[1] : point[1];
+         unsigned z = fold_ ? point[2] % parent_.ranks_per_dim_[2] : point[2];
+         CHECK(0 <= x && x < parent_.ranks_per_dim_[0] &&
+               0 <= y && y < parent_.ranks_per_dim_[1] &&
+               0 <= z && z < parent_.ranks_per_dim_[2],
+               "Unexpected point on index space launch");
+         return x * parent_.ranks_per_dim_[1]
+                  * parent_.ranks_per_dim_[2] +
+                y * parent_.ranks_per_dim_[2] +
+                z;
+      }
+
+      virtual SplinterID splinter(const DomainPoint &point) {
+         assert(point.get_dim() == 3);
+         unsigned x = fold_ ? point[0] % parent_.ranks_per_dim_[0] : point[0];
+         unsigned y = fold_ ? point[1] % parent_.ranks_per_dim_[1] : point[1];
+         unsigned z = fold_ ? point[2] % parent_.ranks_per_dim_[2] : point[2];
+         CHECK(0 <= x && x < parent_.ranks_per_dim_[0] &&
+               0 <= y && y < parent_.ranks_per_dim_[1] &&
+               0 <= z && z < parent_.ranks_per_dim_[2],
+               "Unexpected point on index space launch");
+         return x * parent_.tiles_per_rank_[1]
+                  * parent_.tiles_per_rank_[2] +
+                y * parent_.tiles_per_rank_[2] +
+                z;
+      }
+
+   private:
+      bool fold_;
+   };
+
+   // Maps tasks in a 2D index space launch, by extending each domain point to a
+   // 3D tile and deferring to the default strategy.
+   // Parameter `dim` controls which dimension to add.
+   // Parameter `dir` controls which extreme of that dimension to set.
+   class RankTiling2DFunctor : public SplinteringFunctor {
+   public:
+      RankTiling2DFunctor(Runtime* rt, SampleMapping& parent,
+                      unsigned dim, bool dir)
+         : SplinteringFunctor(rt, parent), dim_(dim), dir_(dir) {}
+
+   public:
+      virtual ShardID shard(const DomainPoint& point,
+                            const Domain& full_space,
+                            const size_t total_shards) {
+         return parent_.rank_tiling_3d_functor_[0]->shard
+                (to_point_3d(point), full_space, total_shards);
+      }
+
+      virtual SplinterID splinter(const DomainPoint &point) {
+         return parent_.rank_tiling_3d_functor_[0]->splinter(to_point_3d(point));
+      }
+
+   private:
+      DomainPoint to_point_3d(const DomainPoint& point) const {
+         assert(point.get_dim() == 2);
+         unsigned coord =
+            (dim_ == 0) ? (dir_ ? 0 : parent_.ranks_per_dim_[0]-1) :
+            (dim_ == 1) ? (dir_ ? 0 : parent_.ranks_per_dim_[1]-1) :
+           /*dim_ == 2*/  (dir_ ? 0 : parent_.ranks_per_dim_[1]-1) ;
+         return
+            (dim_ == 0) ? Point<3>(coord, point[0], point[1]) :
+            (dim_ == 1) ? Point<3>(point[0], coord, point[1]) :
+           /*dim_ == 2*/  Point<3>(point[0], point[1], coord) ;
+      }
+
+   private:
+      unsigned dim_;
+      bool dir_;
+   };
+
+   // Maps every task to the same shard & splinter (the ones corresponding to
+   // the rank specified in the constructor).
+   class RankHardcodedFunctor : public SplinteringFunctor {
+   public:
+      RankHardcodedFunctor(Runtime* rt,
+                       SampleMapping& parent,
+                       const DomainPoint& tile)
+         : SplinteringFunctor(rt, parent), tile_(tile) {}
+   public:
+      virtual ShardID shard(const DomainPoint& point,
+                            const Domain& full_space,
+                            const size_t total_shards) {
+         return parent_.rank_tiling_3d_functor_[0]->shard(tile_, full_space, total_shards);
+      }
+
+      virtual SplinterID splinter(const DomainPoint &point) {
+         return parent_.rank_tiling_3d_functor_[0]->splinter(tile_);
+      }
+   private:
+      DomainPoint tile_;
+   };
+
 private:
    unsigned tiles_per_rank_[3];
    unsigned ranks_per_dim_[3];
@@ -283,6 +425,9 @@ private:
    Tiling3DFunctor* tiling_3d_functor_;
    Tiling2DFunctor* tiling_2d_functors_[3][2];
    std::vector<HardcodedFunctor*> hardcoded_functors_;
+   RankTiling3DFunctor* rank_tiling_3d_functor_[2];
+   RankTiling2DFunctor* rank_tiling_2d_functors_[3][2];
+   std::vector<RankHardcodedFunctor*> rank_hardcoded_functors_;
 };
 
 AddressSpace SplinteringFunctor::get_rank(const DomainPoint &point) {
@@ -360,9 +505,12 @@ private:
       std::vector<unsigned> sample_ids;
       // Tasks called on regions: read the SAMPLE_ID_TAG from the region
       if (task.is_index_space ||
-         EQUALS(task.get_task_name(), "Exports.DummyAverages") ||
-         EQUALS(task.get_task_name(), "ReduceAverages") ||
+         EQUALS(task.get_task_name(), "DummyAverages") ||
+         EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
+         EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
+         EQUALS(task.get_task_name(), "GetRescalingData") ||
          EQUALS(task.get_task_name(), "cache_grid_translation") ||
+         STARTS_WITH(task.get_task_name(), "FastInterp") ||
          STARTS_WITH(task.get_task_name(), "readTileAttr")) {
 
          CHECK(!task.regions.empty(),
@@ -430,8 +578,11 @@ private:
                STARTS_WITH(task.get_task_name(), "Exports.Probe_Write") ||
                EQUALS(task.get_task_name(), "Exports.createDir") ||
                EQUALS(task.get_task_name(), "__dummy") ||
-               EQUALS(task.get_task_name(), "Exports.DummyAverages") ||
-               EQUALS(task.get_task_name(), "ReduceAverages") ||
+               EQUALS(task.get_task_name(), "DummyAverages") ||
+               EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
+               EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
+               EQUALS(task.get_task_name(), "GetRescalingData") ||
+               STARTS_WITH(task.get_task_name(), "FastInterp") ||
                STARTS_WITH(task.get_task_name(), "__unary_") ||
                STARTS_WITH(task.get_task_name(), "__binary_") ||
                STARTS_WITH(task.get_task_name(), "AffineTransform")) {
@@ -450,7 +601,14 @@ private:
       if (task.is_index_space && task.index_domain.get_dim() == 3) {
          unsigned sample_id = find_sample_id(ctx, task);
          SampleMapping& mapping = sample_mappings_[sample_id];
-         return mapping.tiling_3d_functor();
+         // IO of 3D partitioned regions is managed by each rank
+         if (STARTS_WITH(task.get_task_name(), "dumpTile") ||
+             STARTS_WITH(task.get_task_name(), "loadTile") ||
+             STARTS_WITH(task.get_task_name(), "writeTileAttr")) {
+            return mapping.rank_tiling_3d_functor(true);
+         } else {
+            return mapping.tiling_3d_functor();
+         }
       }
       // 2D index space tasks
       else if (task.is_index_space && task.index_domain.get_dim() == 2) {
@@ -467,24 +625,33 @@ private:
             return NULL;
          }
       }
-      // Sample-specific tasks that are launched individually
+      // Sample-specific tasks that are launched individually on each tile
       else if (EQUALS(task.get_task_name(), "workSingle") ||
                EQUALS(task.get_task_name(), "workDual") ||
-               EQUALS(task.get_task_name(), "Exports.DummyAverages") ||
-               EQUALS(task.get_task_name(), "ReduceAverages") ||
+               EQUALS(task.get_task_name(), "DummyAverages") ||
+               EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
+               EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
+               EQUALS(task.get_task_name(), "GetRescalingData") ||
                EQUALS(task.get_task_name(), "cache_grid_translation") ||
+               STARTS_WITH(task.get_task_name(), "FastInterp") ||
                STARTS_WITH(task.get_task_name(), "Exports.Console_Write") ||
                STARTS_WITH(task.get_task_name(), "Exports.Probe_Write") ||
                EQUALS(task.get_task_name(), "Exports.createDir") ||
                EQUALS(task.get_task_name(), "__dummy") ||
                STARTS_WITH(task.get_task_name(), "__unary_") ||
                STARTS_WITH(task.get_task_name(), "__binary_") ||
-               STARTS_WITH(task.get_task_name(), "readTileAttr") ||
                STARTS_WITH(task.get_task_name(), "AffineTransform")) {
          unsigned sample_id = find_sample_id(ctx, task);
          SampleMapping& mapping = sample_mappings_[sample_id];
          DomainPoint tile = find_tile(ctx, task);
          return mapping.hardcoded_functor(tile);
+      }
+      // Sample-specific tasks that are launched individually on each rank
+      else if (STARTS_WITH(task.get_task_name(), "readTileAttr")) {
+         unsigned sample_id = find_sample_id(ctx, task);
+         SampleMapping& mapping = sample_mappings_[sample_id];
+         DomainPoint tile = find_tile(ctx, task);
+         return mapping.rank_hardcoded_functor(tile);
       }
       // Other tasks: fail and notify the user
       else {
@@ -616,10 +783,11 @@ public:
       int priority = 0;
       // Increase priority of tasks on the critical path of the fluid solve.
       if (STARTS_WITH(task.get_task_name(), "Exports.GetVelocityGradients") ||
-          STARTS_WITH(task.get_task_name(), "Exports.GetEulerFlux") ||
-          STARTS_WITH(task.get_task_name(), "GetFlux") ||
-          STARTS_WITH(task.get_task_name(), "UpdateUsingFlux") ||
-          STARTS_WITH(task.get_task_name(), "CorrectUsingFlux") ||
+          STARTS_WITH(task.get_task_name(), "UpdateShockSensor") ||
+          STARTS_WITH(task.get_task_name(), "UpdateUsingHybridEulerFlux") ||
+          STARTS_WITH(task.get_task_name(), "UpdateUsingTENOAEulerFlux") ||
+          STARTS_WITH(task.get_task_name(), "UpdateUsingDiffusionFlux") ||
+//          STARTS_WITH(task.get_task_name(), "CorrectUsingFlux") ||
           STARTS_WITH(task.get_task_name(), "UpdateVars") ||
           STARTS_WITH(task.get_task_name(), "Exports.UpdateChemistry")) {
          priority = 1;
@@ -655,13 +823,57 @@ public:
       CHECK(false, "Unsupported: map_copy");
    }
 
-   // Send each fill to the rank of its parent task.
    virtual void select_sharding_functor(const MapperContext ctx,
                                         const Fill& fill,
                                         const SelectShardingFunctorInput& input,
                                         SelectShardingFunctorOutput& output) {
-      output.chosen_functor = pick_functor(ctx, *(fill.parent_task))->id;
+		CHECK(fill.parent_task != NULL,
+            "Unsupported: Sharded Fill does not have parent partition");
+      if (fill.is_index_space && fill.index_domain.get_dim() == 3) {
+         unsigned sample_id = find_sample_id(ctx, *(fill.parent_task));
+         SampleMapping& mapping = sample_mappings_[sample_id];
+         output.chosen_functor = mapping.rank_tiling_3d_functor(true)->id;
+         LOG.debug() << "Sample " << sample_id
+                     << ": Fill with parent task " << fill.parent_task->get_task_name()
+                     << ": sharded using rank_tiling_3d_functor";
+      } else {
+         output.chosen_functor = pick_functor(ctx, *(fill.parent_task))->id;
+         LOG.debug() << ": Fill parent task " << fill.parent_task->get_task_name()
+                     << ": sharded using pick_functor";
+      }
    }
+
+   // NOTE: Will only run if Legion is compiled with dynamic control replication.
+   // Send each dependent partition operation to the rank corresponding
+   // to its tile (3d index_space launched) or to the rank of its parent task.
+   virtual void select_sharding_functor(const MapperContext ctx,
+                                        const Partition& partition,
+                                        const SelectShardingFunctorInput& input,
+                                        SelectShardingFunctorOutput& output) {
+      CHECK(partition.parent_task != NULL &&
+           (EQUALS(partition.parent_task->get_task_name(), "workSingle") ||
+            EQUALS(partition.parent_task->get_task_name(), "workDual")),
+            "Unsupported: Sharded partition outside of workSingle or workDual");
+      unsigned sample_id = find_sample_id(ctx, *(partition.parent_task));
+      SampleMapping& mapping = sample_mappings_[sample_id];
+//      const char *name = get_partition_name(ctx, partition.requirement.partition);
+//      CHECK(name != NULL, "Found an unnamed partition");
+
+      // 3D index space tasks
+      if (partition.is_index_space && partition.index_domain.get_dim() == 3) {
+         output.chosen_functor = mapping.rank_tiling_3d_functor(true)->id;
+         LOG.debug() << "Sample " << sample_id
+                     << ": Partition parent task " << partition.parent_task->get_task_name()
+//                     << ": Partition parent partition " << name
+                     << ": sharded using rank_tiling_3d_functor";
+      } else {
+         LOG.debug() << "Sample " << sample_id
+                     << ": Partition parent task " << partition.parent_task->get_task_name()
+//                     << ": Partition parent partition " << name
+                     << ": sharded using pick_functor";
+         output.chosen_functor = pick_functor(ctx, *(partition.parent_task))->id;
+      }
+  }
 
 //=============================================================================
 // MAPPER CLASS: MINOR OVERRIDES
@@ -687,38 +899,57 @@ public:
                                                                bool force_new_instances,
                                                                bool meets_constraints) {
 
-     // A root region does not need any special care
-     if (!runtime->has_parent_logical_partition(ctx, req.region)) {
-        LOG.debug() << "Root region assigned to its own instance";
-        return req.region;
-     }
+      // A root region does not need any special care
+      if (!runtime->has_parent_logical_partition(ctx, req.region)) {
+         LOG.debug() << "Root region assigned to its own instance";
+         return req.region;
+      }
 
-     LogicalPartition parent_partition = runtime->get_parent_logical_partition(ctx, req.region);
-     const char *name = get_partition_name(ctx, parent_partition);
-     CHECK(name != NULL, "Found an unnamed partition");
+      LogicalPartition parent_partition = runtime->get_parent_logical_partition(ctx, req.region);
+      const char *name = get_partition_name(ctx, parent_partition);
+      CHECK(name != NULL, "Found an unnamed partition");
 
-     if (EQUALS(name, "p_Interior") ||
-         EQUALS(name, "p_Fluid_AllGhost") ||
-         EQUALS(name, "p_x_divg") ||
-         EQUALS(name, "p_y_divg") ||
-         EQUALS(name, "p_z_divg") ||
-         EQUALS(name, "p_solved") ||
-         EQUALS(name, "p_x_faces") ||
-         EQUALS(name, "p_y_faces") ||
-         EQUALS(name, "p_z_faces")) {
-        DomainPoint tile = runtime->get_logical_region_color_point(ctx, req.region);
-        LOG.debug() << "Region " << name
-                    << "[Tile " << tile << "] "
-                    << "is mapped on corresponding instance of p_All";
-        LogicalRegion root_region = get_root(ctx, req.region);
-        LogicalPartition primary_partition = get_primary_partition(ctx, root_region);
-        assert(primary_partition != LogicalPartition::NO_PART);
-        return runtime->get_logical_subregion_by_color(ctx, primary_partition, tile);
+      if (EQUALS(name, "p_All") ||
+          EQUALS(name, "p_Interior") ||
+          EQUALS(name, "p_AllBCs") ||
+          EQUALS(name, "p_solved") || 
+          EQUALS(name, "p_GradientGhosts") ||
+          EQUALS(name, "p_MetricGhosts") ||
+          EQUALS(name, "p_x_divg")  || EQUALS(name, "p_y_divg")  || EQUALS(name, "p_z_divg") ||
+          EQUALS(name, "p_x_faces") || EQUALS(name, "p_y_faces") || EQUALS(name, "p_z_faces") ||
+          EQUALS(name, "p_XFluxGhosts")    || EQUALS(name, "p_YFluxGhosts")    || EQUALS(name, "p_ZFluxGhosts")    ||
+          EQUALS(name, "p_XDiffGhosts")    || EQUALS(name, "p_YDiffGhosts")    || EQUALS(name, "p_ZDiffGhosts")    ||
+          EQUALS(name, "p_XEulerGhosts2")  || EQUALS(name, "p_YEulerGhosts2")  || EQUALS(name, "p_ZEulerGhosts2")  ||
+          EQUALS(name, "p_XSensorGhosts2") || EQUALS(name, "p_YSensorGhosts2") || EQUALS(name, "p_ZSensorGhosts2") ||
+          EQUALS(name, "p_XEulerGhosts")   || EQUALS(name, "p_YEulerGhosts")   || EQUALS(name, "p_ZEulerGhosts")   ||
+          EQUALS(name, "p_XSensorGhosts")  || EQUALS(name, "p_YSensorGhosts")  || EQUALS(name, "p_ZSensorGhosts")  ||
+          EQUALS(name, "p_Fluid_YZAvg")    || EQUALS(name, "p_Fluid_XZAvg")    || EQUALS(name, "p_Fluid_XYAvg")    ||
+          EQUALS(name, "p_Fluid_XAvg")     || EQUALS(name, "p_Fluid_YAvg")     || EQUALS(name, "p_Fluid_ZAvg")     ||
+          EQUALS(name, "BCPlane")) {
+
+         DomainPoint tile = runtime->get_logical_region_color_point(ctx, req.region);
+         LogicalRegion root_region = get_root(ctx, req.region);
+         LogicalPartition primary_partition = get_partition_by_name(ctx, root_region, "p_AllWithGhosts");
+         if (primary_partition == LogicalPartition::NO_PART) {
+            // If p_AllWithGhosts has not been created yet use p_All
+            LOG.debug() << "Region of " << name
+                        << ": Tile " << tile
+                        << " is mapped on corresponding instance of p_All";
+            LogicalPartition p_All = get_partition_by_name(ctx, root_region, "p_All");
+            assert(p_All != LogicalPartition::NO_PART);
+            return runtime->get_logical_subregion_by_color(ctx, p_All, tile);
+         } else {
+            // otherwise map everything on p_AllWithGhosts
+            LOG.debug() << "Region of " << name
+                        << ": Tile " << tile
+                        << " is mapped on corresponding instance of p_AllWithGhosts";
+            assert(primary_partition != LogicalPartition::NO_PART);
+            return runtime->get_logical_subregion_by_color(ctx, primary_partition, tile);
+         }
       }
 
       LOG.debug() << "Region of " << name << " is mapped on its own instance";
       return req.region;
-
    }
 
    //--------------------------------------------------------------------------
@@ -730,6 +961,14 @@ public:
    {
       // Let the default mapper sort the sources by bandwidth
       DefaultMapper::default_policy_select_sources(ctx, target, sources, ranking);
+
+//      std::ostringstream srank1;
+//      for (std::deque<PhysicalInstance>::const_iterator it = ranking.begin();
+//           it != ranking.end(); it++)
+//      {
+//         srank1 << *it << " ";
+//      }
+//      LOG.debug() << "Default rank for " << target << ": " << srank1.str().c_str();
 
       // Give priority to those with better overlapping
       std::vector<std::pair<PhysicalInstance,unsigned/*size of intersection*/>>
@@ -755,6 +994,15 @@ public:
             const_reverse_iterator it = cover_ranking.rbegin();
             it != cover_ranking.rend(); it++)
         ranking.push_back(it->first);
+
+//      std::ostringstream srank2;
+//      for (std::deque<PhysicalInstance>::const_iterator it = ranking.begin();
+//           it != ranking.end(); it++)
+//      {
+//         srank2 << *it << " ";
+//      }
+//      LOG.debug() << "New rank for " << target << ": " << srank1.str().c_str();
+
    }
 
    // Disable an optimization done by the default mapper (extends the set of
@@ -764,6 +1012,14 @@ public:
                                                         const Task &task,
                                                         std::vector<Processor> &target_procs) {
       target_procs.push_back(task.target_proc);
+   }
+
+   // Enable tracing.
+   virtual void memoize_operation(const MapperContext ctx,
+                                  const Mappable& mappable,
+                                  const MemoizeInput& input,
+                                  MemoizeOutput& output) {
+      output.memoize = true;
    }
 
    // Shouldn't have to shard any of the following operations.
@@ -832,24 +1088,23 @@ private:
 
    const char* get_partition_name(MapperContext ctx,
                                   const LogicalPartition &lp) {
-     const void *name = NULL;
-     size_t size = 0;
-     runtime->retrieve_semantic_information(ctx, lp, NAME_SEMANTIC_TAG, name, size, true, false);
-     return (const char*)name;
+      const void *name = NULL;
+      size_t size = 0;
+      runtime->retrieve_semantic_information(ctx, lp, NAME_SEMANTIC_TAG, name, size, true, false);
+      return (const char*)name;
    }
 
-   LogicalPartition get_primary_partition(MapperContext ctx,
-                                          const LogicalRegion &region) {
-     std::set<Color> colors;
-     runtime->get_index_space_partition_colors(ctx, region.get_index_space(), colors);
-     for (std::set<Color>::const_iterator it = colors.begin(); it != colors.end(); ++it) {
-       LogicalPartition lp = runtime->get_logical_partition_by_color(ctx, region, *it);
-       const char *name = get_partition_name(ctx, lp);
-       if (name != NULL && EQUALS(name, "p_All")) {
-         return lp;
-       }
-     }
-     return LogicalPartition::NO_PART;
+   LogicalPartition get_partition_by_name(MapperContext ctx,
+                                          const LogicalRegion &region,
+                                          const char *name) {
+      std::set<Color> colors;
+      runtime->get_index_space_partition_colors(ctx, region.get_index_space(), colors);
+      for (std::set<Color>::const_iterator it = colors.begin(); it != colors.end(); ++it) {
+         LogicalPartition lp = runtime->get_logical_partition_by_color(ctx, region, *it);
+         const char *n = get_partition_name(ctx, lp);
+         if (n != NULL && EQUALS(n, name)) return lp;
+      }
+      return LogicalPartition::NO_PART;
    }
 
 //=============================================================================

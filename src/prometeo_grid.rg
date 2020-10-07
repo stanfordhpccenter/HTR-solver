@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -29,7 +29,7 @@
 
 import "regent"
 
-return function(SCHEMA, Fluid_columns) local Exports = {}
+return function(SCHEMA, Fluid_columns, zones_partitions) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -374,88 +374,105 @@ end
 
 -- NOTE: It is safe to not pass the ghost regions to this task, because we
 -- always group ghost cells with their neighboring interior cells.
-__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.InitializeGhostGeometry(Fluid : region(ispace(int3d), Fluid_columns),
-                        Grid_xType : SCHEMA.GridType, Grid_yType : SCHEMA.GridType, Grid_zType : SCHEMA.GridType,
-                        Grid_xStretching : double,    Grid_yStretching : double,    Grid_zStretching : double,
-                        Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                        Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                        Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
-where
-   reads writes(Fluid.centerCoordinates),
-   reads writes(Fluid.cellWidth)
-do
-   -- Find cell center coordinates and cell width of ghost cells
-   __demand(__openmp)
-   for c in Fluid do
+local mkInitializeGhostGeometry = terralib.memoize(function(sdir)
+   local InitializeGhostGeometry
 
-      var xNegGhost = MACRO.is_xNegGhost(c, Grid_xBnum)
-      var xPosGhost = MACRO.is_xPosGhost(c, Grid_xBnum, Grid_xNum)
-      var yNegGhost = MACRO.is_yNegGhost(c, Grid_yBnum)
-      var yPosGhost = MACRO.is_yPosGhost(c, Grid_yBnum, Grid_yNum)
-      var zNegGhost = MACRO.is_zNegGhost(c, Grid_zBnum)
-      var zPosGhost = MACRO.is_zPosGhost(c, Grid_zBnum, Grid_zNum)
+   local ind
+   local sign
+   if     sdir == "xNeg" then
+      ind = 0
+      sign = -1
+   elseif sdir == "xPos" then
+      ind = 0
+      sign = 1
+   elseif sdir == "yNeg" then
+      ind = 1
+      sign = -1
+   elseif sdir == "yPos" then
+      ind = 1
+      sign = 1
+   elseif sdir == "zNeg" then
+      ind = 2
+      sign = -1
+   elseif sdir == "zPos" then
+      ind = 2
+      sign = 1
+   else assert(false) end
 
-      if xNegGhost then
-         var c_int = ((c+{1,0,0}) % Fluid.bounds)
-         var x_neg_boundary = Grid_xOrigin
-         var x_pos_boundary = Grid_xOrigin + Grid_xWidth
-         var x_idx_interior = c_int.x - Grid_xBnum
-         var centerCoordinates_int = cell_center(x_neg_boundary, x_pos_boundary, Grid_xNum, x_idx_interior, Grid_xType, Grid_xStretching)
-         var cellWidth_int         = cell_width( x_neg_boundary, x_pos_boundary, Grid_xNum, x_idx_interior, Grid_xType, Grid_xStretching)
-         Fluid[c].centerCoordinates[0] = centerCoordinates_int - cellWidth_int
-         Fluid[c].cellWidth[0] = cellWidth_int
-      elseif xPosGhost then
-         var c_int = ((c-{1,0,0}) % Fluid.bounds)
-         var x_neg_boundary = Grid_xOrigin
-         var x_pos_boundary = Grid_xOrigin + Grid_xWidth
-         var x_idx_interior = c_int.x - Grid_xBnum
-         var centerCoordinates_int = cell_center(x_neg_boundary, x_pos_boundary, Grid_xNum, x_idx_interior, Grid_xType, Grid_xStretching)
-         var cellWidth_int         = cell_width( x_neg_boundary, x_pos_boundary, Grid_xNum, x_idx_interior, Grid_xType, Grid_xStretching)
-         Fluid[c].centerCoordinates[0] = centerCoordinates_int + cellWidth_int
-         Fluid[c].cellWidth[0] = cellWidth_int
-      end
+   local mk_cint
+   if sdir == "xNeg" then
+      mk_cint = function(c) return rexpr (c+{ 1, 0, 0}) end end
+   elseif sdir == "xPos" then
+      mk_cint = function(c) return rexpr (c+{-1, 0, 0}) end end
+   elseif sdir == "yNeg" then
+      mk_cint = function(c) return rexpr (c+{ 0, 1, 0}) end end
+   elseif sdir == "yPos" then
+      mk_cint = function(c) return rexpr (c+{ 0,-1, 0}) end end
+   elseif sdir == "zNeg" then
+      mk_cint = function(c) return rexpr (c+{ 0, 0, 1}) end end
+   elseif sdir == "zPos" then
+      mk_cint = function(c) return rexpr (c+{ 0, 0,-1}) end end
+   else assert(false) end
 
-      if yNegGhost then
-         var c_int = ((c+{0,1,0}) % Fluid.bounds)
-         var y_neg_boundary = Grid_yOrigin
-         var y_pos_boundary = Grid_yOrigin + Grid_yWidth
-         var y_idx_interior = c_int.y - Grid_yBnum
-         var centerCoordinates_int = cell_center(y_neg_boundary, y_pos_boundary, Grid_yNum, y_idx_interior, Grid_yType, Grid_yStretching)
-         var cellWidth_int         = cell_width( y_neg_boundary, y_pos_boundary, Grid_yNum, y_idx_interior, Grid_yType, Grid_yStretching)
-         Fluid[c].centerCoordinates[1] = centerCoordinates_int - cellWidth_int
-         Fluid[c].cellWidth[1] = cellWidth_int
-      elseif yPosGhost then
-         var c_int = ((c-{0,1,0}) % Fluid.bounds)
-         var y_neg_boundary = Grid_yOrigin
-         var y_pos_boundary = Grid_yOrigin + Grid_yWidth
-         var y_idx_interior = c_int.y - Grid_yBnum
-         var centerCoordinates_int = cell_center(y_neg_boundary, y_pos_boundary, Grid_yNum, y_idx_interior, Grid_yType, Grid_yStretching)
-         var cellWidth_int         = cell_width( y_neg_boundary, y_pos_boundary, Grid_yNum, y_idx_interior, Grid_yType, Grid_yStretching)
-         Fluid[c].centerCoordinates[1] = centerCoordinates_int + cellWidth_int
-         Fluid[c].cellWidth[1] = cellWidth_int
-      end
+   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
+   task InitializeGhostGeometry(Fluid : region(ispace(int3d), Fluid_columns),
+                                Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                BCType : int32)
 
-      if zNegGhost then
-         var c_int = ((c+{0,0,1}) % Fluid.bounds)
-         var z_neg_boundary = Grid_zOrigin
-         var z_pos_boundary = Grid_zOrigin + Grid_zWidth
-         var z_idx_interior = c_int.z - Grid_zBnum
-         var centerCoordinates_int = cell_center(z_neg_boundary, z_pos_boundary, Grid_zNum, z_idx_interior, Grid_zType, Grid_zStretching)
-         var cellWidth_int         = cell_width( z_neg_boundary, z_pos_boundary, Grid_zNum, z_idx_interior, Grid_zType, Grid_zStretching)
-         Fluid[c].centerCoordinates[2] = centerCoordinates_int - cellWidth_int
-         Fluid[c].cellWidth[2] = cellWidth_int
-      elseif zPosGhost then
-         var c_int = ((c-{0,0,1}) % Fluid.bounds)
-         var z_neg_boundary = Grid_zOrigin
-         var z_pos_boundary = Grid_zOrigin + Grid_zWidth
-         var z_idx_interior = c_int.z - Grid_zBnum
-         var centerCoordinates_int = cell_center(z_neg_boundary, z_pos_boundary, Grid_zNum, z_idx_interior, Grid_zType, Grid_zStretching)
-         var cellWidth_int         = cell_width( z_neg_boundary, z_pos_boundary, Grid_zNum, z_idx_interior, Grid_zType, Grid_zStretching)
-         Fluid[c].centerCoordinates[2] = centerCoordinates_int + cellWidth_int
-         Fluid[c].cellWidth[2] = cellWidth_int
+   where
+      reads writes(Fluid.centerCoordinates),
+      reads writes(Fluid.cellWidth)
+   do
+      var BC   = Fluid_BC[0]
+      var BCst = Fluid_BC[1]
+
+      var isStaggered = ((BCType == SCHEMA.FlowBC_Dirichlet) or
+                         (BCType == SCHEMA.FlowBC_AdiabaticWall) or
+                         (BCType == SCHEMA.FlowBC_IsothermalWall) or
+                         (BCType == SCHEMA.FlowBC_SuctionAndBlowingWall))
+
+      __demand(__openmp)
+      for c in BC do
+         var c_int = [mk_cint(rexpr c end)];
+         if isStaggered then
+            -- Staggered BCs
+            BC[c].centerCoordinates[ind] = BCst[c_int].centerCoordinates[ind]
+                                           + 0.5*[sign]*BCst[c_int].cellWidth[ind]
+            BC[c].cellWidth[ind] = 1e-12
+         else
+            BC[c].centerCoordinates[ind] = BCst[c_int].centerCoordinates[ind]
+                                           + [sign]*BCst[c_int].cellWidth[ind]
+            BC[c].cellWidth[ind] = BCst[c_int].cellWidth[ind]
+         end
       end
    end
+   return InitializeGhostGeometry
+end)
+
+__demand(__inline)
+task Exports.InitializeGhostGeometry(Fluid : region(ispace(int3d), Fluid_columns),
+                                     tiles : ispace(int3d),
+                                     Fluid_Zones : zones_partitions(Fluid, tiles),
+                                     config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   -- Unpack the partitions that we are going to need
+   var {p_All,
+        p_AllxNeg, p_AllxPos, p_AllyNeg, p_AllyPos, p_AllzNeg, p_AllzPos} = Fluid_Zones
+
+   __demand(__index_launch)
+   for c in tiles do [mkInitializeGhostGeometry("xNeg")](p_All[c], p_AllxNeg[c], config.BC.xBCLeft.type ) end
+   __demand(__index_launch)
+   for c in tiles do [mkInitializeGhostGeometry("xPos")](p_All[c], p_AllxPos[c], config.BC.xBCRight.type) end
+   __demand(__index_launch)
+   for c in tiles do [mkInitializeGhostGeometry("yNeg")](p_All[c], p_AllyNeg[c], config.BC.yBCLeft.type ) end
+   __demand(__index_launch)
+   for c in tiles do [mkInitializeGhostGeometry("yPos")](p_All[c], p_AllyPos[c], config.BC.yBCRight.type) end
+   __demand(__index_launch)
+   for c in tiles do [mkInitializeGhostGeometry("zNeg")](p_All[c], p_AllzNeg[c], config.BC.zBCLeft.type ) end
+   __demand(__index_launch)
+   for c in tiles do [mkInitializeGhostGeometry("zPos")](p_All[c], p_AllzPos[c], config.BC.zBCRight.type) end
 end
 
 return Exports end

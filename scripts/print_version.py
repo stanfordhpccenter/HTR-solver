@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import argparse
 import os
@@ -12,10 +12,13 @@ args = parser.parse_args()
 tiles = glob.glob(os.path.join(args.folder, "*hdf"))
 version = None
 
-for tl in tiles:
+for t, tl in enumerate(tiles):
    fin = h5py.File(tl, "r")
-   if version == None : version = fin.attrs.get("Versions")
-   else : assert version == fin.attrs.get("Versions")
+   if (t == 0):
+      version = fin.attrs.get("Versions")
+   else:
+      for i in range(len(version)):
+         assert (version[i] == fin.attrs.get("Versions")[i])
    fin.close()
 
 print("Solution produced with")

@@ -3,7 +3,7 @@
 # Only use spaces to indent your .yml configuration.
 # -----
 # You can specify a custom docker image from Docker Hub as your build environment.
-image: mariodr/legion-docker:ubuntu16.04
+image: mariodr/legion-docker:ubuntu16.04-dcr
 
 pipelines:
    default:
@@ -13,77 +13,75 @@ pipelines:
 #          - cd src
 ##          - make
 #
-      - parallel:
+#      - parallel:
          - step:
             name: Test Config
             script:
-               - cd unitTests/configTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./configTest.exec
+               - python3 unitTests/configTest/test.py -v
 
          - step:
             name: Test math_utils
             script:
-               - cd unitTests/mathUtilsTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./mathUtilsTest.exec
+               - python3 unitTests/mathUtilsTest/test.py -v
 
          - step:
             name: Test hdf_helper
             script:
-               - cd unitTests/hdfTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./hdfTest.exec
+               - python3 unitTests/hdfTest/test.py -v
 
          - step:
             name: Test mixtures
             script:
-               - cd unitTests/mixTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./mixTest.exec
+               - python3 unitTests/mixTest/test.py -v
 
          - step:
             name: Test geometry
             script:
-               - cd unitTests/geometryTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./geometryTest.exec
+               - python3 unitTests/geometryTest/test.py -v
 
-# We do not have enough memory for all the tests
          - step:
             name: Test metric
             script:
                - cd unitTests/metricTest
-               - make metricTest_Periodic.exec
+               - make -j
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
+               - ./operatorsTest_Periodic.exec
+               - ./operatorsTest_Staggered.exec
+               - ./operatorsTest_Collocated.exec
                - ./metricTest_Periodic.exec
 
          - step:
             name: Test cfl
             script:
-               - cd unitTests/cflTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./cflTest.exec
+               - python3 unitTests/cflTest/test.py -v
 
          - step:
             name: Test chemistry
             script:
-               - cd unitTests/chemTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./chemTest.exec
+               - python3 unitTests/chemTest/test.py -v
 
          - step:
             name: Test variables
             script:
-               - cd unitTests/variablesTest
-               - make
                - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
-               - ./variablesTest.exec
+               - python3 unitTests/variablesTest/test.py -v
+
+         - step:
+            name: Test probe
+            script:
+               - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
+               - python3 unitTests/probeTest/test.py -v
+
+         - step:
+            name: Test average
+            script:
+               - export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent"
+               - python3 unitTests/averageTest/test.py -v
 

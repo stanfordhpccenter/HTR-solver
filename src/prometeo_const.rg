@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -79,10 +79,31 @@ Exports.ProfilesVars = terralib.newlist({
    'temperature_profile'
 })
 
+Exports.RecycleVars = terralib.newlist({
+   'temperature_recycle',
+   'MolarFracs_recycle',
+   'velocity_recycle'
+})
+
 -- Variable indices
 function Exports.GetirU(MIX) return MIX.nSpec   end
 function Exports.GetirE(MIX) return MIX.nSpec+3 end
 function Exports.GetnEq(MIX) return MIX.nSpec+4 end
+
+-- Node types
+Exports.Std_node   = 0  -- Node with standard stencil
+Exports.L_S_node   = 1  -- Left node on staggered bc
+Exports.Lp1_S_node = 2  -- Left plus one node on staggered bc
+Exports.Lp2_S_node = 3  -- Left plus two node on staggered bc
+Exports.Rm3_S_node = 4  -- Right minus three node on staggered bc
+Exports.Rm2_S_node = 5  -- Right minus two node on staggered bc
+Exports.Rm1_S_node = 6  -- Right minus one node on staggered bc
+Exports.R_S_node   = 7  -- Right node on staggered bc
+Exports.L_C_node   = 8  -- Left node on collocated bc
+Exports.Lp1_C_node = 9  -- Left plus one node on collocated bc
+Exports.Rm2_C_node = 10 -- Right minus two node on collocated bc
+Exports.Rm1_C_node = 11 -- Right minus one node on collocated bc
+Exports.R_C_node   = 12 -- Right node on collocated bc
 
 return Exports
 

@@ -373,12 +373,14 @@ local type2name = {} -- map(Struct,string)
 for name,typ in pairs(SCHEMA) do
   if isStruct(typ) then
     type2name[typ] = name
+  elseif isUnion(typ) then
+    type2name[typ] = name
   end
 end
 
 local deps = {} -- map(string,string*)
 for srcN,srcT in pairs(SCHEMA) do
-  if isStruct(srcT) then
+  if isStruct(srcT) or isUnion(srcT) then
     deps[srcN] = terralib.newlist()
     local function traverse(tgtT)
       local tgtN = type2name[tgtT]
@@ -466,7 +468,7 @@ for name,typ in pairs(SCHEMA) do
     end
   elseif isUnion(typ) then
     hdrFile:write('\n')
-    hdrFile:write('typedef int '..name..';\n')
+    hdrFile:write('typedef int '..name..'Type;\n')
     local i = 0
     for choice,_ in pairs(typ) do
       hdrFile:write('#define '..name..'_'..choice..' '..i..'\n')

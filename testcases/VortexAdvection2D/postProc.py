@@ -47,10 +47,10 @@ def process(case):
    yWidth  = data["Grid"]["yWidth"]
    xOrigin = data["Grid"]["origin"][0]
    yOrigin = data["Grid"]["origin"][1]
-   Tinf = data["Flow"]["initParams"][1]
-   Uinf = data["Flow"]["initParams"][2]
-   Vinf = data["Flow"]["initParams"][3]
-   gamma = data["Flow"]["gamma"]
+   Tinf = data["Flow"]["initCase"]["temperature"]
+   Uinf = data["Flow"]["initCase"]["velocity"][0]
+   Vinf = data["Flow"]["initCase"]["velocity"][1]
+   gamma = data["Flow"]["mixture"]["gamma"]
 
    dx = xWidth/xNum
    dy = yWidth/yNum

@@ -9,7 +9,7 @@ local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
 local Config = SCHEMA.Config
 
-function mktestMixture(name)
+function mktestMixture()
    local testMixture
 
    local config = regentlib.newsymbol()
@@ -17,6 +17,7 @@ function mktestMixture(name)
    local T = 750.0
    local P = 101325.0
 
+   local name
    local MIX
    local ENames
    local EYi
@@ -37,9 +38,10 @@ function mktestMixture(name)
    local Edpde
    local Edpdrho
 
-   if (name == "ConstPropMix") then
+   if (os.getenv("EOS") == "ConstPropMix") then
       local R = 287.15
       local Pr = 0.71
+      name = "ConstPropMix"
       MIX = (require 'ConstPropMix')(SCHEMA)
       ENames = rexpr array("MIX") end
       EYi = rexpr array( 1.0 ) end
@@ -59,7 +61,8 @@ function mktestMixture(name)
       Eprod = rexpr array( 0.0e0 ) end
       Edpde = rexpr [Erho]*([Egamma] - 1.0) end
       Edpdrho = rexpr array( [R]*[T] ) end
-   elseif (name == "AirMix") then
+   elseif (os.getenv("EOS") == "AirMix") then
+      name = "AirMix"
       MIX = (require 'AirMix')(SCHEMA)
       local R = 8.3144598
       ENames = rexpr  array(      "N2",         "O2",         "NO",          "N",          "O") end
@@ -73,25 +76,48 @@ function mktestMixture(name)
       EWi = rexpr  array( 2*14.0067e-3, 2*15.9994e-3, 30.00610e-03,  14.0067e-03,  15.9994e-03) end
       Ee = rexpr Eh - [P]/[Erho] end
       Emu = rexpr 3.723077e-05 end
-      Elam = rexpr 5.927382e-02 end
+      Elam = rexpr 6.736994e-02 end
       Egamma = rexpr 1.476782e+00 end
       Esos = rexpr 6.567317e+02 end
       Edif = rexpr array( 1.192983e-04, 1.174019e-04, 1.162986e-04, 1.820668e-04, 1.882347e-04) end
       Eprod = rexpr array( 3.413124e+07, 2.664566e+04,-3.578332e+07,-1.742776e+07, 1.905320e+07) end
       Edpde = rexpr [Erho]*([Egamma] - 1.0) end
       Edpdrho = rexpr array( 5.206698e+06, 5.184248e+06, 3.742883e+06,-1.064452e+07,-2.029053e+06) end
-   else
-      error "Unknown mixture"
+   elseif (os.getenv("EOS") == "CH41StMix") then
+      name = "CH41StMix"
+      MIX = (require 'CH41StMix')(SCHEMA)
+      local R = 8.3144598
+      ENames = rexpr  array(     "CH4",         "O2",        "CO2",        "H2O") end
+      EYi = rexpr  array(         0.25,         0.25,         0.25,         0.25) end
+      EXi = rexpr  array( 3.628018e-01, 1.818846e-01,   1.322462e-01,  3.230675e-01) end
+      EMixW = rexpr 2.328035e-02 end
+      Erho = rexpr [P]*[EMixW]/([R]*[T]) end
+      Ecp = rexpr 2.032494e+03 end
+      Eh = rexpr -5.965912e+06 end
+      Ehsp = rexpr array(-3.294307e+06, 4.425045e+05,-8.481094e+06,-1.253075e+07) end
+      EWi = rexpr  array( 16.04206e-03, 2*15.9994e-3, 44.00950e-03, 18.01508e-03) end
+      Ee = rexpr Eh - [P]/[Erho] end
+      Emu = rexpr 3.108639e-05 end
+      Elam = rexpr 8.767210e-02 end
+      Egamma = rexpr 1.213177e+00 end
+      Esos = rexpr 5.700526e+02 end
+      Edif = rexpr array( 1.349310e-04, 1.009838e-04, 7.790111e-05, 1.363336e-04) end
+      Eprod = rexpr array(-2.658098e+00,-1.060412e+01, 7.292178e+00, 5.970037e+00) end
+      Edpde = rexpr [Erho]*([Egamma] - 1.0) end
+      Edpdrho = rexpr array(-1.550405e+05,-1.186804e+06, 6.509754e+05, 1.762304e+06) end
+   elseif (os.getenv("EOS") == nil) then
+      error ("You must define EOS enviromnment variable")
    end
 
    __demand(__inline)
    task testMixture(config : Config)
 
       -- Init the mixture
+      SCHEMA.parse_Config(&config, [name..".json"]);
       var Mix = MIX.InitMixture(config)
 
       -- check GetSpeciesNames
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(C.strcmp([ENames][i], MIX.GetSpeciesNames(Mix)[i]) == 0, ["mixTest: ERROR in GetSpeciesNames of " .. name])
       end
 
@@ -101,7 +127,7 @@ function mktestMixture(name)
 
       -- check GetMolarFractions
       var Xi = MIX.GetMolarFractions(MixW, [EYi], Mix)
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(fabs((Xi[i]/([EXi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetMolarFractions of " .. name])
       end
 
@@ -111,7 +137,7 @@ function mktestMixture(name)
 
       -- check GetMassFractions
       var Yi = MIX.GetMassFractions(MixW, Xi, Mix)
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(fabs((Yi[i]/([EYi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetMassFractions of " .. name])
       end
 
@@ -122,13 +148,13 @@ function mktestMixture(name)
 
       -- check GetRhoYiFromYi
       var rhoYi = MIX.GetRhoYiFromYi(rho, Yi)
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(fabs((rhoYi[i]/([Erho]*[EYi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetRhoYiFromYi of " .. name])
       end
 
       -- check GetYi
       var Yi2 = MIX.GetYi(rho, rhoYi)
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(fabs((Yi2[i]/([EYi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetYi of " .. name])
       end
 
@@ -141,13 +167,13 @@ function mktestMixture(name)
       regentlib.assert(fabs((h/([Eh])) - 1.0) < 1e-3, ["mixTest: ERROR in GetEnthalpy of " .. name])
 
       -- check GetSpeciesEnthalpy
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          var hsp = MIX.GetSpeciesEnthalpy(i, [T], Mix)
-         regentlib.assert(fabs((hsp/([Ehsp][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetEnthalpy of " .. name])
+         regentlib.assert(fabs((hsp/([Ehsp][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetSpeciesEnthalpy of " .. name])
       end
 
       -- check GetSpeciesMolarWeight
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          var W = MIX.GetSpeciesMolarWeight(i, Mix)
          regentlib.assert(fabs((W/([EWi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetSpeciesMolarWeight of " .. name])
       end
@@ -161,8 +187,8 @@ function mktestMixture(name)
       regentlib.assert(fabs((T1/([T])) - 1.0) < 1e-3, ["mixTest: ERROR in GetTFromInternalEnergy of " .. name])
 
       -- check isValidInternalEnergy
-      regentlib.assert(MIX.isValidInternalEnergy(e  , Yi, Mix) == true,  ["mixTest: ERROR in isValidInternalEnergy of " .. name])
-      regentlib.assert(MIX.isValidInternalEnergy(0.0, Yi, Mix) == false, ["mixTest: ERROR in isValidInternalEnergy of " .. name])
+      regentlib.assert(MIX.isValidInternalEnergy(e      , Yi, Mix) == true,  ["mixTest: ERROR in isValidInternalEnergy of " .. name])
+      regentlib.assert(MIX.isValidInternalEnergy(-1.0e60, Yi, Mix) == false, ["mixTest: ERROR in isValidInternalEnergy of " .. name])
 
       -- check GetTFromRhoAndP
       regentlib.assert(fabs((MIX.GetTFromRhoAndP(rho, MixW, P)/([T])) - 1.0) < 1e-3, ["mixTest: ERROR in GetTFromRhoAndP of " .. name])
@@ -185,13 +211,13 @@ function mktestMixture(name)
 
       -- check GetDiffusivity
       var dif = MIX.GetDiffusivity([P], [T], MixW, Xi, Mix)
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(fabs((dif[i] - [Edif][i])/([Edif][i] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetDiffusivity of " .. name])
       end
 
       -- check GetMolarFractions
       var prod = MIX.GetProductionRates(rho, [P], [T], Yi, Mix)
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(fabs((prod[i] - [Eprod][i])/([Eprod][i] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetProductionRates of " .. name])
       end
 
@@ -200,7 +226,7 @@ function mktestMixture(name)
 
       -- check Getdpdrhoi
       var dpdrhoi = MIX.Getdpdrhoi(gamma, [T], Yi, Mix)
-      for i = 0, Mix.nSpec do
+      for i = 0, MIX.nSpec do
          regentlib.assert(fabs((dpdrhoi[i] - [Edpdrho][i])/([Edpdrho][i] + 1e-60)) < 1e-3, ["mixTest: ERROR in Getdpdrhoi of " .. name])
       end
 
@@ -210,14 +236,7 @@ end
 
 task main()
    var config : Config
-   SCHEMA.parse_Config(&config, "test.json");
-
-   -- Test ConstPropMix
-   [mktestMixture("ConstPropMix")](config);
-
-   -- Test AirMix
-   [mktestMixture("AirMix")](config);
-
+   [mktestMixture()](config);
    C.printf("mixTest: TEST OK!\n")
 end
 
@@ -225,4 +244,4 @@ end
 -- COMPILATION CALL
 -------------------------------------------------------------------------------
 
-regentlib.saveobj(main, "mixTest.o", "object")
+regentlib.saveobj(main, "mixTest_"..os.getenv("EOS")..".o", "object")

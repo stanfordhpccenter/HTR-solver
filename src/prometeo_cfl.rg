@@ -5,7 +5,7 @@
 --               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
 --                         HTR solver: An open-source exascale-oriented task-based
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
---                         Computer Physics Communications (In Press), 107262"
+--                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
 -- 
 -- Redistribution and use in source and binary forms, with or without
@@ -71,12 +71,10 @@ task CalculateHeatConductionSpectralRadius(Fluid : region(ispace(int3d), Fluid_c
                                            mix : MIX.Mixture)
 where
    reads(Fluid.cellWidth),
-   reads(Fluid.{MolarFracs, temperature}),
+   reads(Fluid.{MassFracs, temperature}),
    reads(Fluid.{rho, lam})
 do
-   var MixW = MIX.GetMolarWeightFromXi(Fluid[c].MolarFracs, mix)
-   var Yi   = MIX.GetMassFractions(MixW, Fluid[c].MolarFracs, mix)
-   var cp   = MIX.GetHeatCapacity(Fluid[c].temperature, Yi, mix)
+   var cp   = MIX.GetHeatCapacity(Fluid[c].temperature, Fluid[c].MassFracs, mix)
    var DifT = (Fluid[c].lam/(cp*Fluid[c].rho))
    return ((max(max((DifT/(Fluid[c].cellWidth[0]*Fluid[c].cellWidth[0])),
                     (DifT/(Fluid[c].cellWidth[1]*Fluid[c].cellWidth[1]))),
@@ -98,17 +96,19 @@ do
 end
 
 __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.CalculateMaxSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns), mix : MIX.Mixture)
+task Exports.CalculateMaxSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns),
+                                        ModCells : region(ispace(int3d), Fluid_columns),
+                                        mix : MIX.Mixture)
 where
-  reads(Fluid.cellWidth),
-  reads(Fluid.{velocity, SoS}),
-  reads(Fluid.{rho, mu}),
-  reads(Fluid.{MolarFracs, temperature, lam}),
-  reads(Fluid.Di)
+   reads(Fluid.cellWidth),
+   reads(Fluid.{velocity, SoS}),
+   reads(Fluid.{rho, mu}),
+   reads(Fluid.{MassFracs, temperature, lam}),
+   reads(Fluid.Di)
 do
    var acc = -math.huge
    __demand(__openmp)
-   for c in Fluid do
+   for c in ModCells do
       -- Advection
       acc max= CalculateConvectiveSpectralRadius(Fluid, c)
       -- Momentum diffusion

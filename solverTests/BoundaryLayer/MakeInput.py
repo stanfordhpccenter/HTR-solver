@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import argparse
 import sys
@@ -35,12 +35,12 @@ TB = CBL["T"][:].values
 # Read base config
 config = json.load(args.base_json)
 
-gamma = config["Flow"]["gamma"]
-R     = config["Flow"]["gasConstant"]
-Pr    = config["Flow"]["prandtl"]
+gamma = config["Flow"]["mixture"]["gamma"]
+R     = config["Flow"]["mixture"]["gasConstant"]
+Pr    = config["Flow"]["mixture"]["prandtl"]
 
-assert config["Flow"]["initCase"] == "Restart"
-restartDir = config["Flow"]["restartDir"]
+assert config["Flow"]["initCase"]["type"] == "Restart"
+restartDir = config["Flow"]["initCase"]["restartDir"]
 
 config["BC"]["xBCLeft"]["VelocityProfile"]["FileDir"] = restartDir
 config["BC"]["xBCLeft"]["TemperatureProfile"]["FileDir"] = restartDir
@@ -49,6 +49,8 @@ Tw   = 300.0
 P    = config["BC"]["xBCLeft"]["P"]
 UInf = 2083.67
 Rex0 = 100000
+
+config["Integrator"]["vorticityScale"] = UInf/0.0528088569936
 
 aInf = np.sqrt(gamma*R*TInf)
 MaInf = UInf/aInf
@@ -73,7 +75,8 @@ yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yNum"], 
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
-                            False)
+                            False,
+                            StagMinus=True)
 
 zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
                             config["Grid"]["zWidth"],
@@ -83,7 +86,13 @@ zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
                             False)
 
 # Load mapping
+assert config["Mapping"]["tiles"][0] % config["Mapping"]["tilesPerRank"][0] == 0
+assert config["Mapping"]["tiles"][1] % config["Mapping"]["tilesPerRank"][1] == 0
+assert config["Mapping"]["tiles"][2] % config["Mapping"]["tilesPerRank"][2] == 0
 Ntiles = config["Mapping"]["tiles"]
+Ntiles[0] = int(Ntiles[0]/config["Mapping"]["tilesPerRank"][0])
+Ntiles[1] = int(Ntiles[1]/config["Mapping"]["tilesPerRank"][1])
+Ntiles[2] = int(Ntiles[2]/config["Mapping"]["tilesPerRank"][2])
 
 assert config["Grid"]["xNum"] % Ntiles[0] == 0 
 assert config["Grid"]["yNum"] % Ntiles[1] == 0

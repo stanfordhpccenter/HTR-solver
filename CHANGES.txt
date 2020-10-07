@@ -1,5 +1,22 @@
 This file lists the major changes as they appear in the master branch.
 
+Version 1.2.0 (September 30, 2020)
+   - probe tools for the solver
+   - initial support for legion tracing
+   - new 1D average tools added as an option
+   - optimization of the 2D average tools
+   - unit test for the average tools
+   - new IncomingShock BC 
+   - new RecycleRescaling BC
+   - BC routines are now launched on relevant ispaces
+   - new RecycleRescaling boundary conditions
+   - new volume probes tools
+   - new metrics (lower memory footprint)
+   - new hybrid reconstruction scheme for inviscid numerical fluxes (can revert to TENOA scheme using the "hybridScheme" flag in the input)
+   - allow the order of the reactant to differ from its stoichiometric coefficient
+   - new CH41StMix equation of state added to the repository
+   - strong scaling files added to testcases
+
 Version 1.1.0 (April 23, 2020)
    - basic test suite added to the repository
    - timing infrastructure added to the main task of the solver
