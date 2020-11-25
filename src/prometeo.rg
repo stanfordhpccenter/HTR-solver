@@ -911,8 +911,7 @@ local function mkInstance() local INSTANCE = {}
       var [Fluid_Ghost] = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
 
       -- Unpack the ghost partitions that we are going to need
-      var {p_XFluxGhosts,     p_YFluxGhosts,   p_ZFluxGhosts,
-           p_MetricGhosts} = Fluid_Ghost
+      var {p_MetricGhostsX, p_MetricGhostsY, p_MetricGhostsZ, p_MetricGhosts} = Fluid_Ghost
 
       -- Wait for the ghost partitions to be created
       -- TODO: we could aviod this fence by changing the mapper such that 
@@ -1139,9 +1138,9 @@ local function mkInstance() local INSTANCE = {}
       __demand(__index_launch)
       for c in tiles do
          METRIC.InitializeMetric(p_MetricGhosts[c],
-                                 p_XFluxGhosts[c],
-                                 p_YFluxGhosts[c],
-                                 p_ZFluxGhosts[c],
+                                 p_MetricGhostsX[c],
+                                 p_MetricGhostsY[c],
+                                 p_MetricGhostsZ[c],
                                  p_All[c],
                                  Fluid_bounds,
                                  config.Grid.xWidth, config.Grid.yWidth, config.Grid.zWidth)

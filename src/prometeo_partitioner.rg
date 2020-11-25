@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -140,7 +140,10 @@ local fspace ghost_partitions(Fluid  : region(ispace(int3d), Fluid_columns), til
    p_YSensorGhosts2 : partition(aliased, Fluid, tiles),
    p_ZSensorGhosts2 : partition(aliased, Fluid, tiles),
    -- Metric routines
-   p_MetricGhosts : partition(aliased, Fluid, tiles),
+   p_MetricGhosts  : partition(aliased, Fluid, tiles),
+   p_MetricGhostsX : partition(aliased, Fluid, tiles),
+   p_MetricGhostsY : partition(aliased, Fluid, tiles),
+   p_MetricGhostsZ : partition(aliased, Fluid, tiles),
    -- Euler fluxes routines
    p_XEulerGhosts : partition(aliased, Fluid, tiles),
    p_YEulerGhosts : partition(aliased, Fluid, tiles),
@@ -1231,14 +1234,21 @@ do
    [UTIL.emitPartitionNameAttach(rexpr p_GradientGhosts end, "p_GradientGhosts")];
 
    -- Metric routines (uses the entire stencil in all three directions)
-   var tmpx = All | AllM1x
-   var tmpy = All | AllM1y
-   var tmpz = All | AllM1z
+   var MetricGhostsX = All | AllM1x
+   var MetricGhostsY = All | AllM1y
+   var MetricGhostsZ = All | AllM1z
    var p_MetricGhosts = p_All |
-         [emitEulerGhostRegion("x", Fluid, aux, tmpx)] |
-         [emitEulerGhostRegion("y", Fluid, aux, tmpy)] |
-         [emitEulerGhostRegion("z", Fluid, aux, tmpz)];
+         [emitEulerGhostRegion("x", Fluid, aux, MetricGhostsX)] |
+         [emitEulerGhostRegion("y", Fluid, aux, MetricGhostsY)] |
+         [emitEulerGhostRegion("z", Fluid, aux, MetricGhostsZ)];
    [UTIL.emitPartitionNameAttach(rexpr p_MetricGhosts end, "p_MetricGhosts")];
+
+   var p_MetricGhostsX = Fluid & MetricGhostsX
+   var p_MetricGhostsY = Fluid & MetricGhostsY
+   var p_MetricGhostsZ = Fluid & MetricGhostsZ;
+   [UTIL.emitPartitionNameAttach(rexpr p_MetricGhostsX end, "p_MetricGhostsX")];
+   [UTIL.emitPartitionNameAttach(rexpr p_MetricGhostsY end, "p_MetricGhostsY")];
+   [UTIL.emitPartitionNameAttach(rexpr p_MetricGhostsZ end, "p_MetricGhostsZ")];
 
    -- Euler fluxes routines (uses [-2:+3] direction by direction)
    var p_XEulerGhosts = p_x_faces | x_facesM2 | x_facesM1 | x_facesP1 | x_facesP2 | x_facesP3
@@ -1273,7 +1283,10 @@ do
       -- All With Ghosts
       p_AllWithGhosts = p_AllWithGhosts,
       -- Metric routines
-      p_MetricGhosts = p_MetricGhosts,
+      p_MetricGhosts  = p_MetricGhosts,
+      p_MetricGhostsX = p_MetricGhostsX,
+      p_MetricGhostsY = p_MetricGhostsY,
+      p_MetricGhostsZ = p_MetricGhostsZ,
       -- Fluxes stencil access
       p_XFluxGhosts = p_XFluxGhosts,
       p_YFluxGhosts = p_YFluxGhosts,

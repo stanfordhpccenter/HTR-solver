@@ -232,7 +232,6 @@ void InitializeMetricTask::gpu_base_impl(
                            getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid), size);
    }
 
-
    // Cleanup the streams
    cudaStreamDestroy(Xstream);
    cudaStreamDestroy(Ystream);

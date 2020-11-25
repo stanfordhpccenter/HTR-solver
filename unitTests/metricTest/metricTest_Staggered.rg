@@ -146,7 +146,7 @@ task main()
 
    -- Create partitions to support stencils
    var Fluid_Ghosts = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
-   var {p_MetricGhosts, p_XFluxGhosts, p_YFluxGhosts, p_ZFluxGhosts} = Fluid_Ghosts
+   var {p_MetricGhosts, p_MetricGhostsX, p_MetricGhostsY, p_MetricGhostsZ} = Fluid_Ghosts
 
    -- Enforce BCs
    GRID.InitializeGhostGeometry(Fluid, tiles, Fluid_Zones, config)
@@ -154,9 +154,9 @@ task main()
    __demand(__index_launch)
    for c in tiles do
       METRIC.InitializeMetric(p_MetricGhosts[c],
-                              p_XFluxGhosts[c],
-                              p_YFluxGhosts[c],
-                              p_ZFluxGhosts[c],
+                              p_MetricGhostsX[c],
+                              p_MetricGhostsY[c],
+                              p_MetricGhostsZ[c],
                               p_All[c],
                               Fluid_bounds,
                               xW, yW, zW);
