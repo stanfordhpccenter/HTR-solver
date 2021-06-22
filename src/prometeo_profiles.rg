@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -38,7 +38,6 @@ local C = regentlib.c
 local UTIL = require 'util-desugared'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
-local CHEM = (require 'prometeo_chem')(SCHEMA, MIX, Fluid_columns)
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -69,7 +68,7 @@ function Exports.mkInitializeProfilesField(Side)
      if (config.BC.[Side].type == SCHEMA.FlowBC_Dirichlet) then
         var Dirichlet = config.BC.[Side].u.Dirichlet
         if Dirichlet.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
-           var BC_Mixture = CHEM.ParseConfigMixture(Dirichlet.MixtureProfile.u.Constant.Mixture,  mix)
+           var BC_Mixture = MIX.ParseConfigMixture(Dirichlet.MixtureProfile.u.Constant.Mixture,  mix)
            fill(BC.MolarFracs_profile, BC_Mixture)
         end
         if Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
@@ -82,7 +81,7 @@ function Exports.mkInitializeProfilesField(Side)
      elseif (config.BC.[Side].type == SCHEMA.FlowBC_NSCBC_Inflow) then
          var NSCBC_Inflow = config.BC.[Side].u.NSCBC_Inflow
          if NSCBC_Inflow.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
-            var BC_Mixture = CHEM.ParseConfigMixture(NSCBC_Inflow.MixtureProfile.u.Constant.Mixture,  mix)
+            var BC_Mixture = MIX.ParseConfigMixture(NSCBC_Inflow.MixtureProfile.u.Constant.Mixture,  mix)
             fill(BC.MolarFracs_profile, BC_Mixture)
          end
          if NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
@@ -107,7 +106,7 @@ function Exports.mkInitializeProfilesField(Side)
      elseif (config.BC.[Side].type == SCHEMA.FlowBC_RecycleRescaling) then
          var RecycleRescaling = config.BC.[Side].u.RecycleRescaling
          if RecycleRescaling.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
-            var BC_Mixture = CHEM.ParseConfigMixture(RecycleRescaling.MixtureProfile.u.Constant.Mixture,  mix)
+            var BC_Mixture = MIX.ParseConfigMixture(RecycleRescaling.MixtureProfile.u.Constant.Mixture,  mix)
             fill(BC.MolarFracs_profile, BC_Mixture)
          end
          if RecycleRescaling.VelocityProfile.type == SCHEMA.InflowProfile_Constant then

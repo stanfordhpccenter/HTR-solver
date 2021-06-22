@@ -32,7 +32,7 @@ ifdef HDF_ROOT
   export $(DYNLINK_PATH) := $($(DYNLINK_PATH)):$(HDF_ROOT)/lib
 endif
 REGENT := $(LEGION_DIR)/language/regent.py
-REGENT_FLAGS := -fflow 0 -finner 1
+REGENT_FLAGS := -fflow 0 -finner 1 -foffline 1
 ifeq ($(DEBUG), 1)
   REGENT_FLAGS += -g -fcuda 0 -fbounds-checks 1
   CFLAGS += -g
@@ -40,7 +40,7 @@ ifeq ($(DEBUG), 1)
   LINK_FLAGS += -g
 else
 ifeq ($(USE_CUDA), 1)
-  REGENT_FLAGS += -fcuda 1 -fcuda-offline 1
+  REGENT_FLAGS += -fcuda 1
   NVCC ?= $(CUDA_HOME)/bin/nvcc
   NVCCFLAGS += -std=c++11 -O3 -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent
 else

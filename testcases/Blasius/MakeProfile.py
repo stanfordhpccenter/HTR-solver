@@ -115,7 +115,7 @@ for i in range(len(uB)):
    if (uB[i] > 0.99*U):
       delta = yB[i]
       break
-data["Integrator"]["vorticityScale"] = U/delta
+data["Integrator"]["EulerScheme"]["vorticityScale"] = U/delta
 
 u = np.interp(y, yB, uB)
 v = np.interp(y, yB, vB)

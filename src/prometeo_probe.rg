@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -112,19 +112,19 @@ end
 function Exports.DeclSymbols(s, Grid, Fluid, p_All, config)
    return rquote
 
-		-- Declare array of volumes 
+      -- Declare array of volumes
       var [s.Volumes];
 
-    	-- Write probe file headers
+      -- Write probe file headers
       __forbid(__index_launch)
-    	for probeId = 0, config.IO.probes.length do
+      for probeId = 0, config.IO.probes.length do
          IO.Probe_WriteHeader(config.Mapping, probeId)
-    	end
+      end
 
       -- Partition the Fluid region based on the specified regions
       var probe_coloring = regentlib.c.legion_domain_point_coloring_create()
 
-    	for p=0, config.IO.probes.length do
+      for p=0, config.IO.probes.length do
          -- Clip rectangles from the input
          var sample = config.IO.probes.values[p]
          sample.fromCell[0] max= 0
@@ -146,6 +146,11 @@ function Exports.DeclSymbols(s, Grid, Fluid, p_All, config)
 
       -- Make partitions of Fluid
       var Fluid_Probes = partition(aliased, Fluid, probe_coloring, ispace(int1d, max(config.IO.probes.length, 1)))
+
+      -- Ensure that probes volumes are not empty
+      for p=0, config.IO.probes.length do
+         regentlib.assert(Fluid_Probes[p].volume ~= 0, "Found a probe with empty volume")
+      end
 
       -- Split over tiles
       var [s.p_Probes] = cross_product(Fluid_Probes, p_All)
@@ -169,7 +174,7 @@ end
 function Exports.InitProbes(s, config)
    return rquote
       -- Store volume of each probe
-    	for p=0, config.IO.probes.length do
+      for p=0, config.IO.probes.length do
          s.Volumes[p] = 0.0
          var cs = s.probes_tiles[p].ispace
          __demand(__index_launch)
@@ -183,7 +188,7 @@ end
 function Exports.WriteProbes(s, Integrator_timeStep, Integrator_simTime, config)
    return rquote
       if (Integrator_timeStep % config.IO.probesSamplingInterval == 0) then
-    	   for p=0, config.IO.probes.length do
+         for p=0, config.IO.probes.length do
             var cs = s.probes_tiles[p].ispace
             var avgTemperature = 0.0
             var avgPressure = 0.0

@@ -20,31 +20,28 @@ local Stencil3  = CONST.Stencil3
 local Stencil4  = CONST.Stencil4
 local nStencils = CONST.nStencils
 
-local struct Fluid_columns {
-   -- Grid point
-   centerCoordinates : double[3];
-   cellWidth : double[3];
-      -- Node types
-   nType_x : int;
-   nType_y : int;
-   nType_z : int;
-   -- Cell-center metrics for Euler fluxes
-   dcsi_e : double;
-   deta_e : double;
-   dzet_e : double;
-   -- Cell-center metrics for diffusion fluxes
-   dcsi_d : double;
-   deta_d : double;
-   dzet_d : double;
-   -- Staggered metrics
-   dcsi_s : double;
-   deta_s : double;
-   dzet_s : double;
-}
+-------------------------------------------------------------------------------
+-- ACTIVATE ELECTRIC FIELD SOLVER
+-------------------------------------------------------------------------------
+
+local ELECTRIC_FIELD = false
+if os.getenv("ELECTRIC_FIELD") == "1" then
+   ELECTRIC_FIELD = true
+   print("#############################################################################")
+   print("WARNING: You are compiling with electric field solver.")
+   print("#############################################################################")
+end
+
+local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
+if ELECTRIC_FIELD then
+   types_inc_flags:insert("-DELECTRIC_FIELD")
+end
+local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
+local Fluid_columns = TYPES.Fluid_columns
 
 --External modules
 local MACRO = require "prometeo_macro"
-local METRIC = (require 'prometeo_metric')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
 
 -- Test parameters
 local Npx = 32

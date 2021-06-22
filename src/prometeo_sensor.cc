@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -75,18 +75,18 @@ void UpdateShockSensorTask<dir>::cpu_base_impl(
             const Point<3> pP3 = warpPeriodic<dir, Plus >(Fluid_bounds, p, size, offP3(acc_nType[p]));
 
             const double Phi = std::max(std::max(std::max(std::max(std::max(
-                                 DucrosSensor(acc_vGradX[pM2].v, acc_vGradY[pM2].v, acc_vGradZ[pM2].v, eps),
-                                 DucrosSensor(acc_vGradX[pM1].v, acc_vGradY[pM1].v, acc_vGradZ[pM1].v, eps)),
-                                 DucrosSensor(acc_vGradX[p  ].v, acc_vGradY[p  ].v, acc_vGradZ[p  ].v, eps)),
-                                 DucrosSensor(acc_vGradX[pP1].v, acc_vGradY[pP1].v, acc_vGradZ[pP1].v, eps)),
-                                 DucrosSensor(acc_vGradX[pP2].v, acc_vGradY[pP2].v, acc_vGradZ[pP2].v, eps)),
-                                 DucrosSensor(acc_vGradX[pP3].v, acc_vGradY[pP3].v, acc_vGradZ[pP3].v, eps));
+                                 DucrosSensor(acc_vGradX[pM2], acc_vGradY[pM2], acc_vGradZ[pM2], eps),
+                                 DucrosSensor(acc_vGradX[pM1], acc_vGradY[pM1], acc_vGradZ[pM1], eps)),
+                                 DucrosSensor(acc_vGradX[p  ], acc_vGradY[p  ], acc_vGradZ[p  ], eps)),
+                                 DucrosSensor(acc_vGradX[pP1], acc_vGradY[pP1], acc_vGradZ[pP1], eps)),
+                                 DucrosSensor(acc_vGradX[pP2], acc_vGradY[pP2], acc_vGradZ[pP2], eps)),
+                                 DucrosSensor(acc_vGradX[pP3], acc_vGradY[pP3], acc_vGradZ[pP3], eps));
 
             bool sensor = true;
             for (int h=0; h<nSpec; h++)
-               sensor = sensor && TENOsensor(acc_Conserved[pM2][h], acc_Conserved[pM1][h], acc_Conserved[p  ][h],
-                                             acc_Conserved[pP1][h], acc_Conserved[pP2][h], acc_Conserved[pP3][h],
-                                             acc_nType[p], Phi);
+               sensor = sensor && TENOsensor::TENOA(acc_Conserved[pM2][h], acc_Conserved[pM1][h], acc_Conserved[p  ][h],
+                                                    acc_Conserved[pP1][h], acc_Conserved[pP2][h], acc_Conserved[pP3][h],
+                                                    acc_nType[p], Phi);
             acc_shockSensor[p] = sensor;
          }
 

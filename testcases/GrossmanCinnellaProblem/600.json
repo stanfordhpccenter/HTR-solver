@@ -28,12 +28,14 @@
       "startTime" : 0.0,
       "resetTime" : false,
       "maxIter" : 900,
-      "maxTime" : 0.2,
+      "maxTime" : 58.807109394117276,
       "cfl" : -0.002,
-      "fixedDeltaTime" : 1.0e-07,
+      "fixedDeltaTime" : 2.9403554697058637e-05,
       "implicitChemistry" : true,
-      "hybridScheme" : true,
-      "vorticityScale" : 1.0e-6
+      "EulerScheme" : {
+         "type" : "Hybrid",
+         "vorticityScale" : 1.0e-6
+      }
    },
 
    "BC" : {
@@ -43,10 +45,10 @@
             "type" : "Constant",
             "velocity" : [0.0, 0.0, 0.0]
          },
-         "P" : 1.95256e5,
+         "P" : 1.95256e1,
          "TemperatureProfile" : {
             "type" : "Constant",
-            "temperature" : 9000.0
+            "temperature" : 30.0
          },
          "MixtureProfile" : {
             "type" : "Constant",
@@ -61,7 +63,7 @@
       },
       "xBCRight" : {
          "type" : "NSCBC_Outflow",
-         "P" : 1.0e4
+         "P" : 1.0
       },
       "yBCLeft" :  { "type" : "Periodic" },
       "yBCRight" : { "type" : "Periodic" },
@@ -70,7 +72,16 @@
    },
 
    "Flow" : {
-      "mixture" : { "type" : "AirMix" },
+      "mixture" : {
+         "type" : "AirMix",
+         "LRef" : 1.0,
+         "TRef" : 300.0,
+         "PRef" : 1.0e4,
+         "XiRef" : {
+            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         }
+      },
       "initCase" : { "type" : "GrossmanCinnellaProblem" },
       "resetMixture" : false,
       "initMixture" : {
@@ -95,5 +106,7 @@
       "YAverages" : [],
       "ZAverages" : [],
       "volumeProbes" : []
-   }
+   },
+
+   "Efield" : { "type" : "Off" }
 }

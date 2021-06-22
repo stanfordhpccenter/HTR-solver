@@ -72,6 +72,15 @@ if [[ "$USE_CUDA" == 1 ]]; then
     fi
 fi
 
+# Define default number of threads dedicated to the runtime
+IO_THREADS="${IO_THREADS:-1}"
+UTIL_THREADS="${UTIL_THREADS:-2}"
+# if we are running with openMP we need to reserve 1 core for serial tasks
+BGWORK_THREADS="${BGWORK_THREADS:-$(( RESERVED_CORES - IO_THREADS - UTIL_THREADS - USE_OPENMP))}"
+if (( BGWORK_THREADS < 0 )); then
+   quit "You did not reserve enough cores for the runtime"
+fi
+
 # Add debugging flags
 DEBUG_OPTS=
 if [[ "$DEBUG" == 1 ]]; then
@@ -98,14 +107,14 @@ fi
 # Add GASNET options
 GASNET_OPTS=
 if [[ "$LOCAL_RUN" == 0 ]]; then
-    GASNET_OPTS="-ll:rsize 0 -ll:ib_rsize 1024 -ll:gsize 0"
+    GASNET_OPTS="-ll:rsize 512 -ll:ib_rsize 512 -ll:gsize 0"
 fi
 # Synthesize final command
 COMMAND="$EXECUTABLE $ARGS \
   $DEBUG_OPTS $PROFILER_OPTS \
   $CPU_OPTS \
   $GPU_OPTS \
-  -ll:util 4 -ll:io 1 -ll:bgwork 5 \
+  -ll:util $UTIL_THREADS -ll:io $IO_THREADS -ll:bgwork $BGWORK_THREADS \
   -ll:cpu_bgwork 100 -ll:util_bgwork 100 \
   -ll:csize $RAM_PER_RANK \
   $GASNET_OPTS \

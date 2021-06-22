@@ -73,7 +73,7 @@ rhoU_avg = avg.velocity_favg[:,0]
 
 rhoW = avg.rho_avg[0]
 muW = avg.mu_avg[0]
-tauW = avg.tau[0,3]
+tauW = avg.tau[0,1]
 uTau = np.sqrt(tauW/rhoW)
 ReTau = rhoW*uTau*yWidth*0.5/muW
 

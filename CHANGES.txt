@@ -1,13 +1,25 @@
 This file lists the major changes as they appear in the master branch.
 
+Version 1.3.0 (February 28, 2021)
+   - normalization of the multicomponent mixture
+   - NSCBCInflow is now available for yLeft BC
+   - new switch to select numerical scheme in the input file (choices are SkewSymmetric, TENOA, and Hybrid for now)
+   - Lu and Law 30 species chemical scheme added to the solver with the name CH4_30SpMix
+   - Speelman et al. (2015) added to the testcases folder
+   - TENO-LAD (Peng et al. JCP 425 (2021)) implemented in the solver
+   - new FFT-based Poisson solver for bi-periodic problems
+   - new optional module for ion-wind effects
+   - (n,6,4) interaction theory implemented for charge-neutral species interactions
+   - FFCM-1 added as a mixture model for the solver
+   - Boivin added as a H2 mixture model for the solver
+
 Version 1.2.0 (September 30, 2020)
    - probe tools for the solver
    - initial support for legion tracing
    - new 1D average tools added as an option
    - optimization of the 2D average tools
    - unit test for the average tools
-   - new IncomingShock BC 
-   - new RecycleRescaling BC
+   - new IncomingShock BC
    - BC routines are now launched on relevant ispaces
    - new RecycleRescaling boundary conditions
    - new volume probes tools

@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -40,21 +40,18 @@ using std::min;
 template<direction dir>
 __CUDA_H__
 void UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(double * Sums,
-                          const AccessorRO<VecNEq, 3> Conserved,
-                          const AccessorRO<double, 3> rho,
-                          const AccessorRO<VecNSp, 3> MassFracs,
-                          const AccessorRO<  Vec3, 3> velocity,
-                          const AccessorRO<double, 3> pressure,
-                          const Point<3> p,
+                          const AccessorRO<VecNEq, 3> &Conserved,
+                          const AccessorRO<double, 3> &rho,
+                          const AccessorRO<VecNSp, 3> &MassFracs,
+                          const AccessorRO<  Vec3, 3> &velocity,
+                          const AccessorRO<double, 3> &pressure,
+                          const Point<3> &p,
                           const int nType,
                           const coord_t dsize,
-                          const Rect<3> bounds) {
+                          const Rect<3> &bounds) {
 
-   // TODO: implement some sort of static_if
-   int iN;
-   if      (dir == Xdir) iN = 0;
-   else if (dir == Ydir) iN = 1;
-   else if (dir == Zdir) iN = 2;
+   // Index of normal direction
+   constexpr int iN = normalIndex(dir);
 
    const double H = (Conserved[p][irE] + pressure[p])/rho[p];
 
@@ -66,8 +63,10 @@ void UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(double * Sums,
       // compute the summations
       const double rhom = rho[p] + rho[pp];
       const double vm = -(velocity[p][iN] + velocity[pp][iN]);
+      __UNROLL__
       for (int i=0; i<nSpec; i++)
          Sums[off_l+i] = rhom*vm*(MassFracs[p][i] +  MassFracs[pp][i]);
+      __UNROLL__
       for (int i=0; i<3; i++)
          Sums[off_l+irU+i] = rhom*vm*(velocity[p][i] + velocity[pp][i]);
       Sums[off_l+irE] = rhom*vm*(H + (Conserved[pp][irE] + pressure[pp])/rho[pp]);
@@ -77,24 +76,22 @@ void UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(double * Sums,
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(double *Flux,
+void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(VecNEq &Flux,
                           const double *Sums,
-                          const AccessorRO<VecNEq, 3> Conserved,
-                          const AccessorRO<  Vec3, 3> velocity,
-                          const AccessorRO<double, 3> pressure,
-                          const Point<3> p,
+                          const AccessorRO<VecNEq, 3> &Conserved,
+                          const AccessorRO<  Vec3, 3> &velocity,
+                          const AccessorRO<double, 3> &pressure,
+                          const Point<3> &p,
                           const int nType,
                           const coord_t dsize,
-                          const Rect<3> bounds) {
+                          const Rect<3> &bounds) {
 
-   // TODO: implement some sort of static_if
-   int iN;
-   if      (dir == Xdir) iN = 0;
-   else if (dir == Ydir) iN = 1;
-   else if (dir == Zdir) iN = 2;
+   // Index of normal direction
+   constexpr int iN = normalIndex(dir);
 
    if (nType == L_S_node) {
       // This is a staggered node
+      __UNROLL__
       for (int i=0; i<nEq; i++)
          Flux[i] = -(Conserved[p][i]*velocity[p][iN]);
       Flux[irU+iN] -= pressure[p];
@@ -104,6 +101,7 @@ void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(double *Flux,
    else if (nType == Rm1_S_node) {
       // This is a staggered node
       const Point<3> pp = warpPeriodic<dir, Plus >(bounds, p, dsize, offP1(nType));
+      __UNROLL__
       for (int i=0; i<nEq; i++)
          Flux[i] = -(Conserved[pp][i]*velocity[pp][iN]);
       Flux[irU+iN] -= pressure[pp];
@@ -114,15 +112,19 @@ void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(double *Flux,
       double   f[nEq+1];
       double acc[nEq+1];
       const double * Coeff = KennedyCoeff[nType];
+      __UNROLL__
       for (int i=0; i<nEq+1; i++) f[i] = 0.0;
       for (int l=0; l<KennedyOrder[nType]; l++) {
-         const int off_l = l*(nEq+1);
+         __UNROLL__
          for (int i = 0; i < nEq+1; i++) acc[i] = 0.0;
          for (int m = 0; m < l+1; m++) {
-            const int off_m = m*3*(nEq+1);
+            // Sums sums is a vector of 6(nEq+1) elements rappresenting
+            // a 3*3 triangular matrix whose indices are l and m
+            const int off = (nEq+1)*((5-m)*m/2 + l);
             for (int i = 0; i < nEq+1; i++)
-               acc[i] += Sums[off_m + off_l + i];
+               acc[i] += Sums[off + i];
          }
+         __UNROLL__
          for (int i=0; i<nEq+1; i++) f[i] += Coeff[l]*acc[i];
       }
 
@@ -134,22 +136,19 @@ void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(double *Flux,
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(double * Flux,
-                          const AccessorRO<VecNEq, 3> Conserved,
-                          const AccessorRO<double, 3> rho,
-                          const AccessorRO<VecNSp, 3> MassFracs,
-                          const AccessorRO<  Vec3, 3> velocity,
-                          const AccessorRO<double, 3> pressure,
-                          const Point<3> p,
+void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(VecNEq &Flux,
+                          const AccessorRO<VecNEq, 3> &Conserved,
+                          const AccessorRO<double, 3> &rho,
+                          const AccessorRO<VecNSp, 3> &MassFracs,
+                          const AccessorRO<  Vec3, 3> &velocity,
+                          const AccessorRO<double, 3> &pressure,
+                          const Point<3> &p,
                           const int nType,
                           const coord_t dsize,
-                          const Rect<3> bounds) {
+                          const Rect<3> &bounds) {
 
-   // TODO: implement some sort of static_if
-   int iN;
-   if      (dir == Xdir) iN = 0;
-   else if (dir == Ydir) iN = 1;
-   else if (dir == Zdir) iN = 2;
+   // Index of normal direction
+   constexpr int iN = normalIndex(dir);
 
    // Compute points of the stencil
    const Point<3> pM2 = warpPeriodic<dir, Minus>(bounds, p, dsize, offM2(nType));
@@ -198,26 +197,27 @@ void UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(double * Flux,
 
 template<direction dir>
 __CUDA_H__
-const typename UpdateUsingEulerFluxUtils<dir>::RoeAveragesStruct UpdateUsingEulerFluxUtils<dir>::ComputeRoeAverages(
-                           const Mix &mix,
-                           const double *ConservedL, const double *ConservedR,
-                           const double        *YiL, const double        *YiR,
+void UpdateUsingEulerFluxUtils<dir>::ComputeRoeAverages(
+                           RoeAveragesStruct  &avgs, const Mix &mix,
+                           const VecNEq &ConservedL, const VecNEq &ConservedR,
+                           const VecNSp        &YiL, const VecNSp        &YiR,
                            const double          TL, const double          TR,
                            const double   pressureL, const double   pressureR,
-                           const double  *velocityL, const double  *velocityR,
+                           const   Vec3  &velocityL, const   Vec3  &velocityR,
                            const double        rhoL, const double        rhoR) {
+
    // Compute quantities on the left (L) and right (R) states
-   const double MixWL = GetMolarWeightFromYi(YiL, mix);
-   const double MixWR = GetMolarWeightFromYi(YiR, mix);
+   const double MixWL = mix.GetMolarWeightFromYi(YiL);
+   const double MixWR = mix.GetMolarWeightFromYi(YiR);
 
-   const double gammaL = GetGamma(TL, MixWL, YiL, mix);
-   const double gammaR = GetGamma(TR, MixWR, YiR, mix);
+   const double gammaL = mix.GetGamma(TL, MixWL, YiL);
+   const double gammaR = mix.GetGamma(TR, MixWR, YiR);
 
-   /*const*/ double dpdrhoiL[nSpec]; Getdpdrhoi(dpdrhoiL, gammaL, TL, YiL, mix);
-   /*const*/ double dpdrhoiR[nSpec]; Getdpdrhoi(dpdrhoiR, gammaR, TR, YiR, mix);
+   /*const*/ VecNSp dpdrhoiL; mix.Getdpdrhoi(dpdrhoiL, gammaL, TL, YiL);
+   /*const*/ VecNSp dpdrhoiR; mix.Getdpdrhoi(dpdrhoiR, gammaR, TR, YiR);
 
-   const double dpdeL = Getdpde(rhoL, gammaL, mix);
-   const double dpdeR = Getdpde(rhoR, gammaR, mix);
+   const double dpdeL = mix.Getdpde(rhoL, gammaL);
+   const double dpdeR = mix.Getdpde(rhoR, gammaR);
 
    const double TotalEnergyL = ConservedL[irE]/rhoL;
    const double TotalEnergyR = ConservedR[irE]/rhoR;
@@ -226,8 +226,6 @@ const typename UpdateUsingEulerFluxUtils<dir>::RoeAveragesStruct UpdateUsingEule
    const double TotalEnthalpyR = TotalEnergyR + pressureR/rhoR;
 
    // Compute Roe averaged state
-   RoeAveragesStruct avgs;
-
    const double RoeFactorL = sqrt(rhoL)/(sqrt(rhoL) + sqrt(rhoR));
    const double RoeFactorR = sqrt(rhoR)/(sqrt(rhoL) + sqrt(rhoR));
 
@@ -253,9 +251,9 @@ const typename UpdateUsingEulerFluxUtils<dir>::RoeAveragesStruct UpdateUsingEule
    // correct the pressure derivatives in order to satisfy the pressure jump condition
    // using the procedure in Shuen, Liou and Leer (1990)
    const double dp = pressureR - pressureL;
-   const double de = TotalEnergyR - 0.5*dot(velocityR, velocityR)
-                   -(TotalEnergyL - 0.5*dot(velocityL, velocityL));
-   double drhoi[nSpec];
+   const double de = TotalEnergyR - 0.5*velocityR.mod2()
+                   -(TotalEnergyL - 0.5*velocityL.mod2());
+   VecNSp drhoi;
    __UNROLL__
    for (int i=0; i<nSpec; i++)
       drhoi[i] = ConservedR[i] - ConservedL[i];
@@ -287,191 +285,321 @@ const typename UpdateUsingEulerFluxUtils<dir>::RoeAveragesStruct UpdateUsingEule
    for (int i=0; i<nSpec; i++)
       avgs.a2 += avgs.Yi[i]*avgs.dpdrhoi[i];
    avgs.a = sqrt(avgs.a2);
-
-   return avgs;
 }
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingEulerFluxUtils<dir>::computeLeftEigenvectors(double *L, const RoeAveragesStruct &avgs) {
+inline void UpdateUsingEulerFluxUtils<dir>::computeLeftEigenvectors(MyMatrix<double, nEq, nEq> &L, const RoeAveragesStruct &avgs) {
 
-   // TODO: implement some sort of static_if
-   int iN; int iT1; int iT2;
-   if      (dir == Xdir) { iN = 0; iT1 = 1; iT2 = 2; }
-   else if (dir == Ydir) { iN = 1; iT1 = 0; iT2 = 2; }
-   else if (dir == Zdir) { iN = 2; iT1 = 0; iT2 = 1; }
+   constexpr int iN = normalIndex(dir);
+   constexpr int iT1 = tangential1Index(dir);
+   constexpr int iT2 = tangential2Index(dir);
 
    // initialize L
-   __UNROLL__
-   for (int i = 0; i<nEq*nEq; i++) L[i] = 0.0;
+   L.init(0);
 
    // Compute constants
    const double iaRoe  = 1.0/avgs.a;
    const double iaRoe2 = 1.0/avgs.a2;
-   const double Coeff = (avgs.E - dot(avgs.velocity, avgs.velocity))*avgs.dpde/avgs.rho;
+   const double Coeff = (avgs.E - avgs.velocity.mod2())*avgs.dpde/avgs.rho;
    double b[nSpec];
    __UNROLL__
    for (int i=0; i<nSpec; i++)
       b[i] = (Coeff - avgs.dpdrhoi[i])*iaRoe2;
    const double d = avgs.dpde/(avgs.rho*avgs.a2);
-   const double c[] = {avgs.velocity[0]*d,
-                       avgs.velocity[1]*d,
-                       avgs.velocity[2]*d};
+   const Vec3 c(avgs.velocity*d);
 
    // First row
    {
       __UNROLL__
       for (int j=0; j<nSpec; j++)
-         // 0*nEq + j
-         L[j] = -0.5*(b[j] - avgs.velocity[iN]*iaRoe);
+         L(0, j) = -0.5*(b[j] - avgs.velocity[iN]*iaRoe);
       __UNROLL__
       for (int j=0; j<3; j++)
-         L[    nSpec+j] = -0.5*c[j];
-      L[    nSpec+iN] -= 0.5*iaRoe;
-      L[    nSpec+3 ] = 0.5*d;
+         L(0, nSpec+j ) = -0.5*c[j];
+      L(0,    nSpec+iN) -= 0.5*iaRoe;
+      L(0,    nSpec+3 ) = 0.5*d;
    }
 
    // From 1 to nSpec
    __UNROLL__
    for (int i=1; i<nSpec+1; i++) {
-      const int row = i*nEq;
       __UNROLL__
       for (int j=0; j<nSpec; j++)
-         L[row+j] = avgs.Yi[i-1]*b[j];
-      L[row+i-1] += 1.0;
+         L(i, j) = avgs.Yi[i-1]*b[j];
+      L(i, i-1) += 1.0;
       __UNROLL__
       for (int j=0; j<3; j++)
-         L[row+nSpec+j] = avgs.Yi[i-1]*c[j];
-      L[row+nSpec+3] = -avgs.Yi[i-1]*d;
+         L(i, nSpec+j) = avgs.Yi[i-1]*c[j];
+      L(i, nSpec+3) = -avgs.Yi[i-1]*d;
    }
 
    // nSpec + 1
    {
-      const int row = (nSpec+1)*nEq;
+      const int row = (nSpec+1);
       __UNROLL__
       for (int j=0; j<nSpec; j++)
-         L[row+j] = - avgs.velocity[iT1];
-      // L[row+nSpec+iN] = 0.0;
-      L[row+nSpec+iT1] = 1.0;
-      //L[row+nSpec+iT2] = 0.0;
-      //L[row+nSpec+  3] = 0.0;
+         L(row, j) = - avgs.velocity[iT1];
+      // L(row, nSpec+iN) = 0.0;
+      L(row, nSpec+iT1) = 1.0;
+      //L(row, nSpec+iT2) = 0.0;
+      //L(row, nSpec+  3) = 0.0;
    }
 
    // nSpec + 2
    {
-      const int row = (nSpec+2)*nEq;
+      const int row = (nSpec+2);
       __UNROLL__
       for (int j=0; j<nSpec; j++)
-         L[row+j] = - avgs.velocity[iT2];
-      //L[row+nSpec+iN] = 0.0;
-      //L[row+nSpec+iT1] = 0.0;
-      L[row+nSpec+iT2] = 1.0;
-      //L[row+nSpec+  3] = 0.0;
+         L(row, j) = - avgs.velocity[iT2];
+      //L(row, nSpec+iN ) = 0.0;
+      //L(row, nSpec+iT1) = 0.0;
+      L(row, nSpec+iT2) = 1.0;
+      //L(row, nSpec+  3) = 0.0;
    }
 
    // nSpec+3
    {
-      const int row = (nSpec+3)*nEq;
+      const int row = (nSpec+3);
       __UNROLL__
       for (int j=0; j<nSpec; j++)
          // (nEq-1)*nEq + j
-         L[row+j] = -0.5*(b[j] + avgs.velocity[iN]*iaRoe);
+         L(row, j) = -0.5*(b[j] + avgs.velocity[iN]*iaRoe);
       __UNROLL__
       for (int j=0; j<3; j++)
-         L[row+nSpec+j] = -0.5*c[j];
-      L[row+nSpec+iN] += 0.5*iaRoe;
-      L[row+nSpec+3 ] = 0.5*d;
+         L(row, nSpec+j) = -0.5*c[j];
+      L(row, nSpec+iN) += 0.5*iaRoe;
+      L(row, nSpec+3 ) = 0.5*d;
    }
 }
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingEulerFluxUtils<dir>::computeRightEigenvectors(double *K, const RoeAveragesStruct &avgs) {
+inline void UpdateUsingEulerFluxUtils<dir>::computeRightEigenvectors(MyMatrix<double, nEq, nEq> &K, const RoeAveragesStruct &avgs) {
 
-   // TODO: implement some sort of static_if
-   int iN; int iT1; int iT2;
-   if      (dir == Xdir) { iN = 0; iT1 = 1; iT2 = 2; }
-   else if (dir == Ydir) { iN = 1; iT1 = 0; iT2 = 2; }
-   else if (dir == Zdir) { iN = 2; iT1 = 0; iT2 = 1; }
+   constexpr int iN = normalIndex(dir);
+   constexpr int iT1 = tangential1Index(dir);
+   constexpr int iT2 = tangential2Index(dir);
 
    // initialize K
-   __UNROLL__
-   for (int i = 0; i<nEq*nEq; i++) K[i] = 0.0;
+   K.init(0);
 
    // fill K
    __UNROLL__
    for (int i = 0; i<nSpec; i++) {
-      const int row = i*nEq;
-      K[row +       0] = avgs.Yi[i];
-      K[row +     i+1] = 1.0;
-      K[row + nSpec+3] = avgs.Yi[i];
+      K(i,       0) = avgs.Yi[i];
+      K(i,     i+1) = 1.0;
+      K(i, nSpec+3) = avgs.Yi[i];
    }
 
    {
-      const int row = (nSpec+iN)*nEq;
-      K[row +       0] = avgs.velocity[iN] - avgs.a;
+      const int row = (nSpec+iN);
+      K(row,       0) = avgs.velocity[iN] - avgs.a;
       __UNROLL__
       for (int i = 0; i<nSpec; i++)
-         K[row +  i+1] = avgs.velocity[iN];
-      //K[row + nSpec+1] = 0.0;
-      //K[row + nSpec+2] = 0.0;
-      K[row + nSpec+3] = avgs.velocity[iN] + avgs.a;
+         K(row,  i+1) = avgs.velocity[iN];
+      //K(row, nSpec+1) = 0.0;
+      //K(row, nSpec+2) = 0.0;
+      K(row, nSpec+3) = avgs.velocity[iN] + avgs.a;
    }
 
    {
-      const int row = (nSpec+iT1)*nEq;
-      K[row +       0] = avgs.velocity[iT1];
+      const int row = (nSpec+iT1);
+      K(row,       0) = avgs.velocity[iT1];
       __UNROLL__
       for (int i = 0; i<nSpec; i++)
-         K[row +  i+1] = avgs.velocity[iT1];
-      K[row + nSpec+1] = 1.0;
-      //K[row + nSpec+2] = 0.0;
-      K[row + nSpec+3] = avgs.velocity[iT1];
+         K(row,  i+1) = avgs.velocity[iT1];
+      K(row, nSpec+1) = 1.0;
+      //K(row, nSpec+2) = 0.0;
+      K(row, nSpec+3) = avgs.velocity[iT1];
    }
 
    {
-      const int row = (nSpec+iT2)*nEq;
-      K[row +       0] = avgs.velocity[iT2];
+      const int row = (nSpec+iT2);
+      K(row,       0) = avgs.velocity[iT2];
       __UNROLL__
       for (int i = 0; i<nSpec; i++)
-         K[row +  i+1] = avgs.velocity[iT2];
-      //K[row + nSpec+1] = 0.0;
-      K[row + nSpec+2] = 1.0;
-      K[row + nSpec+3] = avgs.velocity[iT2];
+         K(row,  i+1) = avgs.velocity[iT2];
+      //K(row, nSpec+1) = 0.0;
+      K(row, nSpec+2) = 1.0;
+      K(row, nSpec+3) = avgs.velocity[iT2];
    }
 
    {
-      const int row = (nSpec+3)*nEq;
-      K[row +       0] = avgs.H - avgs.velocity[iN]*avgs.a;
+      const int row = (nSpec+3);
+      K(row,       0) = avgs.H - avgs.velocity[iN]*avgs.a;
       const double dedp = 1.0/avgs.dpde;
       __UNROLL__
       for (int i = 0; i<nSpec; i++)
-         K[row +  i+1] = avgs.E - avgs.rho*avgs.dpdrhoi[i]*dedp;
-      K[row + nSpec+1] = avgs.velocity[iT1];
-      K[row + nSpec+2] = avgs.velocity[iT2];
-      K[row + nSpec+3] = avgs.H + avgs.velocity[iN]*avgs.a;
+         K(row,  i+1) = avgs.E - avgs.rho*avgs.dpdrhoi[i]*dedp;
+      K(row, nSpec+1) = avgs.velocity[iT1];
+      K(row, nSpec+2) = avgs.velocity[iT2];
+      K(row, nSpec+3) = avgs.H + avgs.velocity[iN]*avgs.a;
+   }
+}
+
+// Projects the state vector q in the characteristic space from the physiscal space
+template<direction dir>
+__CUDA_H__
+inline void UpdateUsingEulerFluxUtils<dir>::projectToCharacteristicSpace(VecNEq &r, const VecNEq &q, const RoeAveragesStruct &avgs) {
+
+   constexpr int iN = normalIndex(dir);
+   constexpr int iT1 = tangential1Index(dir);
+   constexpr int iT2 = tangential2Index(dir);
+
+   // Initialize r
+   r.init(0);
+
+   // Compute constants
+   const double iaRoe  = 1.0/avgs.a;
+   const double iaRoe2 = 1.0/avgs.a2;
+   const double Coeff = (avgs.E - avgs.velocity.mod2())*avgs.dpde/avgs.rho;
+   VecNSp b;
+   __UNROLL__
+   for (int i=0; i<nSpec; i++)
+      b[i] = (Coeff - avgs.dpdrhoi[i])*iaRoe2;
+   const double d = avgs.dpde/(avgs.rho*avgs.a2);
+   const Vec3 c(avgs.velocity*d);
+
+   // First row
+   {
+      __UNROLL__
+      for (int j=0; j<nSpec; j++)
+         r[0] -= 0.5*(b[j] - avgs.velocity[iN]*iaRoe)*q[j];
+      r[0] -= (0.5*c[iN] + 0.5*iaRoe)*q[nSpec+iN];
+      r[0] -= 0.5*c[iT1]*q[nSpec+iT1];
+      r[0] -= 0.5*c[iT2]*q[nSpec+iT2];
+      r[0] += 0.5*d*q[nSpec+3];
+   }
+
+   // From 1 to nSpec
+   __UNROLL__
+   for (int i=1; i<nSpec+1; i++) {
+      __UNROLL__
+      for (int j=0; j<nSpec; j++)
+         r[i] += avgs.Yi[i-1]*b[j]*q[j];
+      r[i] += q[i-1];
+      __UNROLL__
+      for (int j=0; j<3; j++)
+         r[i] += avgs.Yi[i-1]*c[j]*q[nSpec+j];
+      r[i] += -avgs.Yi[i-1]*d*q[nSpec+3];
+   }
+
+   // nSpec + 1
+   {
+      __UNROLL__
+      for (int j=0; j<nSpec; j++)
+         r[nSpec + 1] -= avgs.velocity[iT1]*q[j];
+      //r[nSpec+1] += 0.0*q[nSpec+iN];
+      r[nSpec+1] += q[nSpec+iT1];
+      //r[nSpec+1] += 0.0*q[nSpec+iT2];
+      //r[nSpec+1] += 0.0*q[nSpec+3  ];
+   }
+
+   // nSpec + 2
+   {
+      __UNROLL__
+      for (int j=0; j<nSpec; j++)
+         r[nSpec + 2] -= avgs.velocity[iT2]*q[j];
+      //r[nSpec+2] += 0.0*q[nSpec+iN ];
+      //r[nSpec+2] += 0.0*q[nSpec+iT1];
+      r[nSpec+2] += q[nSpec+iT2];
+      //r[nSpec+2] += 0.0*q[nSpec+3  ];
+   }
+
+   // nSpec + 3
+   {
+      __UNROLL__
+      for (int j=0; j<nSpec; j++)
+         r[nSpec+3] -= 0.5*(b[j] + avgs.velocity[iN]*iaRoe)*q[j];
+      r[nSpec+3] -= (0.5*c[iN] - 0.5*iaRoe)*q[nSpec+iN];
+      r[nSpec+3] -= 0.5*c[iT1]*q[nSpec+iT1];
+      r[nSpec+3] -= 0.5*c[iT2]*q[nSpec+iT2];
+      r[nSpec+3] += 0.5*d*q[nSpec+3  ];
+   }
+}
+
+// Projects the state vector q from the characteristic space to the physiscal space
+template<direction dir>
+__CUDA_H__
+inline void UpdateUsingEulerFluxUtils<dir>::projectFromCharacteristicSpace(VecNEq &r, const VecNEq &q, const RoeAveragesStruct &avgs) {
+
+   constexpr int iN = normalIndex(dir);
+   constexpr int iT1 = tangential1Index(dir);
+   constexpr int iT2 = tangential2Index(dir);
+
+   // initialize r
+   r.init(0);
+
+   // First nSpec rows
+   __UNROLL__
+   for (int i = 0; i<nSpec; i++) {
+      r[i] += avgs.Yi[i]*q[0];
+      r[i] += q[i+1];
+      r[i] += avgs.Yi[i]*q[nSpec+3];
+   }
+
+   // nSpec+iN row
+   {
+      r[nSpec+iN] += (avgs.velocity[iN] - avgs.a)*q[0];
+      __UNROLL__
+      for (int i = 0; i<nSpec; i++)
+         r[nSpec+iN] += avgs.velocity[iN]*q[i+1];
+      //r[nSpec+iN] += 0.0*q[nSpec+1];
+      //r[nSpec+iN] += 0.0*q[nSpec+2];
+      r[nSpec+iN] += (avgs.velocity[iN] + avgs.a)*q[nSpec+3];
+   }
+
+   // nSpec+iT1 row
+   {
+      r[nSpec+iT1] += avgs.velocity[iT1]*q[0];
+      __UNROLL__
+      for (int i = 0; i<nSpec; i++)
+         r[nSpec+iT1] += avgs.velocity[iT1]*q[i+1];
+      r[nSpec+iT1] += q[nSpec+1];
+      //r[nSpec+iT1] += 0.0*q[nSpec+2];
+      r[nSpec+iT1] += avgs.velocity[iT1]*q[nSpec+3];
+   }
+
+   // nSpec+iT2 row
+   {
+      r[nSpec+iT2] += avgs.velocity[iT2]*q[0];
+      __UNROLL__
+      for (int i = 0; i<nSpec; i++)
+         r[nSpec+iT2] += avgs.velocity[iT2]*q[i+1];
+      //r[nSpec+iT2] += 0.0*q[nSpec+1];
+      r[nSpec+iT2] += q[nSpec+2];
+      r[nSpec+iT2] += avgs.velocity[iT2]*q[nSpec+3];
+   }
+
+   // nSpec+3 row
+   {
+      r[nSpec+3] += (avgs.H - avgs.velocity[iN]*avgs.a)*q[0];
+      const double dedp = 1.0/avgs.dpde;
+      __UNROLL__
+      for (int i = 0; i<nSpec; i++)
+         r[nSpec+3] += (avgs.E - avgs.rho*avgs.dpdrhoi[i]*dedp)*q[i+1];
+      r[nSpec+3] += avgs.velocity[iT1]*q[nSpec+1];
+      r[nSpec+3] += avgs.velocity[iT2]*q[nSpec+2];
+      r[nSpec+3] += (avgs.H + avgs.velocity[iN]*avgs.a)*q[nSpec+3];
    }
 }
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingEulerFluxUtils<dir>::getPlusMinusFlux(double *FluxP, double *FluxM,
-                      const double *L,
-                      const double *Conserved,
+void UpdateUsingEulerFluxUtils<dir>::getPlusMinusFlux(VecNEq &FluxP, VecNEq &FluxM,
+                      const RoeAveragesStruct &avgs,
+                      const VecNEq &Conserved,
                       const double velocity,
                       const double pressure,
                       const double Lam1,
                       const double Lam,
                       const double LamN) {
 
-   // TODO: implement some sort of static_if
-   int iN;
-   if      (dir == Xdir) iN = 0;
-   else if (dir == Ydir) iN = 1;
-   else if (dir == Zdir) iN = 2;
+   constexpr int iN = normalIndex(dir);
 
    // Compute the Euler fluxes
-   double Flux[nEq];
+   VecNEq Flux;
    __UNROLL__
    for (int i=0; i<nEq; i++)
       Flux[i] = Conserved[i]*velocity;
@@ -479,8 +607,8 @@ void UpdateUsingEulerFluxUtils<dir>::getPlusMinusFlux(double *FluxP, double *Flu
    Flux[irE   ] += pressure*velocity;
 
    // Project in the characteristic space
-   double Q[nEq]; MatMul<nEq>(L, Conserved, Q);
-   double F[nEq]; MatMul<nEq>(L,      Flux, F);
+   VecNEq Q; projectToCharacteristicSpace(Q, Conserved, avgs);
+   VecNEq F; projectToCharacteristicSpace(F,      Flux, avgs);
 
    // Plus fluxes
    FluxP[    0] = F[    0] + Lam1*Q[    0];
@@ -496,26 +624,23 @@ void UpdateUsingEulerFluxUtils<dir>::getPlusMinusFlux(double *FluxP, double *Flu
 }
 
 template<direction dir>
+template<class Op>
 __CUDA_H__
-void UpdateUsingEulerFluxUtils<dir>::TENOFluxReconstruction(double *Flux,
-                            const AccessorRO<VecNEq, 3> Conserved,
-                            const AccessorRO<double, 3> SoS,
-                            const AccessorRO<double, 3> rho,
-                            const AccessorRO<  Vec3, 3> velocity,
-                            const AccessorRO<double, 3> pressure,
-                            const AccessorRO<VecNSp, 3> MassFracs,
-                            const AccessorRO<double, 3> temperature,
-                            const Point<3> p,
+void UpdateUsingEulerFluxUtils<dir>::FluxReconstruction(VecNEq &Flux,
+                            const AccessorRO<VecNEq, 3> &Conserved,
+                            const AccessorRO<double, 3> &SoS,
+                            const AccessorRO<double, 3> &rho,
+                            const AccessorRO<  Vec3, 3> &velocity,
+                            const AccessorRO<double, 3> &pressure,
+                            const AccessorRO<VecNSp, 3> &MassFracs,
+                            const AccessorRO<double, 3> &temperature,
+                            const Point<3> &p,
                             const int nType,
                             const Mix &mix,
                             const coord_t dsize,
-                            const Rect<3> bounds) {
+                            const Rect<3> &bounds) {
 
-   // TODO: implement some sort of static_if
-   int iN;
-   if      (dir == Xdir) iN = 0;
-   else if (dir == Ydir) iN = 1;
-   else if (dir == Zdir) iN = 2;
+   constexpr int iN = normalIndex(dir);
 
    // Compute points of the stencil
    const Point<3> pM2 = warpPeriodic<dir, Minus>(bounds, p, dsize, offM2(nType));
@@ -550,147 +675,338 @@ void UpdateUsingEulerFluxUtils<dir>::TENOFluxReconstruction(double *Flux,
                                            fabs(velocity[pP3][iN] + SoS[pP3]));
 
    // Compute the RoeAverages
-   const RoeAveragesStruct RoeAvgs = ComputeRoeAverages(mix,
-                           Conserved[p].v,   Conserved[pP1].v,
-                           MassFracs[p].v,   MassFracs[pP1].v,
-                         temperature[p]  , temperature[pP1],
-                            pressure[p]  ,    pressure[pP1],
-                            velocity[p].v,    velocity[pP1].v,
-                                 rho[p]  ,         rho[pP1]);
-
-   // Compute left eigenvector matrix
-   double K[nEq*nEq]; computeLeftEigenvectors(K, RoeAvgs);
+   RoeAveragesStruct RoeAvgs;
+   ComputeRoeAverages(RoeAvgs,              mix,
+                 Conserved[p],   Conserved[pP1],
+                 MassFracs[p],   MassFracs[pP1],
+               temperature[p], temperature[pP1],
+                  pressure[p],    pressure[pP1],
+                  velocity[p],    velocity[pP1],
+                       rho[p],         rho[pP1]);
 
    // Compute +/- fluxes
-   double FluxPM2[nEq]; double FluxMM2[nEq]; getPlusMinusFlux(FluxPM2, FluxMM2, K, Conserved[pM2].v, velocity[pM2][iN], pressure[pM2], Lam1, Lam, LamN);
-   double FluxPM1[nEq]; double FluxMM1[nEq]; getPlusMinusFlux(FluxPM1, FluxMM1, K, Conserved[pM1].v, velocity[pM1][iN], pressure[pM1], Lam1, Lam, LamN);
-   double FluxP  [nEq]; double FluxM  [nEq]; getPlusMinusFlux(FluxP  , FluxM  , K, Conserved[p  ].v, velocity[p  ][iN], pressure[p  ], Lam1, Lam, LamN);
-   double FluxPP1[nEq]; double FluxMP1[nEq]; getPlusMinusFlux(FluxPP1, FluxMP1, K, Conserved[pP1].v, velocity[pP1][iN], pressure[pP1], Lam1, Lam, LamN);
-   double FluxPP2[nEq]; double FluxMP2[nEq]; getPlusMinusFlux(FluxPP2, FluxMP2, K, Conserved[pP2].v, velocity[pP2][iN], pressure[pP2], Lam1, Lam, LamN);
-   double FluxPP3[nEq]; double FluxMP3[nEq]; getPlusMinusFlux(FluxPP3, FluxMP3, K, Conserved[pP3].v, velocity[pP3][iN], pressure[pP3], Lam1, Lam, LamN);
+   VecNEq FluxPM2; VecNEq FluxMM2; getPlusMinusFlux(FluxPM2, FluxMM2, RoeAvgs, Conserved[pM2], velocity[pM2][iN], pressure[pM2], Lam1, Lam, LamN);
+   VecNEq FluxPM1; VecNEq FluxMM1; getPlusMinusFlux(FluxPM1, FluxMM1, RoeAvgs, Conserved[pM1], velocity[pM1][iN], pressure[pM1], Lam1, Lam, LamN);
+   VecNEq FluxP  ; VecNEq FluxM  ; getPlusMinusFlux(FluxP  , FluxM  , RoeAvgs, Conserved[p  ], velocity[p  ][iN], pressure[p  ], Lam1, Lam, LamN);
+   VecNEq FluxPP1; VecNEq FluxMP1; getPlusMinusFlux(FluxPP1, FluxMP1, RoeAvgs, Conserved[pP1], velocity[pP1][iN], pressure[pP1], Lam1, Lam, LamN);
+   VecNEq FluxPP2; VecNEq FluxMP2; getPlusMinusFlux(FluxPP2, FluxMP2, RoeAvgs, Conserved[pP2], velocity[pP2][iN], pressure[pP2], Lam1, Lam, LamN);
+   VecNEq FluxPP3; VecNEq FluxMP3; getPlusMinusFlux(FluxPP3, FluxMP3, RoeAvgs, Conserved[pP3], velocity[pP3][iN], pressure[pP3], Lam1, Lam, LamN);
 
    // Reconstruct Fluxes
-   double FPlus[nEq];
-   __UNROLL__
+   VecNEq FPlus;
    for (int i=0; i<nEq; i++)
-      FPlus[i] = TENOreconstructionPlus(FluxPM2[i], FluxPM1[i], FluxP  [i],
-                                        FluxPP1[i], FluxPP2[i], FluxPP3[i], nType);
+      FPlus[i] = Op::reconstructPlus(FluxPM2[i], FluxPM1[i], FluxP  [i],
+                                   FluxPP1[i], FluxPP2[i], FluxPP3[i], nType);
 
-   double FMinus[nEq];
-   __UNROLL__
+   VecNEq FMinus;
    for (int i=0; i<nEq; i++)
-      FMinus[i] = TENOreconstructionMinus(FluxMM2[i], FluxMM1[i], FluxM  [i],
-                                          FluxMP1[i], FluxMP2[i], FluxMP3[i], nType);
+      FMinus[i] = Op::reconstructMinus(FluxMM2[i], FluxMM1[i], FluxM  [i],
+                                     FluxMP1[i], FluxMP2[i], FluxMP3[i], nType);
 
-   double F[nEq];
+   VecNEq F;
    __UNROLL__
    for (int i=0; i<nEq; i++)
       F[i] = -0.5*(FPlus[i] + FMinus[i]);
 
-   // Compute right eigenvector matrix
-   computeRightEigenvectors(K, RoeAvgs);
-
    // Go back to the physical space
-   MatMul<nEq>(K, F, Flux);
+   projectFromCharacteristicSpace(Flux, F, RoeAvgs);
 }
+
+//-----------------------------------------------------------------------------
+// INLINE FUNCTIONS FOR UpdateUsingHybridEulerFluxTask
+//-----------------------------------------------------------------------------
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingEulerFluxUtils<dir>::TENOAFluxReconstruction(double *Flux,
-                            const AccessorRO<VecNEq, 3> Conserved,
-                            const AccessorRO<double, 3> SoS,
-                            const AccessorRO<double, 3> rho,
-                            const AccessorRO<  Vec3, 3> velocity,
-                            const AccessorRO<double, 3> pressure,
-                            const AccessorRO<VecNSp, 3> MassFracs,
-                            const AccessorRO<double, 3> temperature,
-                            const Point<3> p,
-                            const int nType,
-                            const Mix &mix,
-                            const coord_t dsize,
-                            const Rect<3> bounds) {
+void UpdateUsingHybridEulerFluxTask<dir>::updateRHSSpan(
+                           double *KGSum,
+                           const AccessorRW<VecNEq, 3> &Conserved_t,
+                           const AccessorRO<double, 3> &m_e,
+                           const AccessorRO<   int, 3> &nType,
+                           const AccessorRO<  bool, 3> &shockSensor,
+                           const AccessorRO<VecNEq, 3> &Conserved,
+                           const AccessorRO<double, 3> &rho,
+                           const AccessorRO<double, 3> &SoS,
+                           const AccessorRO<VecNSp, 3> &MassFracs,
+                           const AccessorRO<  Vec3, 3> &velocity,
+                           const AccessorRO<double, 3> &pressure,
+                           const AccessorRO<double, 3> &temperature,
+                           const coord_t firstIndex,
+                           const coord_t lastIndex,
+                           const int x,
+                           const int y,
+                           const int z,
+                           const Rect<3> &Flux_bounds,
+                           const Rect<3> &Fluid_bounds,
+                           const Mix &mix) {
 
-   // TODO: implement some sort of static_if
-   int iN;
-   if      (dir == Xdir) iN = 0;
-   else if (dir == Ydir) iN = 1;
-   else if (dir == Zdir) iN = 2;
+   VecNEq FluxM; VecNEq FluxP;
+   const coord_t size = getSize<dir>(Fluid_bounds);
+   // Compute flux of first minus inter-cell location
+   {
+      const Point<3> p0 = GetPointInSpan<dir>(Flux_bounds, firstIndex, x, y, z);
+      const Point<3> p   = warpPeriodic<dir, Minus>(Fluid_bounds, p0, size, offM1(nType[p0]));
+      const Point<3> pP1 = warpPeriodic<dir, Plus >(Fluid_bounds, p,  size, offP1(nType[p]));
+      const Point<3> pM1 = warpPeriodic<dir, Minus>(Fluid_bounds, p,  size, offM1(nType[p]));
+      const Point<3> pM2 = warpPeriodic<dir, Minus>(Fluid_bounds, p,  size, offM2(nType[p]));
+      // Compute KG summations (... the order is fundamental)
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[3*(nEq+1)],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    pM2, nType[p], size, Fluid_bounds);
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[2*(nEq+1)],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    pM1, nType[p], size, Fluid_bounds);
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[0],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    p, nType[p], size, Fluid_bounds);
+      if (shockSensor[pM1] &&
+          shockSensor[p  ] &&
+          shockSensor[pP1])
+         // KG reconstruction
+         UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(FluxM, KGSum,
+                              Conserved, velocity, pressure,
+                              p, nType[p], size, Fluid_bounds);
+      else
+         // TENO reconstruction
+         UpdateUsingEulerFluxUtils<dir>::template FluxReconstruction<TENO_Op>(
+                                         FluxM,
+                                         Conserved, SoS, rho, velocity,
+                                         pressure, MassFracs, temperature,
+                                         p, nType[p], mix, size, Fluid_bounds);
+   }
+   // Loop across my section of the span
+   for (coord_t i = firstIndex; i < lastIndex; i++) {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, i, x, y, z);
+      const Point<3> pM1 = warpPeriodic<dir, Minus>(Fluid_bounds, p, size, offM1(nType[p]));
+      const Point<3> pP1 = warpPeriodic<dir, Plus >(Fluid_bounds, p, size, offP1(nType[p]));
+      // Shift and update KG summations
+      __UNROLL__
+      for (int l=0; l<nEq+1; l++) KGSum[5*(nEq+1) + l] = KGSum[4*(nEq+1) + l];
+      __UNROLL__
+      for (int l=0; l<nEq+1; l++) KGSum[4*(nEq+1) + l] = KGSum[2*(nEq+1) + l];
+      __UNROLL__
+      for (int l=0; l<nEq+1; l++) KGSum[3*(nEq+1) + l] = KGSum[1*(nEq+1) + l];
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[0],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    p, nType[p], size, Fluid_bounds);
 
-   // Compute points of the stencil
-   const Point<3> pM2 = warpPeriodic<dir, Minus>(bounds, p, dsize, offM2(nType));
-   const Point<3> pM1 = warpPeriodic<dir, Minus>(bounds, p, dsize, offM1(nType));
-   const Point<3> pP1 = warpPeriodic<dir, Plus >(bounds, p, dsize, offP1(nType));
-   const Point<3> pP2 = warpPeriodic<dir, Plus >(bounds, p, dsize, offP2(nType));
-   const Point<3> pP3 = warpPeriodic<dir, Plus >(bounds, p, dsize, offP3(nType));
+      if (shockSensor[pM1] &&
+          shockSensor[p  ] &&
+          shockSensor[pP1])
+         // KG reconstruction
+         UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(FluxP, KGSum,
+                              Conserved, velocity, pressure,
+                              p, nType[p], size, Fluid_bounds);
+      else
+         // TENO reconstruction
+         UpdateUsingEulerFluxUtils<dir>::template FluxReconstruction<TENO_Op>(
+                                      FluxP,
+                                      Conserved, SoS, rho, velocity,
+                                      pressure, MassFracs, temperature,
+                                      p, nType[p], mix, size, Fluid_bounds);
 
-   // Compute maximum eigenvalues
-   const double Lam1 = max(max(max(max(max(
-                                           fabs(velocity[pM2][iN] - SoS[pM2]),
-                                           fabs(velocity[pM1][iN] - SoS[pM1])),
-                                           fabs(velocity[p  ][iN] - SoS[p  ])),
-                                           fabs(velocity[pP1][iN] - SoS[pP1])),
-                                           fabs(velocity[pP2][iN] - SoS[pP2])),
-                                           fabs(velocity[pP3][iN] - SoS[pP3]));
 
-   const double Lam  = max(max(max(max(max(
-                                           fabs(velocity[pM2][iN]),
-                                           fabs(velocity[pM1][iN])),
-                                           fabs(velocity[p  ][iN])),
-                                           fabs(velocity[pP1][iN])),
-                                           fabs(velocity[pP2][iN])),
-                                           fabs(velocity[pP3][iN]));
+      // Update time derivative
+      Conserved_t[p] += m_e[p]*(FluxP - FluxM);
 
-   const double LamN = max(max(max(max(max(
-                                           fabs(velocity[pM2][iN] + SoS[pM2]),
-                                           fabs(velocity[pM1][iN] + SoS[pM1])),
-                                           fabs(velocity[p  ][iN] + SoS[p  ])),
-                                           fabs(velocity[pP1][iN] + SoS[pP1])),
-                                           fabs(velocity[pP2][iN] + SoS[pP2])),
-                                           fabs(velocity[pP3][iN] + SoS[pP3]));
+      // Store plus flux for next point
+      FluxM = FluxP;
+   }
+}
 
-   // Compute the RoeAverages
-   const RoeAveragesStruct RoeAvgs = ComputeRoeAverages(mix,
-                           Conserved[p].v,   Conserved[pP1].v,
-                           MassFracs[p].v,   MassFracs[pP1].v,
-                         temperature[p]  , temperature[pP1],
-                            pressure[p]  ,    pressure[pP1],
-                            velocity[p].v,    velocity[pP1].v,
-                                 rho[p]  ,         rho[pP1]);
+//-----------------------------------------------------------------------------
+// INLINE FUNCTIONS FOR UpdateUsingTENOAEulerFluxTask
+//-----------------------------------------------------------------------------
 
-   // Compute left eigenvector matrix
-   double K[nEq*nEq]; computeLeftEigenvectors(K, RoeAvgs);
+template<direction dir>
+__CUDA_H__
+void UpdateUsingTENOAEulerFluxTask<dir>::updateRHSSpan(
+                           const AccessorRW<VecNEq, 3> &Conserved_t,
+                           const AccessorRO<double, 3> &m_e,
+                           const AccessorRO<   int, 3> &nType,
+                           const AccessorRO<VecNEq, 3> &Conserved,
+                           const AccessorRO<double, 3> &rho,
+                           const AccessorRO<double, 3> &SoS,
+                           const AccessorRO<VecNSp, 3> &MassFracs,
+                           const AccessorRO<  Vec3, 3> &velocity,
+                           const AccessorRO<double, 3> &pressure,
+                           const AccessorRO<double, 3> &temperature,
+                           const coord_t firstIndex,
+                           const coord_t lastIndex,
+                           const int x,
+                           const int y,
+                           const int z,
+                           const Rect<3> &Flux_bounds,
+                           const Rect<3> &Fluid_bounds,
+                           const Mix &mix) {
 
-   // Compute +/- fluxes
-   double FluxPM2[nEq]; double FluxMM2[nEq]; getPlusMinusFlux(FluxPM2, FluxMM2, K, Conserved[pM2].v, velocity[pM2][iN], pressure[pM2], Lam1, Lam, LamN);
-   double FluxPM1[nEq]; double FluxMM1[nEq]; getPlusMinusFlux(FluxPM1, FluxMM1, K, Conserved[pM1].v, velocity[pM1][iN], pressure[pM1], Lam1, Lam, LamN);
-   double FluxP  [nEq]; double FluxM  [nEq]; getPlusMinusFlux(FluxP  , FluxM  , K, Conserved[p  ].v, velocity[p  ][iN], pressure[p  ], Lam1, Lam, LamN);
-   double FluxPP1[nEq]; double FluxMP1[nEq]; getPlusMinusFlux(FluxPP1, FluxMP1, K, Conserved[pP1].v, velocity[pP1][iN], pressure[pP1], Lam1, Lam, LamN);
-   double FluxPP2[nEq]; double FluxMP2[nEq]; getPlusMinusFlux(FluxPP2, FluxMP2, K, Conserved[pP2].v, velocity[pP2][iN], pressure[pP2], Lam1, Lam, LamN);
-   double FluxPP3[nEq]; double FluxMP3[nEq]; getPlusMinusFlux(FluxPP3, FluxMP3, K, Conserved[pP3].v, velocity[pP3][iN], pressure[pP3], Lam1, Lam, LamN);
+   VecNEq FluxM; VecNEq FluxP;
+   const coord_t size = getSize<dir>(Fluid_bounds);
+   // Compute flux of first minus inter-cell location
+   {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, firstIndex, x, y, z);
+      const Point<3> pm1 = warpPeriodic<dir, Minus>(Fluid_bounds, p, size, offM1(nType[p]));
+      UpdateUsingEulerFluxUtils<dir>::template FluxReconstruction<TENOA_Op>(
+                                      FluxM,
+                                      Conserved, SoS, rho, velocity,
+                                      pressure, MassFracs, temperature,
+                                      pm1, nType[pm1], mix, size, Fluid_bounds);
+   }
+   // Loop across my section of the span
+   for (coord_t i = firstIndex; i < lastIndex; i++) {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, i, x, y, z);
+      // Update plus flux
+      UpdateUsingEulerFluxUtils<dir>::template FluxReconstruction<TENOA_Op>(
+                                      FluxP,
+                                      Conserved, SoS, rho, velocity,
+                                      pressure, MassFracs, temperature,
+                                      p, nType[p], mix, size, Fluid_bounds);
 
-   // Reconstruct Fluxes
-   double FPlus[nEq];
-   __UNROLL__
-   for (int i=0; i<nEq; i++)
-      FPlus[i] = TENOAreconstructionPlus(FluxPM2[i], FluxPM1[i], FluxP  [i],
-                                         FluxPP1[i], FluxPP2[i], FluxPP3[i], nType);
+      // Update time derivative
+      Conserved_t[p] += m_e[p]*(FluxP - FluxM);
 
-   double FMinus[nEq];
-   __UNROLL__
-   for (int i=0; i<nEq; i++)
-      FMinus[i] = TENOAreconstructionMinus(FluxMM2[i], FluxMM1[i], FluxM  [i],
-                                           FluxMP1[i], FluxMP2[i], FluxMP3[i], nType);
+      // Store plus flux for next point
+      FluxM = FluxP;
+   }
+};
 
-   double F[nEq];
-   __UNROLL__
-   for (int i=0; i<nEq; i++)
-      F[i] = -0.5*(FPlus[i] + FMinus[i]);
+//-----------------------------------------------------------------------------
+// INLINE FUNCTIONS FOR UpdateUsingTENOLADEulerFluxTask
+//-----------------------------------------------------------------------------
 
-   // Compute right eigenvector matrix
-   computeRightEigenvectors(K, RoeAvgs);
+template<direction dir>
+__CUDA_H__
+void UpdateUsingTENOLADEulerFluxTask<dir>::updateRHSSpan(
+                           const AccessorRW<VecNEq, 3> &Conserved_t,
+                           const AccessorRO<double, 3> &m_e,
+                           const AccessorRO<   int, 3> &nType,
+                           const AccessorRO<VecNEq, 3> &Conserved,
+                           const AccessorRO<double, 3> &rho,
+                           const AccessorRO<double, 3> &SoS,
+                           const AccessorRO<VecNSp, 3> &MassFracs,
+                           const AccessorRO<  Vec3, 3> &velocity,
+                           const AccessorRO<double, 3> &pressure,
+                           const AccessorRO<double, 3> &temperature,
+                           const coord_t firstIndex,
+                           const coord_t lastIndex,
+                           const int x,
+                           const int y,
+                           const int z,
+                           const Rect<3> &Flux_bounds,
+                           const Rect<3> &Fluid_bounds,
+                           const Mix &mix) {
 
-   // Go back to the physical space
-   MatMul<nEq>(K, F, Flux);
+   VecNEq FluxM; VecNEq FluxP;
+   const coord_t size = getSize<dir>(Fluid_bounds);
+   // Compute flux of first minus inter-cell location
+   {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, firstIndex, x, y, z);
+      const Point<3> pm1 = warpPeriodic<dir, Minus>(Fluid_bounds, p, size, offM1(nType[p]));
+      UpdateUsingEulerFluxUtils<dir>::template FluxReconstruction<TENOLAD_Op>(
+                                      FluxM,
+                                      Conserved, SoS, rho, velocity,
+                                      pressure, MassFracs, temperature,
+                                      pm1, nType[pm1], mix, size, Fluid_bounds);
+   }
+   // Loop across my section of the span
+   for (coord_t i = firstIndex; i < lastIndex; i++) {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, i, x, y, z);
+      // Update plus flux
+      UpdateUsingEulerFluxUtils<dir>::template FluxReconstruction<TENOLAD_Op>(
+                                      FluxP,
+                                      Conserved, SoS, rho, velocity,
+                                      pressure, MassFracs, temperature,
+                                      p, nType[p], mix, size, Fluid_bounds);
+
+      // Update time derivative
+      Conserved_t[p] += m_e[p]*(FluxP - FluxM);
+
+      // Store plus flux for next point
+      FluxM = FluxP;
+   }
+};
+
+//-----------------------------------------------------------------------------
+// INLINE FUNCTIONS FOR UpdateUsingSkewSymmetricEulerFluxTask
+//-----------------------------------------------------------------------------
+
+template<direction dir>
+__CUDA_H__
+void UpdateUsingSkewSymmetricEulerFluxTask<dir>::updateRHSSpan(
+                           double *KGSum,
+                           const AccessorRW<VecNEq, 3> &Conserved_t,
+                           const AccessorRO<double, 3> &m_e,
+                           const AccessorRO<   int, 3> &nType,
+                           const AccessorRO<VecNEq, 3> &Conserved,
+                           const AccessorRO<double, 3> &rho,
+                           const AccessorRO<VecNSp, 3> &MassFracs,
+                           const AccessorRO<  Vec3, 3> &velocity,
+                           const AccessorRO<double, 3> &pressure,
+                           const coord_t firstIndex,
+                           const coord_t lastIndex,
+                           const int x,
+                           const int y,
+                           const int z,
+                           const Rect<3> &Flux_bounds,
+                           const Rect<3> &Fluid_bounds) {
+
+   VecNEq FluxM; VecNEq FluxP;
+   const coord_t size = getSize<dir>(Fluid_bounds);
+   // Compute flux of first minus inter-cell location
+   {
+      const Point<3> p0 = GetPointInSpan<dir>(Flux_bounds, firstIndex, x, y, z);
+      const Point<3> p   = warpPeriodic<dir, Minus>(Fluid_bounds, p0, size, offM1(nType[p0]));
+      const Point<3> pm1 = warpPeriodic<dir, Minus>(Fluid_bounds, p,  size, offM1(nType[p]));
+      const Point<3> pm2 = warpPeriodic<dir, Minus>(Fluid_bounds, p,  size, offM2(nType[p]));
+      // Compute KG summations (... the order is fundamental)
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[3*(nEq+1)],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    pm2, nType[p], size, Fluid_bounds);
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[2*(nEq+1)],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    pm1, nType[p], size, Fluid_bounds);
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[0],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    p, nType[p], size, Fluid_bounds);
+
+      // KG reconstruction
+      UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(FluxM, KGSum,
+                           Conserved, velocity, pressure,
+                           p, nType[p], size, Fluid_bounds);
+   }
+   // Loop across my section of the span
+   for (coord_t i = firstIndex; i < lastIndex; i++) {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, i, x, y, z);
+      // Shift and update KG summations
+      __UNROLL__
+      for (int l=0; l<nEq+1; l++) KGSum[5*(nEq+1) + l] = KGSum[4*(nEq+1) + l];
+      __UNROLL__
+      for (int l=0; l<nEq+1; l++) KGSum[4*(nEq+1) + l] = KGSum[2*(nEq+1) + l];
+      __UNROLL__
+      for (int l=0; l<nEq+1; l++) KGSum[3*(nEq+1) + l] = KGSum[1*(nEq+1) + l];
+      UpdateUsingEulerFluxUtils<dir>::ComputeKGSums(&KGSum[0],
+                    Conserved, rho, MassFracs,
+                    velocity,  pressure,
+                    p, nType[p], size, Fluid_bounds);
+
+      // KG reconstruction
+      UpdateUsingEulerFluxUtils<dir>::KGFluxReconstruction(FluxP, KGSum,
+                           Conserved, velocity, pressure,
+                           p, nType[p], size, Fluid_bounds);
+
+      // Update time derivative
+      Conserved_t[p] += m_e[p]*(FluxP - FluxM);
+
+      // Store plus flux for next point
+      FluxM = FluxP;
+   }
 }
 
 //-----------------------------------------------------------------------------
@@ -699,13 +1015,13 @@ void UpdateUsingEulerFluxUtils<dir>::TENOAFluxReconstruction(double *Flux,
 
 template<>
 __CUDA_H__
-inline void UpdateUsingDiffusionFluxTask<Xdir>::GetSigma(
-                  double *sigma, const int nType, const double m_s,
-                  const AccessorRO<double, 3>          mu,
-                  const AccessorRO<  Vec3, 3>    velocity,
-                  const AccessorRO<  Vec3, 3>      vGradY,
-                  const AccessorRO<  Vec3, 3>      vGradZ,
-                  const Point<3> p, const Point<3> pp1) {
+inline Vec3 UpdateUsingDiffusionFluxTask<Xdir>::GetSigma(
+                  const int nType, const double m_s,
+                  const AccessorRO<double, 3>         &mu,
+                  const AccessorRO<  Vec3, 3>   &velocity,
+                  const AccessorRO<  Vec3, 3>     &vGradY,
+                  const AccessorRO<  Vec3, 3>     &vGradZ,
+                  const Point<3> &p, const Point<3> &pp1) {
 
    const double mu_s  = Interp2Staggered(nType,  mu[p],  mu[pp1]);
 
@@ -717,20 +1033,22 @@ inline void UpdateUsingDiffusionFluxTask<Xdir>::GetSigma(
    const double dUdZ_s = Interp2Staggered(nType, vGradZ[p][0], vGradZ[pp1][0]);
    const double dWdZ_s = Interp2Staggered(nType, vGradZ[p][2], vGradZ[pp1][2]);
 
+   Vec3 sigma;
    sigma[0] = mu_s*(4*dUdX_s - 2*dVdY_s - 2*dWdZ_s)/3;
    sigma[1] = mu_s*(dVdX_s+dUdY_s);
    sigma[2] = mu_s*(dWdX_s+dUdZ_s);
+   return sigma;
 }
 
 template<>
 __CUDA_H__
-inline void UpdateUsingDiffusionFluxTask<Ydir>::GetSigma(
-                  double *sigma, const int nType, const double m_s,
-                  const AccessorRO<double, 3>          mu,
-                  const AccessorRO<  Vec3, 3>    velocity,
-                  const AccessorRO<  Vec3, 3>      vGradX,
-                  const AccessorRO<  Vec3, 3>      vGradZ,
-                  const Point<3> p, const Point<3> pp1) {
+inline Vec3 UpdateUsingDiffusionFluxTask<Ydir>::GetSigma(
+                  const int nType, const double m_s,
+                  const AccessorRO<double, 3>         &mu,
+                  const AccessorRO<  Vec3, 3>   &velocity,
+                  const AccessorRO<  Vec3, 3>     &vGradX,
+                  const AccessorRO<  Vec3, 3>     &vGradZ,
+                  const Point<3> &p, const Point<3> &pp1) {
 
    const double mu_s  = Interp2Staggered(nType,  mu[p],  mu[pp1]);
 
@@ -742,20 +1060,22 @@ inline void UpdateUsingDiffusionFluxTask<Ydir>::GetSigma(
    const double dVdZ_s = Interp2Staggered(nType, vGradZ[p][1], vGradZ[pp1][1]);
    const double dWdZ_s = Interp2Staggered(nType, vGradZ[p][2], vGradZ[pp1][2]);
 
+   Vec3 sigma;
    sigma[0] = mu_s*(dUdY_s+dVdX_s);
    sigma[1] = mu_s*(4*dVdY_s - 2*dUdX_s - 2*dWdZ_s)/3;
    sigma[2] = mu_s*(dWdY_s+dVdZ_s);
+   return sigma;
 }
 
 template<>
 __CUDA_H__
-inline void UpdateUsingDiffusionFluxTask<Zdir>::GetSigma(
-                  double *sigma, const int nType, const double m_s,
-                  const AccessorRO<double, 3>          mu,
-                  const AccessorRO<  Vec3, 3>    velocity,
-                  const AccessorRO<  Vec3, 3>      vGradX,
-                  const AccessorRO<  Vec3, 3>      vGradY,
-                  const Point<3> p, const Point<3> pp1) {
+inline Vec3 UpdateUsingDiffusionFluxTask<Zdir>::GetSigma(
+                  const int nType, const double m_s,
+                  const AccessorRO<double, 3>         &mu,
+                  const AccessorRO<  Vec3, 3>   &velocity,
+                  const AccessorRO<  Vec3, 3>     &vGradX,
+                  const AccessorRO<  Vec3, 3>     &vGradY,
+                  const Point<3> &p, const Point<3> &pp1) {
 
    const double mu_s  = Interp2Staggered(nType,  mu[p],  mu[pp1]);
 
@@ -767,58 +1087,53 @@ inline void UpdateUsingDiffusionFluxTask<Zdir>::GetSigma(
    const double dVdY_s = Interp2Staggered(nType, vGradY[p][1], vGradY[pp1][1]);
    const double dWdY_s = Interp2Staggered(nType, vGradY[p][2], vGradY[pp1][2]);
 
+   Vec3 sigma;
    sigma[0] = mu_s*(dUdZ_s+dWdX_s);
    sigma[1] = mu_s*(dVdZ_s+dWdY_s);
    sigma[2] = mu_s*(4*dWdZ_s - 2*dUdX_s - 2*dVdY_s)/3;
+   return sigma;
 }
 
 template<direction dir>
 __CUDA_H__
 inline void UpdateUsingDiffusionFluxTask<dir>::GetDiffusionFlux(
-                  double *Flux, const int nType, const double m_s, const Mix &mix,
-                  const AccessorRO<double, 3>         rho,
-                  const AccessorRO<double, 3>          mu,
-                  const AccessorRO<double, 3>         lam,
-                  const AccessorRO<VecNSp, 3>          Di,
-                  const AccessorRO<double, 3> temperature,
-                  const AccessorRO<  Vec3, 3>    velocity,
-                  const AccessorRO<VecNSp, 3>          Xi,
-                  const AccessorRO<VecNEq, 3>       rhoYi,
-                  const AccessorRO<  Vec3, 3>      vGradY,
-                  const AccessorRO<  Vec3, 3>      vGradZ,
-                  const Point<3> p,
+                  VecNEq &Flux, const int nType, const double m_s, const Mix &mix,
+                  const AccessorRO<double, 3>         &rho,
+                  const AccessorRO<double, 3>          &mu,
+                  const AccessorRO<double, 3>         &lam,
+                  const AccessorRO<VecNSp, 3>          &Di,
+                  const AccessorRO<double, 3> &temperature,
+                  const AccessorRO<  Vec3, 3>    &velocity,
+                  const AccessorRO<VecNSp, 3>          &Xi,
+                  const AccessorRO<VecNEq, 3>       &rhoYi,
+                  const AccessorRO<  Vec3, 3>      &vGradY,
+                  const AccessorRO<  Vec3, 3>      &vGradZ,
+                  const Point<3> &p,
                   const coord_t size,
-                  const Rect<3> bounds) {
+                  const Rect<3> &bounds) {
 
    // access i+1 point (warp around boundaries)
    const Point<3> pp1 = warpPeriodic<dir, Plus>(bounds, p, size, 1);
 
    // Mixture properties at the staggered location
    const double rho_s = Interp2Staggered(nType, rho[p], rho[pp1]);
-   const double iMixW_s = 1.0/Interp2Staggered(nType, GetMolarWeightFromXi(Xi.ptr(p  )->v, mix),
-                                                      GetMolarWeightFromXi(Xi.ptr(pp1)->v, mix));
+   const double iMixW_s = 1.0/Interp2Staggered(nType, mix.GetMolarWeightFromXi(Xi[p  ]),
+                                                      mix.GetMolarWeightFromXi(Xi[pp1]));
 
    // Primitive and conserved variables at the staggered location
-   const double T_s     =  Interp2Staggered(nType, temperature[p], temperature[pp1]);
-   const double vel_s[] = {Interp2Staggered(nType,    velocity[p][0], velocity[pp1][0]),
-                           Interp2Staggered(nType,    velocity[p][1], velocity[pp1][1]),
-                           Interp2Staggered(nType,    velocity[p][2], velocity[pp1][2])};
-
-   // Viscous stress
-   double sigma[3]; GetSigma(sigma, nType, m_s, mu, velocity, vGradY, vGradZ, p, pp1);
+   const double T_s   =  Interp2Staggered(nType, temperature[p], temperature[pp1]);
 
    // Assemble the fluxes
-   const double uSigma = dot(vel_s, sigma);
    double heatFlux = Interp2Staggered(nType, lam[p], lam[pp1])*m_s*(temperature[p] - temperature[pp1]);
 
    // Species diffusion velocity
-   double YiVi[nSpec];
+   VecNSp YiVi;
    double ViCorr = 0.0;
    __UNROLL__
    for (int i=0; i<nSpec; i++) {
       YiVi[i] = Interp2Staggered(nType, Di[p][i],  Di[pp1][i])*
                                    m_s*(Xi[p][i] - Xi[pp1][i])*
-                                   GetSpeciesMolarWeight(i, mix)*iMixW_s;
+                                   mix.GetSpeciesMolarWeight(i)*iMixW_s;
       ViCorr += YiVi[i];
    }
 
@@ -827,16 +1142,77 @@ inline void UpdateUsingDiffusionFluxTask<dir>::GetDiffusionFlux(
    for (int i=0; i<nSpec; i++) {
       const double rhoYiVi = rho_s*YiVi[i] - ViCorr*Interp2Staggered(nType, rhoYi[p][i], rhoYi[pp1][i]);
       Flux[i] = -rhoYiVi;
-      heatFlux += rhoYiVi*GetSpeciesEnthalpy(i, T_s, mix);
+      heatFlux += rhoYiVi*mix.GetSpeciesEnthalpy(i, T_s);
    }
 
    // Momentum Flux
+   const Vec3 sigma = GetSigma(nType, m_s, mu, velocity, vGradY, vGradZ, p, pp1);
    __UNROLL__
    for (int i=0; i<3; i++)
       Flux[irU+i] = sigma[i];
 
    // Energy Flux
+   double uSigma = 0.0;
+   __UNROLL__
+   for (int i=0; i<3; i++)
+      uSigma += Interp2Staggered(nType, velocity[p][i], velocity[pp1][i])*sigma[i];
    Flux[irE] = (uSigma - heatFlux);
+}
+
+template<direction dir>
+__CUDA_H__
+void UpdateUsingDiffusionFluxTask<dir>::updateRHSSpan(
+                           const AccessorRW<VecNEq, 3> &Conserved_t,
+                           const AccessorRO<double, 3> &m_s,
+                           const AccessorRO<double, 3> &m_d,
+                           const AccessorRO<   int, 3> &nType,
+                           const AccessorRO<double, 3> &rho,
+                           const AccessorRO<double, 3> &mu,
+                           const AccessorRO<double, 3> &lam,
+                           const AccessorRO<VecNSp, 3> &Di,
+                           const AccessorRO<double, 3> &temperature,
+                           const AccessorRO<  Vec3, 3> &velocity,
+                           const AccessorRO<VecNSp, 3> &Xi,
+                           const AccessorRO<VecNEq, 3> &rhoYi,
+                           const AccessorRO<  Vec3, 3> &vGrad1,
+                           const AccessorRO<  Vec3, 3> &vGrad2,
+                           const coord_t firstIndex,
+                           const coord_t lastIndex,
+                           const int x,
+                           const int y,
+                           const int z,
+                           const Rect<3> &Flux_bounds,
+                           const Rect<3> &Fluid_bounds,
+                           const Mix &mix) {
+
+   const coord_t size = getSize<dir>(Fluid_bounds);
+   VecNEq DiffFluxM; VecNEq DiffFluxP;
+   // Compute flux of first minus inter-cell location
+   {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, firstIndex, x, y, z);
+      const Point<3> pm1 = warpPeriodic<dir, Minus>(Fluid_bounds, p, size, offM1(nType[p]));
+      GetDiffusionFlux(DiffFluxM, nType[pm1], m_s[pm1], mix,
+                       rho, mu, lam, Di,
+                       temperature, velocity, Xi,
+                       rhoYi, vGrad1, vGrad2,
+                       pm1, size, Fluid_bounds);
+   }
+   // Loop across my section of the span
+   for (coord_t i = firstIndex; i < lastIndex; i++) {
+      const Point<3> p = GetPointInSpan<dir>(Flux_bounds, i, x, y, z);
+      // Update plus flux
+      GetDiffusionFlux(DiffFluxP, nType[p], m_s[p], mix,
+                       rho, mu, lam, Di,
+                       temperature, velocity, Xi,
+                       rhoYi, vGrad1, vGrad2,
+                       p, size, Fluid_bounds);
+
+      // Update time derivative
+      Conserved_t[p] += m_d[p]*(DiffFluxP - DiffFluxM);
+
+      // Store plus flux for next point
+      DiffFluxM = DiffFluxP;
+   }
 }
 
 //-----------------------------------------------------------------------------
@@ -845,25 +1221,22 @@ inline void UpdateUsingDiffusionFluxTask<dir>::GetDiffusionFlux(
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingFluxNSCBCInflowMinusSideTask<dir>::addLODIfluxes(double *RHS,
-                            const AccessorRO<VecNSp, 3> MassFracs,
-                            const AccessorRO<double, 3>  pressure,
-                            const double       SoS,
-                            const double       rho,
-                            const double         T,
-                            const double *velocity,
-                            const double    *vGrad,
-                            const double     *dudt,
-                            const double      dTdt,
-                            const Point<3> p,
-                            const int  nType,
-                            const double   m,
-                            const Mix &mix) {
+void UpdateUsingFluxNSCBCInflowMinusSideTask<dir>::addLODIfluxes(VecNEq &RHS,
+                            const AccessorRO<VecNSp, 3> &MassFracs,
+                            const AccessorRO<double, 3>  &pressure,
+                            const   double SoS,
+                            const   double rho,
+                            const   double T,
+                            const     Vec3 &velocity,
+                            const     Vec3 &vGrad,
+                            const     Vec3 &dudt,
+                            const   double dTdt,
+                            const Point<3> &p,
+                            const      int nType,
+                            const   double m,
+                            const      Mix &mix) {
 
-   // TODO: implement some sort of static_if
-   const int iN = (dir == Xdir) ?   0 :
-                  (dir == Ydir) ?   1 :
-                /*(dir == Zdir) ?*/ 2;
+   constexpr int iN = normalIndex(dir);
 
    if (velocity[iN] >= SoS) {
       // Supersonic inlet
@@ -875,11 +1248,11 @@ void UpdateUsingFluxNSCBCInflowMinusSideTask<dir>::addLODIfluxes(double *RHS,
       // Subsonic inlet (add NSCBC fluxes)
       const Point<3> p_int = (dir == Xdir) ?  Point<3>(p.x+1, p.y  , p.z  ) :
                              (dir == Ydir) ?  Point<3>(p.x  , p.y+1, p.z  ) :
-                           /*(dir == Ydir) ?*/Point<3>(p.x  , p.y  , p.z+1);
+                           /*(dir == Zdir) ?*/Point<3>(p.x  , p.y  , p.z+1);
 
       // Thermo-chemical quantities
-      const double MixW_bnd = GetMolarWeightFromYi(MassFracs[p].v, mix);
-      const double   Cp_bnd = GetHeatCapacity(T,   MassFracs[p].v, mix);
+      const double MixW_bnd = mix.GetMolarWeightFromYi(MassFracs[p]);
+      const double   Cp_bnd = mix.GetHeatCapacity(T,   MassFracs[p]);
 
       // characteristic velocity leaving the domain
       const double lambda_1 = velocity[iN] - SoS;
@@ -890,21 +1263,17 @@ void UpdateUsingFluxNSCBCInflowMinusSideTask<dir>::addLODIfluxes(double *RHS,
       // compute waves amplitudes
       const double dp_dn = getDerivLeftBC(nType, pressure[p], pressure[p_int], m);
       const double du_dn = vGrad[iN];
-      double dY_dn[nSpec];
-      __UNROLL__
-      for (int s=0; s<nSpec; s++)
-         dY_dn[s] = getDerivLeftBC(nType, MassFracs[p][s], MassFracs[p_int][s], m);
 
       const double L1 = lambda_1*(dp_dn - rho*SoS*du_dn);
-      double LS[nSpec];
+      VecNSp LS;
       __UNROLL__
       for (int s=0; s<nSpec; s++)
-         LS[s] = lambda*dY_dn[s];
+         LS[s] = lambda*getDerivLeftBC(nType, MassFracs[p][s], MassFracs[p_int][s], m);
       const double LN = L1 - 2*rho*SoS*dudt[iN];
       double L2 = dTdt/T + (LN + L1)/(2*rho*Cp_bnd*T);
       __UNROLL__
       for (int s=0; s<nSpec; s++)
-         L2 -= MixW_bnd/GetSpeciesMolarWeight(s, mix)*LS[s];
+         L2 -= MixW_bnd/mix.GetSpeciesMolarWeight(s)*LS[s];
       L2 *= -rho*SoS*SoS;
 
       // Compute LODI fluxes
@@ -919,25 +1288,22 @@ void UpdateUsingFluxNSCBCInflowMinusSideTask<dir>::addLODIfluxes(double *RHS,
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingFluxNSCBCInflowPlusSideTask<dir>::addLODIfluxes(double *RHS,
-                            const AccessorRO<VecNSp, 3> MassFracs,
-                            const AccessorRO<double, 3>  pressure,
-                            const double       SoS,
-                            const double       rho,
-                            const double         T,
-                            const double *velocity,
-                            const double    *vGrad,
-                            const double     *dudt,
-                            const double      dTdt,
-                            const Point<3> p,
-                            const int  nType,
-                            const double   m,
-                            const Mix &mix) {
+void UpdateUsingFluxNSCBCInflowPlusSideTask<dir>::addLODIfluxes(VecNEq &RHS,
+                            const AccessorRO<VecNSp, 3> &MassFracs,
+                            const AccessorRO<double, 3> &pressure,
+                            const   double SoS,
+                            const   double rho,
+                            const   double T,
+                            const     Vec3 &velocity,
+                            const     Vec3 &vGrad,
+                            const     Vec3 &dudt,
+                            const   double dTdt,
+                            const Point<3> &p,
+                            const      int nType,
+                            const   double m,
+                            const      Mix &mix) {
 
-   // TODO: implement some sort of static_if
-   const int iN = (dir == Xdir) ?   0 :
-                  (dir == Ydir) ?   1 :
-                /*(dir == Zdir) ?*/ 2;
+   constexpr int iN = normalIndex(dir);
 
    if (velocity[iN] <= -SoS) {
       // Supersonic inlet
@@ -949,11 +1315,11 @@ void UpdateUsingFluxNSCBCInflowPlusSideTask<dir>::addLODIfluxes(double *RHS,
       // Subsonic inlet (add NSCBC fluxes)
       const Point<3> p_int = (dir == Xdir) ?  Point<3>(p.x-1, p.y  , p.z  ) :
                              (dir == Ydir) ?  Point<3>(p.x  , p.y-1, p.z  ) :
-                           /*(dir == Ydir) ?*/Point<3>(p.x  , p.y  , p.z-1);
+                           /*(dir == Zdir) ?*/Point<3>(p.x  , p.y  , p.z-1);
 
       // Thermo-chemical quantities
-      const double MixW_bnd = GetMolarWeightFromYi(MassFracs[p].v, mix);
-      const double   Cp_bnd = GetHeatCapacity(T,   MassFracs[p].v, mix);
+      const double MixW_bnd = mix.GetMolarWeightFromYi(MassFracs[p]);
+      const double   Cp_bnd = mix.GetHeatCapacity(T,   MassFracs[p]);
 
       // characteristic velocity leaving the domain
       const double lambda_N = velocity[iN] + SoS;
@@ -964,21 +1330,17 @@ void UpdateUsingFluxNSCBCInflowPlusSideTask<dir>::addLODIfluxes(double *RHS,
       // compute waves amplitudes
       const double dp_dn = getDerivRightBC(nType, pressure[p_int], pressure[p], m);
       const double du_dn = vGrad[iN];
-      double dY_dn[nSpec];
-      __UNROLL__
-      for (int s=0; s<nSpec; s++)
-         dY_dn[s] = getDerivRightBC(nType, MassFracs[p_int][s], MassFracs[p][s], m);
 
       const double LN = lambda_N*(dp_dn + rho*SoS*du_dn);
-      double LS[nSpec];
+      VecNSp LS;
       __UNROLL__
       for (int s=0; s<nSpec; s++)
-         LS[s] = lambda*dY_dn[s];
+         LS[s] = lambda*getDerivRightBC(nType, MassFracs[p_int][s], MassFracs[p][s], m);
       const double L1 = LN + 2*rho*SoS*dudt[iN];
       double L2 = dTdt/T + (LN + L1)/(2*rho*Cp_bnd*T);
       __UNROLL__
       for (int s=0; s<nSpec; s++)
-         L2 -= MixW_bnd/GetSpeciesMolarWeight(s, mix)*LS[s];
+         L2 -= MixW_bnd/mix.GetSpeciesMolarWeight(s)*LS[s];
       L2 *= -rho*SoS*SoS;
 
       // Compute LODI fluxes
@@ -997,58 +1359,46 @@ void UpdateUsingFluxNSCBCInflowPlusSideTask<dir>::addLODIfluxes(double *RHS,
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingFluxNSCBCOutflowMinusSideTask<dir>::addLODIfluxes(double *RHS,
-                            const AccessorRO<VecNSp, 3> MassFracs,
-                            const AccessorRO<double, 3>       rho,
-                            const AccessorRO<double, 3>        mu,
-                            const AccessorRO<double, 3>  pressure,
-                            const AccessorRO<  Vec3, 3>  velocity,
-                            const AccessorRO<  Vec3, 3>    vGradN,
-                            const AccessorRO<  Vec3, 3>   vGradT1,
-                            const AccessorRO<  Vec3, 3>   vGradT2,
-                            const double         SoS,
-                            const double           T,
-                            const double  *Conserved,
-                            const Point<3>         p,
-                            const int          nType,
-                            const double           m,
-                            const double     MaxMach,
-                            const double LengthScale,
-                            const double        PInf,
-                            const Mix &mix) {
+void UpdateUsingFluxNSCBCOutflowMinusSideTask<dir>::addLODIfluxes(VecNEq &RHS,
+                            const AccessorRO<VecNSp, 3> &MassFracs,
+                            const AccessorRO<double, 3> &rho,
+                            const AccessorRO<double, 3> &mu,
+                            const AccessorRO<double, 3> &pressure,
+                            const AccessorRO<  Vec3, 3> &velocity,
+                            const AccessorRO<  Vec3, 3> &vGradN,
+                            const AccessorRO<  Vec3, 3> &vGradT1,
+                            const AccessorRO<  Vec3, 3> &vGradT2,
+                            const   double SoS,
+                            const   double T,
+                            const   VecNEq &Conserved,
+                            const Point<3> &p,
+                            const      int nType,
+                            const   double m,
+                            const   double MaxMach,
+                            const   double LengthScale,
+                            const   double PInf,
+                            const      Mix &mix) {
 
-   // TODO: implement some sort of static_if
-   int iN; int iT1; int iT2; Point<3> p_int;
-   if      (dir == Xdir) { iN = 0; iT1 = 1; iT2 = 2; p_int = Point<3>(p.x+1, p.y  , p.z  ); }
-   else if (dir == Ydir) { iN = 1; iT1 = 0; iT2 = 2; p_int = Point<3>(p.x  , p.y+1, p.z  ); }
-   else if (dir == Zdir) { iN = 2; iT1 = 0; iT2 = 1; p_int = Point<3>(p.x  , p.y  , p.z+1); }
+   constexpr int iN = normalIndex(dir);
+   constexpr int iT1 = tangential1Index(dir);
+   constexpr int iT2 = tangential2Index(dir);
+   const Point<3> p_int = getPIntBC<dir, Minus>(p);
 
-   // Thermo-chemical quantities
-   const double   Cp_bnd = GetHeatCapacity(T,   MassFracs[p].v, mix);
+   // BC-normal pressure derivative
+   const double dp_dn = getDerivLeftBC(nType, pressure[p], pressure[p_int], m);
 
-   // BC-normal gradients
-   const double   dp_dn = getDerivLeftBC(nType, pressure[p], pressure[p_int], m);
-   const double drho_dn = getDerivLeftBC(nType,      rho[p],      rho[p_int], m);
-   double dY_dn[nSpec];
-   __UNROLL__
-   for (int s=0; s<nSpec; s++)
-      dY_dn[s] = getDerivLeftBC(nType, MassFracs[p][s], MassFracs[p_int][s], m);
-
-   // characteristic velocities
+   // Characteristic velocities
    const double lambda_1 = velocity[p][iN] - SoS;
    const double lambda   = velocity[p][iN];
    const double lambda_N = velocity[p][iN] + SoS;
 
    // compute waves amplitudes
    const double L1 = lambda_1*(dp_dn - rho[p]*SoS*vGradN[p][iN]);
-   double LM[3];
-   LM[iN ] = lambda*(dp_dn - SoS*SoS*drho_dn);
-   LM[iT1] = lambda*vGradN[p][iT1];
-   LM[iT2] = lambda*vGradN[p][iT2];
-   double LS[nSpec];
+   const double LM = lambda*(dp_dn - SoS*SoS*getDerivLeftBC(nType, rho[p], rho[p_int], m));
+   VecNSp LS;
    __UNROLL__
    for (int s=0; s<nSpec; s++)
-      LS[s] = lambda*dY_dn[s];
+      LS[s] = lambda*getDerivLeftBC(nType, MassFracs[p][s], MassFracs[p_int][s], m);
    const double sigma = 0.25;
    /*const*/ double LN;
    if (lambda_N < 0)
@@ -1062,12 +1412,12 @@ void UpdateUsingFluxNSCBCOutflowMinusSideTask<dir>::addLODIfluxes(double *RHS,
    }
 
    // Compute LODI fluxes
-   const double d1 = (0.5*(L1 + LN) - LM[iN])/(SoS*SoS);
-   double dM[3];
+   const double d1 = (0.5*(L1 + LN) - LM)/(SoS*SoS);
+   Vec3 dM;
    dM[iN ] = (LN - L1)/(2*rho[p]*SoS);
-   dM[iT1] = LM[iT1];
-   dM[iT2] = LM[iT2];
-   const double dN = LM[iN]/(SoS*SoS);
+   dM[iT1] = lambda*vGradN[p][iT1];
+   dM[iT2] = lambda*vGradN[p][iT2];
+   const double dN = LM/(SoS*SoS);
 
    // Compute viscous terms
    const double tauNN_bnd = mu[p    ]*(4*vGradN[p    ][iN] - 2*vGradT1[p    ][iT1] - 2*vGradT2[p    ][iT2])/3;
@@ -1088,58 +1438,49 @@ void UpdateUsingFluxNSCBCOutflowMinusSideTask<dir>::addLODIfluxes(double *RHS,
                             + Conserved[irU+iN ]*dM[iN ]
                             + Conserved[irU+iT1]*dM[iT1]
                             + Conserved[irU+iT2]*dM[iT2]
-                            + Cp_bnd*T*dN
+                            + mix.GetHeatCapacity(T, MassFracs[p])*T*dN
                             - viscous_heating);
    __UNROLL__
    for (int s=0; s<nSpec; s++)
-      RHS[irE] -= (rho[p]*GetSpecificInternalEnergy(s, T, mix)*LS[s]);
+      RHS[irE] -= (rho[p]*mix.GetSpecificInternalEnergy(s, T)*LS[s]);
 }
 
 template<direction dir>
 __CUDA_H__
-void UpdateUsingFluxNSCBCOutflowPlusSideTask<dir>::addLODIfluxes(double *RHS,
-                            const AccessorRO<VecNSp, 3> MassFracs,
-                            const AccessorRO<double, 3>       rho,
-                            const AccessorRO<double, 3>        mu,
-                            const AccessorRO<double, 3>  pressure,
-                            const AccessorRO<  Vec3, 3>  velocity,
-                            const AccessorRO<  Vec3, 3>    vGradN,
-                            const AccessorRO<  Vec3, 3>   vGradT1,
-                            const AccessorRO<  Vec3, 3>   vGradT2,
-                            const double         SoS,
-                            const double           T,
-                            const double  *Conserved,
-                            const Point<3>         p,
-                            const int          nType,
-                            const double           m,
-                            const double     MaxMach,
-                            const double LengthScale,
-                            const double        PInf,
-                            const Mix &mix) {
+void UpdateUsingFluxNSCBCOutflowPlusSideTask<dir>::addLODIfluxes(VecNEq &RHS,
+                            const AccessorRO<VecNSp, 3> &MassFracs,
+                            const AccessorRO<double, 3> &rho,
+                            const AccessorRO<double, 3> &mu,
+                            const AccessorRO<double, 3> &pressure,
+                            const AccessorRO<  Vec3, 3> &velocity,
+                            const AccessorRO<  Vec3, 3> &vGradN,
+                            const AccessorRO<  Vec3, 3> &vGradT1,
+                            const AccessorRO<  Vec3, 3> &vGradT2,
+                            const   double SoS,
+                            const   double T,
+                            const   VecNEq &Conserved,
+                            const Point<3> &p,
+                            const      int nType,
+                            const   double m,
+                            const   double MaxMach,
+                            const   double LengthScale,
+                            const   double PInf,
+                            const      Mix &mix) {
 
-   // TODO: implement some sort of static_if
-   int iN; int iT1; int iT2; Point<3> p_int;
-   if      (dir == Xdir) { iN = 0; iT1 = 1; iT2 = 2; p_int = Point<3>(p.x-1, p.y  , p.z  ); }
-   else if (dir == Ydir) { iN = 1; iT1 = 0; iT2 = 2; p_int = Point<3>(p.x  , p.y-1, p.z  ); }
-   else if (dir == Zdir) { iN = 2; iT1 = 0; iT2 = 1; p_int = Point<3>(p.x  , p.y  , p.z-1); }
+   constexpr int iN = normalIndex(dir);
+   constexpr int iT1 = tangential1Index(dir);
+   constexpr int iT2 = tangential2Index(dir);
+   const Point<3> p_int = getPIntBC<dir, Plus>(p);
 
-   // Thermo-chemical quantities
-   const double   Cp_bnd = GetHeatCapacity(T,   MassFracs[p].v, mix);
+   // BC-normal pressure derivative
+   const double dp_dn = getDerivRightBC(nType, pressure[p_int], pressure[p], m);
 
-   // BC-normal gradients
-   const double   dp_dn = getDerivRightBC(nType, pressure[p_int], pressure[p], m);
-   const double drho_dn = getDerivRightBC(nType,      rho[p_int],      rho[p], m);
-   double dY_dn[nSpec];
-   __UNROLL__
-   for (int s=0; s<nSpec; s++)
-      dY_dn[s] = getDerivRightBC(nType, MassFracs[p_int][s], MassFracs[p][s], m);
-
-   // characteristic velocities
+   // Characteristic velocities
    const double lambda_1 = velocity[p][iN] - SoS;
    const double lambda   = velocity[p][iN];
    const double lambda_N = velocity[p][iN] + SoS;
 
-   // compute waves amplitudes
+   // Compute waves amplitudes
    const double sigma = 0.25;
    /*const*/ double L1;
    if (lambda_1 > 0)
@@ -1151,23 +1492,20 @@ void UpdateUsingFluxNSCBCOutflowPlusSideTask<dir>::addLODIfluxes(double *RHS,
                         sigma*(SoS-(velocity[p][iN]*velocity[p][iN])/SoS)/LengthScale;
       L1 = K*(pressure[p] - PInf);
    }
-   double LM[3];
-   LM[iN ] = lambda*(dp_dn - SoS*SoS*drho_dn);
-   LM[iT1] = lambda*vGradN[p][iT1];
-   LM[iT2] = lambda*vGradN[p][iT2];
-   double LS[nSpec];
+   const double LM = lambda*(dp_dn - SoS*SoS*getDerivRightBC(nType, rho[p_int], rho[p], m));
+   VecNSp LS;
    __UNROLL__
    for (int s=0; s<nSpec; s++)
-      LS[s] = lambda*dY_dn[s];
+      LS[s] = lambda*getDerivRightBC(nType, MassFracs[p_int][s], MassFracs[p][s], m);
    const double LN = lambda_N*(dp_dn + rho[p]*SoS*vGradN[p][iN]);
 
    // Compute LODI fluxes
-   const double d1 = (0.5*(L1 + LN) - LM[iN])/(SoS*SoS);
-   double dM[3];
+   const double d1 = (0.5*(L1 + LN) - LM)/(SoS*SoS);
+   Vec3 dM;
    dM[iN ] = (LN - L1)/(2*rho[p]*SoS);
-   dM[iT1] = LM[iT1];
-   dM[iT2] = LM[iT2];
-   const double dN = LM[iN]/(SoS*SoS);
+   dM[iT1] = lambda*vGradN[p][iT1];
+   dM[iT2] = lambda*vGradN[p][iT2];
+   const double dN = LM/(SoS*SoS);
 
    // Compute viscous terms
    const double tauNN_bnd = mu[p    ]*(4*vGradN[p    ][iN] - 2*vGradT1[p    ][iT1] - 2*vGradT2[p    ][iT2])/3;
@@ -1188,10 +1526,10 @@ void UpdateUsingFluxNSCBCOutflowPlusSideTask<dir>::addLODIfluxes(double *RHS,
                             + Conserved[irU+iN ]*dM[iN ]
                             + Conserved[irU+iT1]*dM[iT1]
                             + Conserved[irU+iT2]*dM[iT2]
-                            + Cp_bnd*T*dN
+                            + mix.GetHeatCapacity(T, MassFracs[p])*T*dN
                             - viscous_heating);
    __UNROLL__
    for (int s=0; s<nSpec; s++)
-      RHS[irE] -= (rho[p]*GetSpecificInternalEnergy(s, T, mix)*LS[s]);
+      RHS[irE] -= (rho[p]*mix.GetSpecificInternalEnergy(s, T)*LS[s]);
 }
 

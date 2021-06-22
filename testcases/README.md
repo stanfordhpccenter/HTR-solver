@@ -119,10 +119,37 @@ $HTR_DIR/prometeo.sh -i   Stats.json
 python postProc.py -json Stats.json -in [Averages files produced by the code]
 ```
 
+### Speelman burner stabilized flame
+
+```
+cd Speelman
+python Speelman.py (This is optional. It produces the reference solution using Cantera)
+$HTR_DIR/prometeo.sh -i Speelman.json
+python postProc.py
+```
+
+### Speelman_DV250 burner stabilized flame with applied voltage
+### NB: This testacase requires the solver to be compiled with the `ELECTRIC_FIELD=1`
+
+```
+cd Speelman_DV250
+python mkHTRrestart.py
+$HTR_DIR/prometeo.sh -i Speelman.json
+python postProc.py
+```
+
 ### Weak scaling test
 
 ```
-cd scalingTest/WS
+cd scalingTest/WeakScaling
+python scale_up.py -n [Number of refinements] -out [output dir] base.json
+python postProc.py -n [Number of refinements] -out [output dir]
+```
+
+### Strong scaling test
+
+```
+cd scalingTest/StrongScaling
 python scale_up.py -n [Number of refinements] -out [output dir] base.json
 python postProc.py -n [Number of refinements] -out [output dir]
 ```

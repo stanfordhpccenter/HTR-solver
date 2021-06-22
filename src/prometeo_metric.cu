@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -36,36 +36,9 @@
 
 template<direction dir>
 __global__
-void ReconstructCoordinates_kernel(const DeferredBuffer<double, 3> coord,
-                                   const AccessorRO<  Vec3, 3> centerCoordinates,
-                                   const AccessorRO<   int, 3>             nType,
-                                   const Rect<3> my_bounds,
-                                   const Rect<3> Fluid_bounds,
-                                   const double  width,
-                                   const coord_t size_x,
-                                   const coord_t size_y,
-                                   const coord_t size_z,
-                                   const coord_t size)
-{
-   int x = blockIdx.x * blockDim.x + threadIdx.x;
-   int y = blockIdx.y * blockDim.y + threadIdx.y;
-   int z = blockIdx.z * blockDim.z + threadIdx.z;
-
-   if ((x < size_x) && (y < size_y) && (z < size_z)) {
-      const Point<3> p = Point<3>(x + my_bounds.lo.x,
-                                  y + my_bounds.lo.y,
-                                  z + my_bounds.lo.z);
-      (*coord.ptr(p)) = InitializeMetricTask::reconstructCoordEuler<dir>(centerCoordinates, p, width,
-                                                                         nType[p], size, Fluid_bounds); 
-   }
-}
-
-template<direction dir>
-__global__
-void ComputeMetrics_kernel(const DeferredBuffer<double, 3> coord,
-                           const AccessorRW<double, 3>               m_e,
-                           const AccessorRW<double, 3>               m_d,
-                           const AccessorRW<double, 3>               m_s,
+void ComputeMetrics_kernel(const AccessorWO<double, 3>               m_e,
+                           const AccessorWO<double, 3>               m_d,
+                           const AccessorWO<double, 3>               m_s,
                            const AccessorRO<  Vec3, 3> centerCoordinates,
                            const AccessorRO<   int, 3>             nType,
                            const Rect<3> my_bounds,
@@ -73,23 +46,44 @@ void ComputeMetrics_kernel(const DeferredBuffer<double, 3> coord,
                            const double  width,
                            const coord_t size_x,
                            const coord_t size_y,
-                           const coord_t size_z,
-                           const coord_t size)
+                           const coord_t size_z)
 {
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-   if ((x < size_x) && (y < size_y) && (z < size_z)) {
-      const Point<3> p = Point<3>(x + my_bounds.lo.x,
-                                  y + my_bounds.lo.y,
-                                  z + my_bounds.lo.z);
-      const Point<3> pm1 = warpPeriodic<dir, Minus>(Fluid_bounds, p, size, offM1(nType[p]));
-      m_e[p] = 1.0/((*coord.ptr(p)) - unwarpCoordinate<dir>((*coord.ptr(pm1)), width, -1, p, Fluid_bounds));
-      InitializeMetricTask::ComputeDiffusionMetrics<dir>(m_d, m_s, centerCoordinates, p,
-                                                         width, nType[p], size, Fluid_bounds);
+   if (isThreadInCrossPlane<dir>(size_x, size_y, size_z)) {
+      const coord_t size = getSize<dir>(Fluid_bounds);
+      const coord_t span_size = getSize<dir>(my_bounds);
+      const coord_t firstIndex = firstIndexInSpan<dir>(span_size);
+      if (firstIndex < span_size) {
+         const coord_t lastIndex =  lastIndexInSpan<dir>(span_size);
+         double coordM_e; double coordP_e;
+         // Reconstruct the coordinate at -1/2 of the first point
+         {
+            const Point<3> p = GetPointInSpan<dir>(my_bounds, firstIndex, x, y, z);
+            const Point<3> pm1 = warpPeriodic<dir, Minus>(Fluid_bounds, p, size, offM1(nType[p]));
+            coordM_e = InitializeMetricTask::reconstructCoordEuler<dir>(centerCoordinates, pm1, width,
+                                                                        nType[pm1], size, Fluid_bounds);
+            coordM_e = unwarpCoordinate<dir>(coordM_e, width, -1, p, Fluid_bounds);
+         }
+         // Loop across my section of the span
+         for (coord_t i = firstIndex; i < lastIndex; i++) {
+            const Point<3> p = GetPointInSpan<dir>(my_bounds, i, x, y, z);
+            coordP_e = InitializeMetricTask::reconstructCoordEuler<dir>(centerCoordinates, p, width,
+                                                                        nType[p], size, Fluid_bounds);
+            // Compute the metrics
+            m_e[p] = 1.0/(coordP_e - coordM_e);
+            InitializeMetricTask::ComputeDiffusionMetrics<dir>(m_d, m_s, centerCoordinates, p,
+                                                            width, nType[p], size, Fluid_bounds);
+
+            // Store plus values for next point
+            coordM_e = coordP_e;
+         }
+      }
    }
 }
+
 __host__
 void InitializeMetricTask::gpu_base_impl(
                       const Args &args,
@@ -97,7 +91,7 @@ void InitializeMetricTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 5);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for variables in the Ghost regions
@@ -107,17 +101,17 @@ void InitializeMetricTask::gpu_base_impl(
    const AccessorRO<   int, 3> acc_nType_z          (regions[0], FID_nType_z);
 
    // Accessors for metrics
-   const AccessorRW<double, 3> acc_dcsi_e(regions[4], FID_dcsi_e);
-   const AccessorRW<double, 3> acc_deta_e(regions[4], FID_deta_e);
-   const AccessorRW<double, 3> acc_dzet_e(regions[4], FID_dzet_e);
+   const AccessorWO<double, 3> acc_dcsi_e(regions[1], FID_dcsi_e);
+   const AccessorWO<double, 3> acc_deta_e(regions[1], FID_deta_e);
+   const AccessorWO<double, 3> acc_dzet_e(regions[1], FID_dzet_e);
 
-   const AccessorRW<double, 3> acc_dcsi_d(regions[4], FID_dcsi_d);
-   const AccessorRW<double, 3> acc_deta_d(regions[4], FID_deta_d);
-   const AccessorRW<double, 3> acc_dzet_d(regions[4], FID_dzet_d);
+   const AccessorWO<double, 3> acc_dcsi_d(regions[1], FID_dcsi_d);
+   const AccessorWO<double, 3> acc_deta_d(regions[1], FID_deta_d);
+   const AccessorWO<double, 3> acc_dzet_d(regions[1], FID_dzet_d);
 
-   const AccessorRW<double, 3> acc_dcsi_s(regions[4], FID_dcsi_s);
-   const AccessorRW<double, 3> acc_deta_s(regions[4], FID_deta_s);
-   const AccessorRW<double, 3> acc_dzet_s(regions[4], FID_dzet_s);
+   const AccessorWO<double, 3> acc_dcsi_s(regions[1], FID_dcsi_s);
+   const AccessorWO<double, 3> acc_deta_s(regions[1], FID_deta_s);
+   const AccessorWO<double, 3> acc_dzet_s(regions[1], FID_dzet_s);
 
    // Extract execution domains
    Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
@@ -135,101 +129,38 @@ void InitializeMetricTask::gpu_base_impl(
 
    // X direction
    {
-      const coord_t size = getSize<Xdir>(Fluid_bounds);
-
-      Domain Ghost = runtime->get_index_space_domain(ctx, args.XGhost.get_index_space());
-
-      // Store the reconstructed coordinate in a deferred buffer
-      DeferredBuffer<double, 3> X(Memory::GPU_FB_MEM, Ghost);
-
-      // Launch the kernel to reconstruct the coordinates
-      for (RectInDomainIterator<3> Rit(Ghost); Rit(); Rit++) {
-         const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, *Rit);
-         const dim3 num_blocks_3d = dim3((getSize<Xdir>(*Rit) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                         (getSize<Ydir>(*Rit) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                         (getSize<Zdir>(*Rit) + (TPB_3d.z - 1)) / TPB_3d.z);
-         ReconstructCoordinates_kernel<Xdir><<<num_blocks_3d, TPB_3d, 0, Xstream>>>(
-                                       X, acc_centerCoordinates, acc_nType_x, (*Rit),
-                                       Fluid_bounds, args.Grid_xWidth,
-                                       getSize<Xdir>(*Rit), getSize<Ydir>(*Rit), getSize<Zdir>(*Rit), size);
-      }
-
       // Launch the kernel that computes the metric
-      const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
-      const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                      (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                      (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
+      const dim3 TPB_3d = splitThreadsPerBlockSpan<Xdir>(threads_per_block, r_MyFluid);
+      const dim3 num_blocks_3d = numBlocksSpan<Xdir>(TPB_3d, r_MyFluid);
       ComputeMetrics_kernel<Xdir><<<num_blocks_3d, TPB_3d, 0, Xstream>>>(
-                           X, acc_dcsi_e, acc_dcsi_d, acc_dcsi_s,
+                           acc_dcsi_e, acc_dcsi_d, acc_dcsi_s,
                            acc_centerCoordinates, acc_nType_x,
                            r_MyFluid, Fluid_bounds, args.Grid_xWidth,
-                           getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid), size);
+                           getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
    }
 
    // Y direction
    {
-      const coord_t size = getSize<Ydir>(Fluid_bounds);
-
-      Domain Ghost = runtime->get_index_space_domain(ctx, args.YGhost.get_index_space());
-
-      // Store the reconstructed coordinate in a deferred buffer
-      DeferredBuffer<double, 3> Y(Memory::GPU_FB_MEM, Ghost);
-
-      // Launch the kernel to reconstruct the coordinates
-      for (RectInDomainIterator<3> Rit(Ghost); Rit(); Rit++) {
-         const dim3 TPB_3d = splitThreadsPerBlock<Ydir>(threads_per_block, *Rit);
-         const dim3 num_blocks_3d = dim3((getSize<Xdir>(*Rit) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                         (getSize<Ydir>(*Rit) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                         (getSize<Zdir>(*Rit) + (TPB_3d.z - 1)) / TPB_3d.z);
-         ReconstructCoordinates_kernel<Ydir><<<num_blocks_3d, TPB_3d, 0, Ystream>>>(
-                                       Y, acc_centerCoordinates, acc_nType_y, (*Rit),
-                                       Fluid_bounds, args.Grid_yWidth,
-                                       getSize<Xdir>(*Rit), getSize<Ydir>(*Rit), getSize<Zdir>(*Rit), size);
-      }
-
       // Launch the kernel that computes the metric
-      const dim3 TPB_3d = splitThreadsPerBlock<Ydir>(threads_per_block, r_MyFluid);
-      const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                      (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                      (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
+      const dim3 TPB_3d = splitThreadsPerBlockSpan<Ydir>(threads_per_block, r_MyFluid);
+      const dim3 num_blocks_3d = numBlocksSpan<Ydir>(TPB_3d, r_MyFluid);
       ComputeMetrics_kernel<Ydir><<<num_blocks_3d, TPB_3d, 0, Ystream>>>(
-                           Y, acc_deta_e, acc_deta_d, acc_deta_s,
+                           acc_deta_e, acc_deta_d, acc_deta_s,
                            acc_centerCoordinates, acc_nType_y,
                            r_MyFluid, Fluid_bounds, args.Grid_yWidth,
-                           getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid), size);
+                           getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
    }
 
    // Z direction
    {
-      const coord_t size = getSize<Zdir>(Fluid_bounds);
-
-      Domain Ghost = runtime->get_index_space_domain(ctx, args.ZGhost.get_index_space());
-
-      // Store the reconstructed coordinate in a deferred buffer
-      DeferredBuffer<double, 3> Z(Memory::GPU_FB_MEM, Ghost);
-
-      // Launch the kernel to reconstruct the coordinates
-      for (RectInDomainIterator<3> Rit(Ghost); Rit(); Rit++) {
-         const dim3 TPB_3d = splitThreadsPerBlock<Zdir>(threads_per_block, *Rit);
-         const dim3 num_blocks_3d = dim3((getSize<Xdir>(*Rit) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                         (getSize<Ydir>(*Rit) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                         (getSize<Zdir>(*Rit) + (TPB_3d.z - 1)) / TPB_3d.z);
-         ReconstructCoordinates_kernel<Zdir><<<num_blocks_3d, TPB_3d, 0, Zstream>>>(
-                                       Z, acc_centerCoordinates, acc_nType_z, (*Rit),
-                                       Fluid_bounds, args.Grid_zWidth,
-                                       getSize<Xdir>(*Rit), getSize<Ydir>(*Rit), getSize<Zdir>(*Rit), size);
-      }
-
       // Launch the kernel that computes the metric
-      const dim3 TPB_3d = splitThreadsPerBlock<Zdir>(threads_per_block, r_MyFluid);
-      const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                      (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                      (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
+      const dim3 TPB_3d = splitThreadsPerBlockSpan<Zdir>(threads_per_block, r_MyFluid);
+      const dim3 num_blocks_3d = numBlocksSpan<Zdir>(TPB_3d, r_MyFluid);
       ComputeMetrics_kernel<Zdir><<<num_blocks_3d, TPB_3d, 0, Zstream>>>(
-                           Z, acc_dzet_e, acc_dzet_d, acc_dzet_s,
+                           acc_dzet_e, acc_dzet_d, acc_dzet_s,
                            acc_centerCoordinates, acc_nType_z,
                            r_MyFluid, Fluid_bounds, args.Grid_zWidth,
-                           getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid), size);
+                           getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
    }
 
    // Cleanup the streams

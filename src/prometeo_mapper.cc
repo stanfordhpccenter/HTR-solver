@@ -384,7 +384,7 @@ public:
          unsigned coord =
             (dim_ == 0) ? (dir_ ? 0 : parent_.ranks_per_dim_[0]-1) :
             (dim_ == 1) ? (dir_ ? 0 : parent_.ranks_per_dim_[1]-1) :
-           /*dim_ == 2*/  (dir_ ? 0 : parent_.ranks_per_dim_[1]-1) ;
+           /*dim_ == 2*/  (dir_ ? 0 : parent_.ranks_per_dim_[2]-1) ;
          return
             (dim_ == 0) ? Point<3>(coord, point[0], point[1]) :
             (dim_ == 1) ? Point<3>(point[0], coord, point[1]) :
@@ -510,6 +510,10 @@ private:
          EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
          EQUALS(task.get_task_name(), "GetRescalingData") ||
          EQUALS(task.get_task_name(), "cache_grid_translation") ||
+#ifdef ELECTRIC_FIELD
+         EQUALS(task.get_task_name(), "initCoefficients")  ||
+         EQUALS(task.get_task_name(), "InitWaveNumbers") ||
+#endif
          STARTS_WITH(task.get_task_name(), "FastInterp") ||
          STARTS_WITH(task.get_task_name(), "readTileAttr")) {
 
@@ -582,6 +586,10 @@ private:
                EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
                EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
                EQUALS(task.get_task_name(), "GetRescalingData") ||
+#ifdef ELECTRIC_FIELD
+               EQUALS(task.get_task_name(), "initCoefficients")  ||
+               EQUALS(task.get_task_name(), "InitWaveNumbers") ||
+#endif
                STARTS_WITH(task.get_task_name(), "FastInterp") ||
                STARTS_WITH(task.get_task_name(), "__unary_") ||
                STARTS_WITH(task.get_task_name(), "__binary_") ||
@@ -632,6 +640,10 @@ private:
                EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
                EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
                EQUALS(task.get_task_name(), "GetRescalingData") ||
+#ifdef ELECTRIC_FIELD
+               EQUALS(task.get_task_name(), "initCoefficients")  ||
+               EQUALS(task.get_task_name(), "InitWaveNumbers") ||
+#endif
                EQUALS(task.get_task_name(), "cache_grid_translation") ||
                STARTS_WITH(task.get_task_name(), "FastInterp") ||
                STARTS_WITH(task.get_task_name(), "Exports.Console_Write") ||
@@ -789,7 +801,7 @@ public:
           STARTS_WITH(task.get_task_name(), "UpdateUsingDiffusionFlux") ||
 //          STARTS_WITH(task.get_task_name(), "CorrectUsingFlux") ||
           STARTS_WITH(task.get_task_name(), "UpdateVars") ||
-          STARTS_WITH(task.get_task_name(), "Exports.UpdateChemistry")) {
+          STARTS_WITH(task.get_task_name(), "UpdateChemistry")) {
          priority = 1;
       }
       return priority;
@@ -885,8 +897,30 @@ public:
    // zero-copy memory.
    virtual Memory default_policy_select_target_memory(MapperContext ctx,
                                                       Processor target_proc,
-                                                      const RegionRequirement& req) {
-      return DefaultMapper::default_policy_select_target_memory(ctx, target_proc, req);
+                                                      const RegionRequirement& req,
+                                                      MemoryConstraint mc) {
+#ifdef ELECTRIC_FIELD
+      // A root region uses the default policy
+      if (!runtime->has_parent_logical_partition(ctx, req.region)) {
+         LOG.debug() << "Root region uses default target memory";
+         return DefaultMapper::default_policy_select_target_memory(ctx, target_proc, req, mc);
+      }
+
+      // Get partition name
+      LogicalPartition parent_partition = runtime->get_parent_logical_partition(ctx, req.region);
+      const char *name = get_partition_name(ctx, parent_partition);
+      CHECK(name != NULL, "Found an unnamed partition");
+
+#ifdef REALM_USE_CUDA
+      if (EQUALS(name, "Poisson_plans"))
+         // Put FFT plans in zero-copy memory.
+         return Utilities::MachineQueryInterface::find_memory_kind(machine, target_proc,
+                                                                   Memory::Z_COPY_MEM);
+#endif
+#endif
+
+      // Otherwise go through the standard path
+      return DefaultMapper::default_policy_select_target_memory(ctx, target_proc, req, mc);
    }
 
    // Disable an optimization done by the default mapper (attempts to reuse an
@@ -912,7 +946,7 @@ public:
       if (EQUALS(name, "p_All") ||
           EQUALS(name, "p_Interior") ||
           EQUALS(name, "p_AllBCs") ||
-          EQUALS(name, "p_solved") || 
+          EQUALS(name, "p_solved") ||
           EQUALS(name, "p_GradientGhosts") ||
           EQUALS(name, "p_MetricGhosts") ||
           EQUALS(name, "p_x_divg")  || EQUALS(name, "p_y_divg")  || EQUALS(name, "p_z_divg") ||

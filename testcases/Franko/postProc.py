@@ -202,7 +202,7 @@ cfLam = 0.664*np.sqrt((rhoW*muW)/(rhoInf*muInf))/np.sqrt((rhoInf*UInf*xGrid/muIn
 cfTurb, indT = getCfTurb((xGrid-xOrigin)/deltaStarIn)
 
 plt.figure(0)
-plt.plot((xGrid-xOrigin)/deltaStarIn/100, 2.0*Xavg.tau[:,3]/(rhoInf*UInf**2)*1e4,        label="Present formulation")
+plt.plot((xGrid-xOrigin)/deltaStarIn/100, 2.0*Xavg.tau[:,1]/(rhoInf*UInf**2)*1e4,        label="Present formulation")
 plt.plot((xGrid-xOrigin)/deltaStarIn/100,                              cfLam*1e4, '--k', label="Laminar BL")
 plt.plot((xGrid[indT:]-xOrigin)/deltaStarIn/100,               cfTurb[indT:]*1e4, '-.k', label="Turbulent BL")
 plt.plot(                 CfProf["x"][:].values,          CfProf["Cf"][:].values,  'ok', label="Franko and Lele (2013)")

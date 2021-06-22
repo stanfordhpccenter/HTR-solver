@@ -64,12 +64,17 @@ U_Ox = c_Ox*Ma_Ox
 
 # Inlet displacement thickness
 h = mu_Ox*ReIn/((U_F-U_Ox)*rho_Ox)
-config["Integrator"]["vorticityScale"] = (U_F-U_Ox)/h
 
 # Rescale quantities
-config["Grid"]["xWidth"] *= h
-config["Grid"]["yWidth"] *= h
-config["Grid"]["zWidth"] *= h
+U_F  *= np.sqrt(rho_Ox/PInf)
+U_Ox *= np.sqrt(rho_Ox/PInf)
+config["Flow"]["mixture"]["LRef"] = h
+config["Flow"]["mixture"]["PRef"] = PInf
+config["Flow"]["mixture"]["TRef"] = TInf
+config["Integrator"]["EulerScheme"]["vorticityScale"] = (U_F-U_Ox)/1.0
+#config["Grid"]["xWidth"] *= h
+#config["Grid"]["yWidth"] *= h
+#config["Grid"]["zWidth"] *= h
 config["Grid"]["origin"][1] = -0.5*config["Grid"]["yWidth"]
 
 ##############################################################################
@@ -80,18 +85,18 @@ assert config["BC"]["xBCLeft"]["VelocityProfile"]["type"] == "File"
 config["BC"]["xBCLeft"]["VelocityProfile"]["FileDir"] = restartDir
 assert config["BC"]["xBCLeft"]["TemperatureProfile"]["type"] == "File"
 config["BC"]["xBCLeft"]["TemperatureProfile"]["FileDir"] = restartDir
-config["BC"]["xBCLeft"]["P"] = PInf
+config["BC"]["xBCLeft"]["P"] = 1.0
 assert config["BC"]["xBCLeft"]["MixtureProfile"]["type"] == "File"
 config["BC"]["xBCLeft"]["MixtureProfile"]["FileDir"] = restartDir
 
 assert config["BC"]["xBCRight"]["type"] == "NSCBC_Outflow"
-config["BC"]["xBCRight"]["P"] = PInf
+config["BC"]["xBCRight"]["P"] = 1.0
 
 assert config["BC"]["yBCLeft"]["type"] == "NSCBC_Outflow"
-config['BC']["yBCLeft"]["P"] = PInf
+config['BC']["yBCLeft"]["P"] = 1.0
 
 assert config["BC"]["yBCRight"]["type"] == "NSCBC_Outflow"
-config["BC"]["yBCRight"]["P"] = PInf
+config["BC"]["yBCRight"]["P"] = 1.0
 
 ##############################################################################
 #                              Generate Grid                                 #
@@ -99,7 +104,7 @@ config["BC"]["yBCRight"]["P"] = PInf
 
 xGrid, dx = gridGen.GetGrid(config["Grid"]["origin"][0],
                             config["Grid"]["xWidth"],
-                            config["Grid"]["xNum"], 
+                            config["Grid"]["xNum"],
                             config["Grid"]["xType"],
                             1.0,
                             False)
@@ -107,14 +112,14 @@ xGrid, dx = gridGen.GetGrid(config["Grid"]["origin"][0],
 
 yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
                             config["Grid"]["yWidth"],
-                            config["Grid"]["yNum"], 
+                            config["Grid"]["yNum"],
                             config["Grid"]["yType"],
                             config["Grid"]["yStretching"],
                             False)
 
 zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
                             config["Grid"]["zWidth"],
-                            config["Grid"]["zNum"], 
+                            config["Grid"]["zNum"],
                             config["Grid"]["zType"],
                             1.0,
                             True)
@@ -166,8 +171,9 @@ halo = [1, 1, 0]
 if not os.path.exists(restartDir):
    os.makedirs(restartDir)
 
-def profile(y, U1, U2, theta):
-   return 0.5*(U1+U2) + 0.5*(U1-U2)*np.tanh(0.5*(y-0.5*h)/theta)
+def profile(y, U1, U2, ell, theta):
+   theta *= ell
+   return 0.5*(U1+U2) + 0.5*(U1-U2)*np.tanh(0.5*(y-0.5*ell)/theta)
 
 def writeTile(xt, yt, zt):
    lo_bound = [(xt  )*NxTile  +halo[0], (yt  )*NyTile  +halo[1], (zt  )*NzTile  +halo[2]]
@@ -196,22 +202,22 @@ def writeTile(xt, yt, zt):
    velocity          = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
    dudtBoundary      = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
    dTdtBoundary      = np.ndarray(shape)
-   pressure[:] = PInf
+   pressure[:] = 1.0
+   temperature[:] = 1.0
+   rho        [:] = 1.0
+   dudtBoundary[:] = [0.0, 0.0, 0.0]
+   dTdtBoundary[:] = 0.0
    for (k,kc) in enumerate(centerCoordinates):
       for (j,jc) in enumerate(kc):
          for (i,ic) in enumerate(jc):
             y = abs(yGrid[j+lo_bound[1]])
-            u    = profile(y, U_F,  U_Ox, 0.05*h)
-            X_F  = profile(y, 1.0, 1e-60, 0.05*h)
+            u    = profile(y, U_F,  U_Ox, 1.0, 0.05)
+            X_F  = profile(y, 1.0, 1e-60, 1.0, 0.05)
             X_Ox = 1.0-X_F
             centerCoordinates[k,j,i] = [xGrid[i+lo_bound[0]], yGrid[j+lo_bound[1]], zGrid[k+lo_bound[2]]]
             cellWidth        [k,j,i] = [   dx[i+lo_bound[0]],    dy[j+lo_bound[1]],    dz[k+lo_bound[2]]]
-            temperature      [k,j,i] = TInf
-            rho              [k,j,i] = 1.0
             MolarFracs       [k,j,i] = [X_F, X_Ox, 1e-60, 1e-60]
             velocity         [k,j,i] = [  u, 0.0, 0.0]
-            dudtBoundary     [k,j,i] = [0.0, 0.0, 0.0]
-            dTdtBoundary     [k,j,i] = 0.0
 
    with h5py.File(os.path.join(restartDir, filename), 'w') as fout:
       fout.attrs.create("SpeciesNames", ["CH4".encode(),
@@ -244,8 +250,6 @@ def writeTile(xt, yt, zt):
       fout["velocity"][:] = velocity
       fout["dudtBoundary"][:] = dudtBoundary
       fout["dTdtBoundary"][:] = dTdtBoundary
-      fout["velocity_old_NSCBC"][:] = velocity
-      fout["temperature_old_NSCBC"][:] = temperature
       fout["MolarFracs_profile"][:] = MolarFracs
       fout["velocity_profile"][:] = velocity
       fout["temperature_profile"][:] = temperature

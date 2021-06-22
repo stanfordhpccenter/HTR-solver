@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -29,7 +29,8 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
+return function(SCHEMA, MIX, TYPES, PART,
+                ELECTRIC_FIELD) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -40,6 +41,12 @@ local UTIL = require 'util-desugared'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
 local format = require "std/format"
+
+local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
+if ELECTRIC_FIELD then
+   types_inc_flags:insert("-DELECTRIC_FIELD")
+end
+local AVE_TYPES = terralib.includec("prometeo_average_types.h", types_inc_flags)
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -54,82 +61,9 @@ local Properties = CONST.Properties
 -- DATA STRUCTURES
 -------------------------------------------------------------------------------
 
-local struct Averages_columns {
-   weight : double;
-   -- Grid point
-   centerCoordinates : double[3];
-   -- Primitive variables
-   pressure_avg : double;
-   pressure_rms : double;
-   temperature_avg : double;
-   temperature_rms : double;
-   MolarFracs_avg : double[nSpec];
-   MolarFracs_rms : double[nSpec];
-   MassFracs_avg  : double[nSpec];
-   MassFracs_rms  : double[nSpec];
-   velocity_avg : double[3];
-   velocity_rms : double[3];
-   velocity_rey : double[3];
-   -- Properties
-   rho_avg : double;
-   rho_rms : double;
-   mu_avg  : double;
-   lam_avg : double;
-   Di_avg  : double[nSpec];
-   SoS_avg : double;
-   cp_avg  : double;
-   Ent_avg : double;
-   -- Chemical production rates
-   ProductionRates_avg : double[nSpec];
-   ProductionRates_rms : double[nSpec];
-   HeatReleaseRate_avg : double;
-   HeatReleaseRate_rms : double;
-   -- Favre averaged primitives
-   pressure_favg : double;
-   pressure_frms : double;
-   temperature_favg : double;
-   temperature_frms : double;
-   MolarFracs_favg : double[nSpec];
-   MolarFracs_frms : double[nSpec];
-   MassFracs_favg  : double[nSpec];
-   MassFracs_frms  : double[nSpec];
-   velocity_favg : double[3];
-   velocity_frms : double[3];
-   velocity_frey : double[3];
-   -- Favre averaged properties
-   mu_favg  : double;
-   lam_favg : double;
-   Di_favg  : double[nSpec];
-   SoS_favg : double;
-   cp_favg  : double;
-   Ent_favg : double;
-   -- Kinetic energy budgets (y is the inhomogeneous direction)
-   rhoUUv   : double[3];
-   Up       : double[3];
-   tau      : double[6];
-   utau_y   : double[3];
-   tauGradU : double[3];
-   pGradU   : double[3];
-   -- Fluxes
-   q        : double[3];
-   -- Dimensionless numbers
-   Pr       : double;
-   Pr_rms   : double;
-   Ec       : double;
-   Ec_rms   : double;
-   Ma       : double;
-   Sc       : double[nSpec];
-   -- Correlations
-   uT_avg   : double[3];
-   uT_favg  : double[3];
-   uYi_avg  : double[nSpec];
-   vYi_avg  : double[nSpec];
-   wYi_avg  : double[nSpec];
-   uYi_favg : double[nSpec];
-   vYi_favg : double[nSpec];
-   wYi_favg : double[nSpec];
+local Fluid_columns = TYPES.Fluid_columns
 
-}
+local Averages_columns = AVE_TYPES.Averages_columns
 
 local AveragesVars = terralib.newlist({
    'weight',
@@ -207,6 +141,18 @@ local AveragesVars = terralib.newlist({
    'wYi_favg'
 })
 
+-- Add electric varaibles to the lists
+local additionalVars = terralib.newlist({})
+if ELECTRIC_FIELD then
+   AveragesVars:insert("electricPotential_avg")
+   AveragesVars:insert("chargeDensity_avg")
+   additionalVars:insert("electricPotential")
+   additionalVars:insert("electricField")
+   if (MIX.nIons > 0) then
+      additionalVars:insert("Ki")
+   end
+end
+
 local HDF_RAKES = (require 'hdf_helper')(int2d, int2d, Averages_columns,
                                                        AveragesVars,
                                                        {},
@@ -243,6 +189,10 @@ Exports.AvgList = {
    p_Fluid_YZAvg = regentlib.newsymbol("p_Fluid_YZAvg"),
    p_Fluid_XZAvg = regentlib.newsymbol("p_Fluid_XZAvg"),
    p_Fluid_XYAvg = regentlib.newsymbol("p_Fluid_XYAvg"),
+   -- considered partitions of the Fluid domain that provide support to gradient stencil
+   p_Gradient_YZAvg = regentlib.newsymbol("p_Gradient_YZAvg"),
+   p_Gradient_XZAvg = regentlib.newsymbol("p_Gradient_XZAvg"),
+   p_Gradient_XYAvg = regentlib.newsymbol("p_Gradient_XYAvg"),
    -- tiles of Fluid where the average kernels will be launched
    YZAvg_tiles = regentlib.newsymbol(),
    XZAvg_tiles = regentlib.newsymbol(),
@@ -273,6 +223,10 @@ Exports.AvgList = {
    p_Fluid_XAvg = regentlib.newsymbol("p_Fluid_XAvg"),
    p_Fluid_YAvg = regentlib.newsymbol("p_Fluid_YAvg"),
    p_Fluid_ZAvg = regentlib.newsymbol("p_Fluid_ZAvg"),
+   -- considered partitions of the Fluid domain that provide support to gradient stencil
+   p_Gradient_XAvg = regentlib.newsymbol("p_Gradient_YZAvg"),
+   p_Gradient_YAvg = regentlib.newsymbol("p_Gradient_XZAvg"),
+   p_Gradient_ZAvg = regentlib.newsymbol("p_Gradient_XYAvg"),
    -- tiles of Fluid where the average kernels will be launched
    XAvg_tiles = regentlib.newsymbol(),
    YAvg_tiles = regentlib.newsymbol(),
@@ -303,7 +257,13 @@ local function mkInitializeAverages(nd)
       fill(Averages.MassFracs_rms,  [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
       fill(Averages.velocity_avg, array(0.0, 0.0, 0.0))
       fill(Averages.velocity_rms, array(0.0, 0.0, 0.0))
-      fill(Averages.velocity_rey, array(0.0, 0.0, 0.0))
+      fill(Averages.velocity_rey, array(0.0, 0.0, 0.0));
+[(function() local __quotes = terralib.newlist()
+if ELECTRIC_FIELD then __quotes:insert(rquote
+      -- Electric quantities
+      fill(Averages.electricPotential_avg, 0.0)
+      fill(Averages.chargeDensity_avg, 0.0)
+end) end return __quotes end)()];
       -- Properties
       fill(Averages.rho_avg, 0.0)
       fill(Averages.rho_rms, 0.0)
@@ -366,236 +326,63 @@ local function mkInitializeAverages(nd)
    return InitializeAverages
 end
 
-local function emitAddAvg1(r, c, avg, c_avg, Integrator_deltaTime) return rquote
-
-   var weight = r[c].cellWidth[0]*r[c].cellWidth[1]*r[c].cellWidth[2]*Integrator_deltaTime
-   var rhoWeight = weight*r[c].rho
-
-   avg[c_avg].weight += weight
-
-   -- Grid point
-   avg[c_avg].centerCoordinates += [UTIL.mkArrayConstant(3, weight)]*r[c].centerCoordinates
-
-   -- Primitive variables
-   avg[c_avg].pressure_avg    += weight*r[c].pressure
-   avg[c_avg].pressure_rms    += weight*r[c].pressure*r[c].pressure
-   avg[c_avg].temperature_avg += weight*r[c].temperature
-   avg[c_avg].temperature_rms += weight*r[c].temperature*r[c].temperature
-   avg[c_avg].MolarFracs_avg += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MolarFracs
-   avg[c_avg].MolarFracs_rms += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MolarFracs*r[c].MolarFracs
-   avg[c_avg].velocity_avg += [UTIL.mkArrayConstant(3, weight)]*r[c].velocity
-   avg[c_avg].velocity_rms += [UTIL.mkArrayConstant(3, weight)]*r[c].velocity*r[c].velocity
-   avg[c_avg].velocity_rey += array(r[c].velocity[0]*r[c].velocity[1]*weight,
-                                    r[c].velocity[0]*r[c].velocity[2]*weight,
-                                    r[c].velocity[1]*r[c].velocity[2]*weight)
-
-   -- Favre averaged primitives
-   avg[c_avg].pressure_favg    += rhoWeight*r[c].pressure
-   avg[c_avg].pressure_frms    += rhoWeight*r[c].pressure*r[c].pressure
-   avg[c_avg].temperature_favg += rhoWeight*r[c].temperature
-   avg[c_avg].temperature_frms += rhoWeight*r[c].temperature*r[c].temperature
-   avg[c_avg].MolarFracs_favg  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MolarFracs
-   avg[c_avg].MolarFracs_frms  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MolarFracs*r[c].MolarFracs
-   avg[c_avg].velocity_favg += [UTIL.mkArrayConstant(3, rhoWeight)]*r[c].velocity
-   avg[c_avg].velocity_frms += [UTIL.mkArrayConstant(3, rhoWeight)]*r[c].velocity*r[c].velocity
-   avg[c_avg].velocity_frey += array(r[c].velocity[0]*r[c].velocity[1]*rhoWeight,
-                                          r[c].velocity[0]*r[c].velocity[2]*rhoWeight,
-                                          r[c].velocity[1]*r[c].velocity[2]*rhoWeight)
-
-   -- Kinetic energy budgets (y is the inhomogeneous direction)
-   var tau_xx = r[c].mu*(4.0*r[c].velocityGradientX[0] - 2.0*r[c].velocityGradientY[1] - 2.0*r[c].velocityGradientZ[2])/3.0
-   var tau_yy = r[c].mu*(4.0*r[c].velocityGradientY[1] - 2.0*r[c].velocityGradientX[0] - 2.0*r[c].velocityGradientZ[2])/3.0
-   var tau_zz = r[c].mu*(4.0*r[c].velocityGradientZ[2] - 2.0*r[c].velocityGradientX[0] - 2.0-r[c].velocityGradientY[1])/3.0
-   var tau_xy = r[c].mu*(r[c].velocityGradientX[1] + r[c].velocityGradientY[0])
-   var tau_yz = r[c].mu*(r[c].velocityGradientY[2] + r[c].velocityGradientZ[1])
-   var tau_xz = r[c].mu*(r[c].velocityGradientZ[0] + r[c].velocityGradientX[2])
-
-   avg[c_avg].rhoUUv += array(r[c].rho*r[c].velocity[0]*r[c].velocity[0]*r[c].velocity[1]*weight,
-                              r[c].rho*r[c].velocity[1]*r[c].velocity[1]*r[c].velocity[1]*weight,
-                              r[c].rho*r[c].velocity[2]*r[c].velocity[2]*r[c].velocity[1]*weight)
-   avg[c_avg].Up += array(r[c].velocity[0]*r[c].pressure*weight,
-                          r[c].velocity[1]*r[c].pressure*weight,
-                          r[c].velocity[2]*r[c].pressure*weight)
-   avg[c_avg].tau += [UTIL.mkArrayConstant(6, weight)]*array(tau_xx, tau_yy, tau_zz, tau_xy, tau_yz, tau_xz)
-   avg[c_avg].utau_y += array(r[c].velocity[0]*tau_xy*weight,
-                              r[c].velocity[1]*tau_yy*weight,
-                              r[c].velocity[2]*tau_yz*weight)
-   avg[c_avg].tauGradU += array((tau_xx*r[c].velocityGradientX[0] + tau_xy*r[c].velocityGradientY[0] + tau_xz*r[c].velocityGradientZ[0])*weight,
-                                (tau_xy*r[c].velocityGradientX[1] + tau_yy*r[c].velocityGradientY[1] + tau_yz*r[c].velocityGradientZ[1])*weight,
-                                (tau_xz*r[c].velocityGradientX[2] + tau_yz*r[c].velocityGradientY[2] + tau_zz*r[c].velocityGradientZ[2])*weight)
-   avg[c_avg].pGradU += array(r[c].pressure*r[c].velocityGradientX[0]*weight,
-                              r[c].pressure*r[c].velocityGradientY[1]*weight,
-                              r[c].pressure*r[c].velocityGradientZ[2]*weight)
-
-   -- Fluxes
-   avg[c_avg].q += array( -r[c].lam*r[c].temperatureGradient[0]*weight,
-                          -r[c].lam*r[c].temperatureGradient[1]*weight,
-                          -r[c].lam*r[c].temperatureGradient[2]*weight)
-end end
-
-local function emitAddAvg2(r, c, avg, c_avg, Integrator_deltaTime, mix) return rquote
-
-   var weight = r[c].cellWidth[0]*r[c].cellWidth[1]*r[c].cellWidth[2]*Integrator_deltaTime
-   var rhoWeight = weight*r[c].rho
-
-   -- Properties
-   var cp   = MIX.GetHeatCapacity(r[c].temperature, r[c].MassFracs, mix)
-   var hi : double[nSpec]
-   var Ent  = 0.0
-   for i=0, nSpec do
-      hi[i] = MIX.GetSpeciesEnthalpy(i, r[c].temperature, mix)
-      Ent += r[c].MassFracs[i]*hi[i]
-   end
-   avg[c_avg].rho_avg += weight*r[c].rho
-   avg[c_avg].rho_rms += weight*r[c].rho*r[c].rho
-   avg[c_avg].mu_avg  += weight*r[c].mu
-   avg[c_avg].lam_avg += weight*r[c].lam
-   avg[c_avg].Di_avg  += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].Di
-   avg[c_avg].SoS_avg += weight*r[c].SoS
-   avg[c_avg].cp_avg  += weight*cp
-   avg[c_avg].Ent_avg += weight*Ent
-
-   -- Mass fractions
-   avg[c_avg].MassFracs_avg  += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MassFracs
-   avg[c_avg].MassFracs_rms  += [UTIL.mkArrayConstant(nSpec, weight)]*r[c].MassFracs*r[c].MassFracs
-
-   -- Favre averaged properties
-   avg[c_avg].mu_favg  += rhoWeight*r[c].mu
-   avg[c_avg].lam_favg += rhoWeight*r[c].lam
-   avg[c_avg].Di_favg  += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].Di
-   avg[c_avg].SoS_favg += rhoWeight*r[c].SoS
-   avg[c_avg].cp_favg  += rhoWeight*cp
-   avg[c_avg].Ent_favg += rhoWeight*Ent
-
-   -- Favre averaged mass fractions
-   avg[c_avg].MassFracs_favg += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MassFracs
-   avg[c_avg].MassFracs_frms += [UTIL.mkArrayConstant(nSpec, rhoWeight)]*r[c].MassFracs*r[c].MassFracs
-
-   -- Chemical production rates
-   var w    = MIX.GetProductionRates(r[c].rho, r[c].pressure, r[c].temperature, r[c].MassFracs, mix)
-   var HR = 0.0
-   for i=0, nSpec do
-      HR -= w[i]*hi[i]
-   end
-   avg[c_avg].ProductionRates_avg += [UTIL.mkArrayConstant(nSpec, weight)]*w
-   avg[c_avg].ProductionRates_rms += [UTIL.mkArrayConstant(nSpec, weight)]*w*w
-   avg[c_avg].HeatReleaseRate_avg += weight*HR
-   avg[c_avg].HeatReleaseRate_rms += weight*HR*HR
-
-   -- Dimensionless numbers
-   var u2 = MACRO.dot(r[c].velocity, r[c].velocity)
-   var Pr = cp*r[c].mu/r[c].lam
-   var Ec = u2/(cp*r[c].temperature)
-   var nu = r[c].mu/r[c].rho
-   var Sc : double[nSpec]
-   for i=0, nSpec do
-      Sc[i] = nu/r[c].Di[i]
-   end
-   avg[c_avg].Pr     += weight*Pr
-   avg[c_avg].Pr_rms += weight*Pr*Pr
-   avg[c_avg].Ec     += weight*Ec
-   avg[c_avg].Ec_rms += weight*Ec*Ec
-   avg[c_avg].Ma     += weight*sqrt(u2)/r[c].SoS
-   avg[c_avg].Sc     += [UTIL.mkArrayConstant(nSpec, weight)]*Sc
-
-   -- Correlations
-   var weightU    = weight*r[c].velocity[0]
-   var weightV    = weight*r[c].velocity[1]
-   var weightW    = weight*r[c].velocity[2]
-   var weightRhoU = weight*r[c].velocity[0]*r[c].rho
-   var weightRhoV = weight*r[c].velocity[1]*r[c].rho
-   var weightRhoW = weight*r[c].velocity[2]*r[c].rho
-
-   avg[c_avg].uT_avg  += array(   weightU*r[c].temperature,
-                                  weightV*r[c].temperature,
-                                  weightW*r[c].temperature)
-   avg[c_avg].uT_favg += array(weightRhoU*r[c].temperature,
-                               weightRhoV*r[c].temperature,
-                               weightRhoW*r[c].temperature)
-
-   avg[c_avg].uYi_avg  += [UTIL.mkArrayConstant(nSpec, weightU)]*r[c].MassFracs
-   avg[c_avg].vYi_avg  += [UTIL.mkArrayConstant(nSpec, weightV)]*r[c].MassFracs
-   avg[c_avg].wYi_avg  += [UTIL.mkArrayConstant(nSpec, weightW)]*r[c].MassFracs
-   avg[c_avg].uYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoU)]*r[c].MassFracs
-   avg[c_avg].vYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoV)]*r[c].MassFracs
-   avg[c_avg].wYi_favg += [UTIL.mkArrayConstant(nSpec, weightRhoW)]*r[c].MassFracs
-
-end end
-
 local function mkAddAverages(dir)
-   local AddAverages
-   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task AddAverages(Fluid : region(ispace(int3d), Fluid_columns),
-                    Averages : region(ispace(int2d), Averages_columns),
-                    mix : MIX.Mixture,
-                    Integrator_deltaTime : double)
+   local Add2DAverages
+   extern task Add2DAverages(Ghost : region(ispace(int3d), Fluid_columns),
+                             Fluid : region(ispace(int3d), Fluid_columns),
+                             Averages : region(ispace(int2d), Averages_columns),
+                             mix : MIX.Mixture,
+                             Fluid_bounds : rect3d,
+                             Integrator_deltaTime : double)
    where
+      reads(Ghost.{temperature, MolarFracs}),
       reads(Fluid.centerCoordinates),
       reads(Fluid.cellWidth),
-      reads(Fluid.[Primitives]),
-      reads(Fluid.MassFracs),
+      reads(Fluid.{nType_x, nType_y, nType_z}),
+      reads(Fluid.{dcsi_d, deta_d, dzet_d}),
+      reads(Fluid.{pressure, MassFracs, velocity}),
       reads(Fluid.[Properties]),
       reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-      reads(Fluid.temperatureGradient),
+      reads(Fluid.[additionalVars]),
       reduces+(Averages.[AveragesVars])
-   do
-      __demand(__openmp)
-      for c in Fluid do
-         var c_avg = int2d{c.[dir], Averages.bounds.lo.y};
-         [emitAddAvg1(Fluid, c, Averages, c_avg, Integrator_deltaTime)]
-      end
-
-      __demand(__openmp)
-      for c in Fluid do
-         var c_avg = int2d{c.[dir], Averages.bounds.lo.y};
-         [emitAddAvg2(Fluid, c, Averages, c_avg, Integrator_deltaTime, mix)]
-      end
    end
-   return AddAverages
+   if dir == "x" then
+      Add2DAverages:set_task_id(TYPES.TID_Add2DAveragesX)
+   elseif dir == "y" then
+      Add2DAverages:set_task_id(TYPES.TID_Add2DAveragesY)
+   elseif dir == "z" then
+      Add2DAverages:set_task_id(TYPES.TID_Add2DAveragesZ)
+   else assert(false) end
+   return Add2DAverages
 end
 
 local function mkAdd1DAverages(dir)
    local Add1DAverages
-   local t1
-   local t2
-   if dir == "x" then
-      t1 = "y"
-      t2 = "z"
-   elseif dir == "y" then
-      t1 = "x"
-      t2 = "z"
-   elseif dir == "z" then
-      t1 = "x"
-      t2 = "y"
-   else assert(false) end
-
-   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task Add1DAverages(Fluid : region(ispace(int3d), Fluid_columns),
-                      Averages : region(ispace(int3d), Averages_columns),
-                      mix : MIX.Mixture,
-                      Integrator_deltaTime : double)
+   extern task Add1DAverages(Ghost : region(ispace(int3d), Fluid_columns),
+                             Fluid : region(ispace(int3d), Fluid_columns),
+                             Averages : region(ispace(int3d), Averages_columns),
+                             mix : MIX.Mixture,
+                             Fluid_bounds : rect3d,
+                             Integrator_deltaTime : double)
    where
+      reads(Ghost.{temperature, MolarFracs}),
       reads(Fluid.centerCoordinates),
       reads(Fluid.cellWidth),
-      reads(Fluid.[Primitives]),
-      reads(Fluid.MassFracs),
+      reads(Fluid.{nType_x, nType_y, nType_z}),
+      reads(Fluid.{dcsi_d, deta_d, dzet_d}),
+      reads(Fluid.{pressure, MassFracs, velocity}),
       reads(Fluid.[Properties]),
       reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-      reads(Fluid.temperatureGradient),
+      reads(Fluid.[additionalVars]),
       reduces+(Averages.[AveragesVars])
-   do
-      __demand(__openmp)
-      for c in Fluid do
-         var c_avg = int3d{c.[t1], c.[t2], Averages.bounds.lo.z};
-         [emitAddAvg1(Fluid, c, Averages, c_avg, Integrator_deltaTime)]
-      end
-
-      __demand(__openmp)
-      for c in Fluid do
-         var c_avg = int3d{c.[t1], c.[t2], Averages.bounds.lo.z};
-         [emitAddAvg2(Fluid, c, Averages, c_avg, Integrator_deltaTime, mix)]
-      end
    end
+   if dir == "x" then
+      Add1DAverages:set_task_id(TYPES.TID_Add1DAveragesX)
+   elseif dir == "y" then
+      Add1DAverages:set_task_id(TYPES.TID_Add1DAveragesY)
+   elseif dir == "z" then
+      Add1DAverages:set_task_id(TYPES.TID_Add1DAveragesZ)
+   else assert(false) end
    return Add1DAverages
 end
 
@@ -615,28 +402,7 @@ end
 -------------------------------------------------------------------------------
 -- EXPORTED ROUTINES
 -------------------------------------------------------------------------------
-function Exports.DeclSymbols(s, Grid, Fluid, p_All, config, MAPPER)
-
-   local function ColorFluid(inp, color) return rquote
-      for p=0, [inp].length do
-         -- Clip rectangles from the input
-         var vol = [inp].values[p]
-         vol.fromCell[0] max= 0
-         vol.fromCell[1] max= 0
-         vol.fromCell[2] max= 0
-         vol.uptoCell[0] min= config.Grid.xNum + 2*Grid.xBnum
-         vol.uptoCell[1] min= config.Grid.yNum + 2*Grid.yBnum
-         vol.uptoCell[2] min= config.Grid.zNum + 2*Grid.zBnum
-         -- add to the coloring
-         var rect = rect3d{
-            lo = int3d{vol.fromCell[0], vol.fromCell[1], vol.fromCell[2]},
-            hi = int3d{vol.uptoCell[0], vol.uptoCell[1], vol.uptoCell[2]}}
-         regentlib.c.legion_domain_point_coloring_color_domain(color, int1d(p), rect)
-      end
-      -- Add one point to avoid errors
-      if [inp].length == 0 then regentlib.c.legion_domain_point_coloring_color_domain(color, int1d(0), rect3d{lo = int3d{0,0,0}, hi = int3d{0,0,0}}) end
-   end end
-
+function Exports.DeclSymbols(s, Grid, Fluid, Fluid_Zones, config, MAPPER)
    return rquote
 
       var sampleId = config.Mapping.sampleId
@@ -693,54 +459,6 @@ function Exports.DeclSymbols(s, Grid, Fluid, p_All, config, MAPPER)
                          (s.XZAverages, is_YrakesTiles, int2d{Grid.yBnum,0}, int2d{0,0})
       var [s.p_Zrakes] = [UTIL.mkPartitionByTile(int2d, int2d, Averages_columns)]
                          (s.XYAverages, is_ZrakesTiles, int2d{Grid.zBnum,0}, int2d{0,0})
-
-      -- Partition the Fluid region based on the specified regions
-      -- One color for each type of rakes
-      var p_YZAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
-      var p_XZAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
-      var p_XYAvg_coloring = regentlib.c.legion_domain_point_coloring_create();
-
-      -- Color X rakes
-      [ColorFluid(rexpr config.IO.YZAverages end, p_YZAvg_coloring)];
-      -- Color Y rakes
-      [ColorFluid(rexpr config.IO.XZAverages end, p_XZAvg_coloring)];
-      -- Color Z rakes
-      [ColorFluid(rexpr config.IO.XYAverages end, p_XYAvg_coloring)];
-
-      -- Make partions of Fluid
-      var Fluid_YZAvg = partition(aliased, Fluid, p_YZAvg_coloring, ispace(int1d, max(config.IO.YZAverages.length, 1)))
-      var Fluid_XZAvg = partition(aliased, Fluid, p_XZAvg_coloring, ispace(int1d, max(config.IO.XZAverages.length, 1)))
-      var Fluid_XYAvg = partition(aliased, Fluid, p_XYAvg_coloring, ispace(int1d, max(config.IO.XYAverages.length, 1)))
-
-      -- Split over tiles
-      var [s.p_Fluid_YZAvg] = cross_product(Fluid_YZAvg, p_All)
-      var [s.p_Fluid_XZAvg] = cross_product(Fluid_XZAvg, p_All)
-      var [s.p_Fluid_XYAvg] = cross_product(Fluid_XYAvg, p_All)
-
-      -- Attach names for mapping
-      for r=0, config.IO.YZAverages.length do
-         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_YZAvg[r] end, "p_Fluid_YZAvg")];
-      end
-      for r=0, config.IO.XZAverages.length do
-         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_XZAvg[r] end, "p_Fluid_XZAvg")];
-      end
-      for r=0, config.IO.XYAverages.length do
-         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_XYAvg[r] end, "p_Fluid_XYAvg")];
-      end
-
-      -- Destroy colors
-      regentlib.c.legion_domain_point_coloring_destroy(p_YZAvg_coloring)
-      regentlib.c.legion_domain_point_coloring_destroy(p_XZAvg_coloring)
-      regentlib.c.legion_domain_point_coloring_destroy(p_XYAvg_coloring)
-
-      -- Extract relevant index spaces
-      var aux = region(p_All.colors, bool)
-      var [s.YZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
-                              (Fluid, Fluid_YZAvg, p_All, s.p_Fluid_YZAvg, aux)
-      var [s.XZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
-                              (Fluid, Fluid_XZAvg, p_All, s.p_Fluid_XZAvg, aux)
-      var [s.XYAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
-                              (Fluid, Fluid_XYAvg, p_All, s.p_Fluid_XYAvg, aux)
 
       -------------------------------------------------------------------------
       -- 1D Averages
@@ -803,9 +521,93 @@ function Exports.DeclSymbols(s, Grid, Fluid, p_All, config, MAPPER)
                                (s.YAverages_copy, s.is_IO_XZplanes, int3d{Grid.xBnum,Grid.zBnum,0}, int3d{0,0,0})
       var [s.IO_XYplanes_copy] = [UTIL.mkPartitionByTile(int3d, int3d, Averages_columns, "IO_XYplanes_copy")]
                                (s.ZAverages_copy, s.is_IO_XYplanes, int3d{Grid.xBnum,Grid.yBnum,0}, int3d{0,0,0})
+   end
+end
 
+function Exports.InitPartitions(s, Grid, Fluid, p_All, config)
+
+   local function ColorFluid(inp, color) return rquote
+      for p=0, [inp].length do
+         -- Clip rectangles from the input
+         var vol = [inp].values[p]
+         vol.fromCell[0] max= 0
+         vol.fromCell[1] max= 0
+         vol.fromCell[2] max= 0
+         vol.uptoCell[0] min= config.Grid.xNum + 2*Grid.xBnum
+         vol.uptoCell[1] min= config.Grid.yNum + 2*Grid.yBnum
+         vol.uptoCell[2] min= config.Grid.zNum + 2*Grid.zBnum
+         -- add to the coloring
+         var rect = rect3d{
+            lo = int3d{vol.fromCell[0], vol.fromCell[1], vol.fromCell[2]},
+            hi = int3d{vol.uptoCell[0], vol.uptoCell[1], vol.uptoCell[2]}}
+         regentlib.c.legion_domain_point_coloring_color_domain(color, int1d(p), rect)
+      end
+      -- Add one point to avoid errors
+      if [inp].length == 0 then regentlib.c.legion_domain_point_coloring_color_domain(color, int1d(0), rect3d{lo = int3d{0,0,0}, hi = int3d{0,0,0}}) end
+   end end
+
+   return rquote
+      -------------------------------------------------------------------------
+      -- 2D Averages
+      -------------------------------------------------------------------------
       -- Partition the Fluid region based on the specified regions
       -- One color for each type of rakes
+      var p_YZAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
+      var p_XZAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
+      var p_XYAvg_coloring = regentlib.c.legion_domain_point_coloring_create();
+
+      -- Color X rakes
+      [ColorFluid(rexpr config.IO.YZAverages end, p_YZAvg_coloring)];
+      -- Color Y rakes
+      [ColorFluid(rexpr config.IO.XZAverages end, p_XZAvg_coloring)];
+      -- Color Z rakes
+      [ColorFluid(rexpr config.IO.XYAverages end, p_XYAvg_coloring)];
+
+      -- Make partions of Fluid
+      var Fluid_YZAvg = partition(aliased, Fluid, p_YZAvg_coloring, ispace(int1d, max(config.IO.YZAverages.length, 1)))
+      var Fluid_XZAvg = partition(aliased, Fluid, p_XZAvg_coloring, ispace(int1d, max(config.IO.XZAverages.length, 1)))
+      var Fluid_XYAvg = partition(aliased, Fluid, p_XYAvg_coloring, ispace(int1d, max(config.IO.XYAverages.length, 1)))
+
+      -- Split over tiles
+      var [s.p_Fluid_YZAvg] = cross_product(Fluid_YZAvg, p_All)
+      var [s.p_Fluid_XZAvg] = cross_product(Fluid_XZAvg, p_All)
+      var [s.p_Fluid_XYAvg] = cross_product(Fluid_XYAvg, p_All)
+
+      -- Attach names for mapping
+      for r=0, config.IO.YZAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_YZAvg[r] end, "p_Fluid_YZAvg")];
+      end
+      for r=0, config.IO.XZAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_XZAvg[r] end, "p_Fluid_XZAvg")];
+      end
+      for r=0, config.IO.XYAverages.length do
+         [UTIL.emitPartitionNameAttach(rexpr s.p_Fluid_XYAvg[r] end, "p_Fluid_XYAvg")];
+      end
+
+      -- Destroy colors
+      regentlib.c.legion_domain_point_coloring_destroy(p_YZAvg_coloring)
+      regentlib.c.legion_domain_point_coloring_destroy(p_XZAvg_coloring)
+      regentlib.c.legion_domain_point_coloring_destroy(p_XYAvg_coloring)
+
+      -- Extract relevant index spaces
+      var aux = region(p_All.colors, bool)
+      var [s.YZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_YZAvg, p_All, s.p_Fluid_YZAvg, aux)
+      var [s.XZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_XZAvg, p_All, s.p_Fluid_XZAvg, aux)
+      var [s.XYAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
+                              (Fluid, Fluid_XYAvg, p_All, s.p_Fluid_XYAvg, aux)
+
+      -- Determine partitions for gradient operations
+      var [s.p_Gradient_YZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_YZAvg, s.p_Fluid_YZAvg, config.IO.YZAverages.length)
+      var [s.p_Gradient_XZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XZAvg, s.p_Fluid_XZAvg, config.IO.XZAverages.length)
+      var [s.p_Gradient_XYAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XYAvg, s.p_Fluid_XYAvg, config.IO.XYAverages.length)
+
+      -------------------------------------------------------------------------
+      -- 1D Averages
+      -------------------------------------------------------------------------
+      -- Partition the Fluid region based on the specified regions
+      -- One color for each type of planes
       var p_XAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
       var p_YAvg_coloring = regentlib.c.legion_domain_point_coloring_create()
       var p_ZAvg_coloring = regentlib.c.legion_domain_point_coloring_create();
@@ -851,6 +653,11 @@ function Exports.DeclSymbols(s, Grid, Fluid, p_All, config, MAPPER)
                               (Fluid, Fluid_YAvg, p_All, s.p_Fluid_YAvg, aux)
       var [s.ZAvg_tiles] = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns)]
                               (Fluid, Fluid_ZAvg, p_All, s.p_Fluid_ZAvg, aux)
+
+      -- Determine partitions for gradient operations of 2D averages
+      var [s.p_Gradient_XAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XAvg, s.p_Fluid_XAvg, config.IO.XAverages.length)
+      var [s.p_Gradient_YAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_YAvg, s.p_Fluid_YAvg, config.IO.YAverages.length)
+      var [s.p_Gradient_ZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_ZAvg, s.p_Fluid_ZAvg, config.IO.ZAverages.length)
    end
 end
 
@@ -905,7 +712,7 @@ function Exports.ReadAverages(s, config)
    end
 end
 
-function Exports.AddAverages(s, deltaTime, config, Mix)
+function Exports.AddAverages(s, Fluid_bounds, deltaTime, config, Mix)
    local function Add2DAvg(dir)
       local avg
       local p1
@@ -928,14 +735,17 @@ function Exports.AddAverages(s, deltaTime, config, Mix)
          mk_c = function(c, rake) return rexpr int2d{c.z,rake} end end
       else assert(false) end
       local fp = "p_Fluid_"..p2
+      local gp = "p_Gradient_"..p2
       local t = p2.."_tiles"
       return rquote
          for rake=0, config.IO.[avg].length do
             var cs = s.[t][rake].ispace
+            var { p_GradientGhosts } = s.[gp][rake]
             __demand(__index_launch)
             for c in cs do
-               [mkAddAverages(dir)](s.[fp][rake][c], s.[p1][ [mk_c(c, rake)] ],
-                                    Mix, deltaTime)
+               [mkAddAverages(dir)](p_GradientGhosts[c], s.[fp][rake][c],
+                                    s.[p1][ [mk_c(c, rake)] ], Mix,
+                                    Fluid_bounds, deltaTime)
             end
          end
       end
@@ -962,14 +772,17 @@ function Exports.AddAverages(s, deltaTime, config, Mix)
          mk_c = function(c, plane) return rexpr int3d{c.x, c.y, plane} end end
       else assert(false) end
       local fp = "p_Fluid_"..p2
+      local gp = "p_Gradient_"..p2
       local t = p2.."_tiles"
       return rquote
          for plane=0, config.IO.[avg].length do
             var cs = s.[t][plane].ispace
+            var { p_GradientGhosts } = s.[gp][plane]
             __demand(__index_launch)
             for c in cs do
-               [mkAdd1DAverages(dir)](s.[fp][plane][c], s.[p1][ [mk_c(c, plane)] ],
-                                    Mix, deltaTime)
+               [mkAdd1DAverages(dir)](p_GradientGhosts[c], s.[fp][plane][c],
+                                      s.[p1][ [mk_c(c, plane)] ], Mix,
+                                      Fluid_bounds, deltaTime)
             end
          end
       end
@@ -986,7 +799,7 @@ function Exports.AddAverages(s, deltaTime, config, Mix)
    end
 end
 
-function Exports.WriteAverages(s, tiles, dirname, IO, SpeciesNames, config)
+function Exports.WriteAverages(_2, s, tiles, dirname, IO, SpeciesNames, config)
    local function write2DAvg(dir)
       local avg
       local p
@@ -1006,7 +819,7 @@ function Exports.WriteAverages(s, tiles, dirname, IO, SpeciesNames, config)
             ---------------------------------
             var Avgdirname = [&int8](C.malloc(256))
             format.snprint(Avgdirname, 256, "{}/{}", dirname, [avg])
-            var _1 = IO.createDir(Avgdirname)
+            var _1 = IO.createDir(_2, Avgdirname)
             _1 = HDF_RAKES.dump(               _1, s.[is], Avgdirname, s.[avg], s.[acopy], s.[p], s.[pcopy])
             _1 = HDF_RAKES.write.SpeciesNames( _1, s.[is], Avgdirname, s.[avg], s.[p], SpeciesNames)
             C.free(Avgdirname)
@@ -1036,7 +849,7 @@ function Exports.WriteAverages(s, tiles, dirname, IO, SpeciesNames, config)
             ----------------------------------------------
             var Avgdirname = [&int8](C.malloc(256))
             format.snprint(Avgdirname, 256, "{}/{}", dirname, [avg])
-            var _1 = IO.createDir(Avgdirname)
+            var _1 = IO.createDir(_2, Avgdirname)
             _1 = HDF_PLANES.dump(               _1, s.[is], Avgdirname, s.[avg], s.[acopy], s.[iop], s.[iopcopy])
             _1 = HDF_PLANES.write.SpeciesNames( _1, s.[is], Avgdirname, s.[avg], s.[iop], SpeciesNames)
             C.free(Avgdirname)

@@ -32,8 +32,7 @@
       "cfl" : -0.9,
       "fixedDeltaTime" : 5.0e-3,
       "implicitChemistry" : false,
-      "hybridScheme" : false,
-      "vorticityScale" : 1.0
+      "EulerScheme" : { "type" : "TENOA" }
    },
 
    "BC" : {
@@ -88,5 +87,7 @@
       "ZAverages" : [],
       "volumeProbes" : [],
       "volumeProbes" : []
-   }
+   },
+
+   "Efield" : { "type" : "Off" }
 }

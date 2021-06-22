@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -93,18 +93,30 @@ if os.getenv("AVERAGES") == "0" then
 end
 
 -------------------------------------------------------------------------------
--- IMPORT MIXTURE
+-- ACTIVATE ELECTRIC FIELD SOLVER
+-------------------------------------------------------------------------------
+
+local ELECTRIC_FIELD = false
+if os.getenv("ELECTRIC_FIELD") == "1" then
+   ELECTRIC_FIELD = true
+   print("#############################################################################")
+   print("WARNING: You are compiling with electric field solver.")
+   print("#############################################################################")
+end
+
+-------------------------------------------------------------------------------
+-- CHECK THAT MIXTURE VARIABLE IS WELL SET
 -------------------------------------------------------------------------------
 
 local MIX
 if (os.getenv("EOS") == "ConstPropMix") then
-   MIX = (require "ConstPropMix")(SCHEMA)
 elseif (os.getenv("EOS") == "IsentropicMix") then
-   MIX = (require 'IsentropicMix')(SCHEMA)
 elseif (os.getenv("EOS") == "AirMix") then
-   MIX = (require 'AirMix')(SCHEMA)
 elseif (os.getenv("EOS") == "CH41StMix") then
-   MIX = (require 'CH41StMix')(SCHEMA)
+elseif (os.getenv("EOS") == "CH4_30SpMix") then
+elseif (os.getenv("EOS") == "CH4_43SpIonsMix") then
+elseif (os.getenv("EOS") == "FFCM1Mix") then
+elseif (os.getenv("EOS") == "BoivinMix") then
 elseif (os.getenv("EOS") == nil) then
    error ("You must define EOS enviromnment variable")
 else
@@ -118,6 +130,13 @@ end
 local Config = SCHEMA.Config
 --local MultiConfig = SCHEMA.MultiConfig
 
+local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
+if ELECTRIC_FIELD then
+   types_inc_flags:insert("-DELECTRIC_FIELD")
+end
+local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
+local Fluid_columns = TYPES.Fluid_columns
+
 -------------------------------------------------------------------------------
 -- CONSTANTS
 -------------------------------------------------------------------------------
@@ -127,15 +146,12 @@ local CONST = require "prometeo_const"
 local RK_C = CONST.RK_C
 
 -- Variable indices
-local nSpec = MIX.nSpec       -- Number of species composing the mixture
-local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
+local nSpec = TYPES.nSpec       -- Number of species composing the mixture
+local nEq = CONST.GetnEq(TYPES) -- Total number of unknowns for the implicit solver
 
 -------------------------------------------------------------------------------
--- DATA STRUCTURES
+-- DEFINE I/O VARIABLES
 -------------------------------------------------------------------------------
-
-local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
-local Fluid_columns = TYPES.Fluid_columns
 
 local IOVars = terralib.newlist({
    'centerCoordinates',
@@ -163,6 +179,12 @@ local DebugVars = terralib.newlist({
    'shockSensorZ'
 })
 
+-- Add electric varaibles to the output
+if ELECTRIC_FIELD then
+   IOVars:insert("electricPotential")
+   DebugVars:insert("electricPotential")
+end
+
 -------------------------------------------------------------------------------
 -- EXTERNAL MODULES IMPORTS
 -------------------------------------------------------------------------------
@@ -183,8 +205,11 @@ end
 -- Macro
 local MACRO = require "prometeo_macro"
 
+-- Mixture registration routines
+local MIX = (require 'prometeo_mixture')(SCHEMA, TYPES)
+
 -- Metric routines
-local METRIC = (require 'prometeo_metric')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
 
 -- Partitioning routines
 local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
@@ -196,29 +221,32 @@ local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns, PART.zones_partiti
 local IO = (require 'prometeo_IO')(SCHEMA)
 
 -- Stability conditions routines
-local CFL = (require 'prometeo_cfl')(MIX, Fluid_columns)
+local CFL = (require 'prometeo_cfl')(MIX, TYPES, ELECTRIC_FIELD)
 
 -- Chemistry routines
-local CHEM = (require 'prometeo_chem')(SCHEMA, MIX, Fluid_columns, ATOMIC)
+local CHEM = (require 'prometeo_chem')(SCHEMA, MIX, TYPES, ATOMIC)
 
 -- Initialization routines
-local INIT = (require 'prometeo_init')(SCHEMA, MIX, CHEM, Fluid_columns)
+local INIT = (require 'prometeo_init')(SCHEMA, MIX, Fluid_columns)
 
 -- Conserved->Primitives/Primitives->Conserved and properties routines
-local VARS = (require 'prometeo_variables')(SCHEMA, MIX, METRIC, Fluid_columns, DEBUG_OUTPUT)
+local VARS = (require 'prometeo_variables')(SCHEMA, MIX, METRIC, TYPES, ELECTRIC_FIELD)
 
 -- Fluxes routines
-local SENSOR = (require 'prometeo_sensor')(SCHEMA, MIX, Fluid_columns, PART.zones_partitions, PART.ghost_partitions)
+local SENSOR = (require 'prometeo_sensor')(SCHEMA, MIX, TYPES, Fluid_columns,
+                                           PART.zones_partitions, PART.ghost_partitions)
 
 -- BCOND routines
-local BCOND = (require 'prometeo_bc')(SCHEMA, MIX, CHEM, Fluid_columns, PART.zones_partitions, DEBUG_OUTPUT)
+local BCOND = (require 'prometeo_bc')(SCHEMA, MIX, TYPES, PART.zones_partitions,
+                                      ELECTRIC_FIELD)
 
 -- RK routines
 local RK = (require 'prometeo_rk')(nEq, Fluid_columns)
 
 -- RHS routines
-local RHS = (require 'prometeo_rhs')(SCHEMA, MIX, METRIC, Fluid_columns,
-                                     PART.zones_partitions, PART.ghost_partitions, ATOMIC)
+local RHS = (require 'prometeo_rhs')(SCHEMA, MIX, METRIC, TYPES, Fluid_columns,
+                                     PART.zones_partitions, PART.ghost_partitions,
+                                     ATOMIC)
 
 -- Volume averages routines
 local STAT = (require 'prometeo_stat')(MIX, Fluid_columns)
@@ -229,11 +257,19 @@ local PROFILES = (require 'prometeo_profiles')(SCHEMA, MIX, Fluid_columns)
 -- Averages routines
 local AVG
 if AVERAGES then
-   AVG = (require 'prometeo_average')(SCHEMA, MIX, Fluid_columns)
+   AVG = (require 'prometeo_average')(SCHEMA, MIX, TYPES, PART,
+                                      ELECTRIC_FIELD)
 end
 
 -- Probes routines
 local PROBES = (require 'prometeo_probe')(SCHEMA, MIX, IO, Fluid_columns)
+
+local Efield
+if ELECTRIC_FIELD then
+   EFIELD = (require "prometeo_electricField")(SCHEMA, MIX, TYPES,
+                                               PART.zones_partitions, PART.ghost_partitions,
+                                               ATOMIC)
+end
 
 -------------------------------------------------------------------------------
 -- INITIALIZATION ROUTINES
@@ -274,15 +310,22 @@ do
    [emitFill(p_All, tiles, "lam", rexpr 0.0 end)];
    [emitFill(p_All, tiles, "Di" , UTIL.mkArrayConstant(nSpec, rexpr 0.0 end))];
    [emitFill(p_All, tiles, "SoS", rexpr 0.0 end)];
+@ESCAPE if (ELECTRIC_FIELD and  (MIX.nIons > 0)) then @EMIT
+   [emitFill(p_All, tiles, "Ki", UTIL.mkArrayConstant(MIX.nIons, rexpr 0.0 end))];
+@TIME end @EPACSE
    [emitFill(p_All, tiles, "pressure", rexpr 0.0 end)];
    [emitFill(p_All, tiles, "temperature", rexpr 0.0 end)];
    [emitFill(p_All, tiles, "MassFracs",  UTIL.mkArrayConstant(nSpec, rexpr 0.0 end))];
    [emitFill(p_All, tiles, "MolarFracs", UTIL.mkArrayConstant(nSpec, rexpr 0.0 end))];
    [emitFill(p_All, tiles, "velocity",            rexpr array(0.0, 0.0, 0.0) end)];
+@ESCAPE if ELECTRIC_FIELD then @EMIT
+   [emitFill(p_All, tiles, "electricPotential", rexpr 0.0 end)];
+   [emitFill(p_All, tiles, "electricField", rexpr array(0.0, 0.0, 0.0) end)];
+@TIME end @EPACSE
    [emitFill(p_All, tiles, "velocityGradientX",   rexpr array(0.0, 0.0, 0.0) end)];
    [emitFill(p_All, tiles, "velocityGradientY",   rexpr array(0.0, 0.0, 0.0) end)];
    [emitFill(p_All, tiles, "velocityGradientZ",   rexpr array(0.0, 0.0, 0.0) end)];
-   [emitFill(p_All, tiles, "temperatureGradient", rexpr array(0.0, 0.0, 0.0) end)];
+--   [emitFill(p_All, tiles, "temperatureGradient", rexpr array(0.0, 0.0, 0.0) end)];
    [emitFill(p_All, tiles, "Conserved",       UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
    [emitFill(p_All, tiles, "Conserved_old",   UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
 --   [emitFill(p_All, tiles, "Conserved_hat",   UTIL.mkArrayConstant(nEq, rexpr 0.0 end))];
@@ -370,7 +413,7 @@ do
       var SpeciesNames = MIX.GetSpeciesNames(Mix)
       var dirname = [&int8](C.malloc(256))
       C.snprintf(dirname, 256, '%s/debugOut', config.Mapping.outDir)
-      var _1 = IO.createDir(dirname)
+      var _1 = IO.createDir(0, dirname)
       _1 = HDF_DEBUG.dump(                 _1, tiles_output, dirname, Fluid, Fluid_copy, p_Output, p_Output_copy)
       _1 = HDF_DEBUG.write.timeStep(       _1, tiles_output, dirname, Fluid, p_Output, Integrator_timeStep)
       _1 = HDF_DEBUG.write.simTime(        _1, tiles_output, dirname, Fluid, p_Output, Integrator_simTime)
@@ -414,7 +457,7 @@ do
    var [T] = IO.Console_WriteTiming(0, config.Mapping, "UpdatePrimitivesAndBCsFromConserved", @LINE, C.legion_get_current_time_in_nanos())
 @TIME end @EPACSE
 
-   -- Update all primitive variables... 
+   -- Update all primitive variables...
    __demand(__index_launch)
    for c in tiles do
       VARS.UpdatePrimitiveFromConserved(p_All[c], p_Interior[c], Mix)
@@ -489,6 +532,7 @@ do
         xNeg_ispace, xPos_ispace,
         yNeg_ispace, yPos_ispace,
         zNeg_ispace, zPos_ispace} = Fluid_Zones;
+   var {p_GradientGhosts} = Fluid_Ghost;
 
 @ESCAPE if TIMING then @EMIT
    var [T] = IO.Console_WriteTiming(0, config.Mapping, "UpdateDerivatives", @LINE, C.legion_get_current_time_in_nanos())
@@ -533,6 +577,17 @@ do
    [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivatives", @LINE, C.legion_get_current_time_in_nanos())
 @TIME end @EPACSE
 
+@ESCAPE if ELECTRIC_FIELD then @EMIT
+   __demand(__index_launch)
+   for c in tiles do
+      EFIELD.AddIonWindSources(p_GradientGhosts[c], p_All[c], p_solved[c], Fluid.bounds, Mix);
+   end
+@TIME end @EPACSE
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
    -- Add turbulent forcing
    if config.Flow.turbForcing.type == SCHEMA.TurbForcingModel_CHANNEL then
       -- Add forcing
@@ -559,6 +614,15 @@ do
 
 @ESCAPE if TIMING then @EMIT
    [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+@ESCAPE if (ELECTRIC_FIELD and (MIX.nIons > 0)) then @EMIT
+   -- Use ion drift fluxes to update conserved variables derivatives
+   EFIELD.UpdateUsingIonDriftFlux(Fluid, tiles, Fluid_Zones, Fluid_Ghost, Mix, config);
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
 @TIME end @EPACSE
 
    -- Update using NSCBC_Outflow bcs
@@ -626,6 +690,17 @@ do
       __demand(__index_launch)
       for c in xNeg_ispace do
          [RHS.mkUpdateUsingFluxNSCBCInflow("xNeg")](p_All[c], p_xNeg[c], Mix)
+      end
+   end
+
+@ESCAPE if TIMING then @EMIT
+   [T] = IO.Console_WriteTiming([T], config.Mapping, "UpdateDerivatives", @LINE, C.legion_get_current_time_in_nanos())
+@TIME end @EPACSE
+
+   if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in yNeg_ispace do
+         [RHS.mkUpdateUsingFluxNSCBCInflow("yNeg")](p_All[c], p_yNeg[c], Mix)
       end
    end
 
@@ -706,6 +781,8 @@ local function mkInstance() local INSTANCE = {}
       NZout = regentlib.newsymbol(),
       numTilesOut = regentlib.newsymbol(),
    }
+
+   -- Boundary conditions symbols
    local BC = BCOND.BCDataList
 
    local Integrator_deltaTime = regentlib.newsymbol()
@@ -730,12 +807,20 @@ local function mkInstance() local INSTANCE = {}
 
    local interior_volume = regentlib.newsymbol(double)
 
+   -- Averages symbols
    local Averages
    if AVERAGES then
       Averages = AVG.AvgList
    end
 
+   -- Probes symbols
    local Probes = PROBES.ProbesList
+
+   -- Electric field symbols
+   local EfieldData
+   if ELECTRIC_FIELD then
+      EfieldData = EFIELD.DataList
+   end
 
    -----------------------------------------------------------------------------
    -- Exported symbols
@@ -768,12 +853,6 @@ local function mkInstance() local INSTANCE = {}
       IO.Console_WriteHeader(config.Mapping)
 
       ---------------------------------------------------------------------------
-      -- Initialize the mixture
-      ---------------------------------------------------------------------------
-
-      var [Mix] = MIX.InitMixture(config)
- 
-      ---------------------------------------------------------------------------
       -- Declare & initialize state variables
       ---------------------------------------------------------------------------
 
@@ -785,6 +864,9 @@ local function mkInstance() local INSTANCE = {}
       if config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic then Grid.xBnum = 0 end
       if config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic then Grid.yBnum = 0 end
       if config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic then Grid.zBnum = 0 end
+      if config.BC.xBCLeft.type ~= SCHEMA.FlowBC_Periodic then regentlib.assert(config.Grid.xNum > 4, "HTR needs at least five points along non-periodic boundaries (x dir)") end
+      if config.BC.yBCLeft.type ~= SCHEMA.FlowBC_Periodic then regentlib.assert(config.Grid.yNum > 4, "HTR needs at least five points along non-periodic boundaries (y dir)") end
+      if config.BC.zBCLeft.type ~= SCHEMA.FlowBC_Periodic then regentlib.assert(config.Grid.zNum > 4, "HTR needs at least five points along non-periodic boundaries (z dir)") end
 
       var [Grid.NX] = config.Mapping.tiles[0]
       var [Grid.NY] = config.Mapping.tiles[1]
@@ -834,17 +916,23 @@ local function mkInstance() local INSTANCE = {}
       var [tiles] = ispace(int3d, {Grid.NX, Grid.NY, Grid.NZ})
 
       -- Fluid Partitioning
-      var [Fluid_Zones]      = PART.PartitionZones(Fluid, tiles, config, Grid.xBnum, Grid.yBnum, Grid.zBnum)
+      var [Fluid_Zones] = PART.PartitionZones(Fluid, tiles, config, Grid.xBnum, Grid.yBnum, Grid.zBnum)
 
       -- Unpack the partitions that we are going to need
-      var {p_All} = Fluid_Zones; 
+      var {p_All} = Fluid_Zones;
 
       -- Output partitionig
       var [tiles_output] = ispace(int3d, {Grid.NXout, Grid.NYout, Grid.NZout})
       var [Fluid_Output]      = PART.PartitionOutput(Fluid,      tiles_output, config,
                                                      Grid.xBnum, Grid.yBnum, Grid.zBnum)
       var [Fluid_Output_copy] = PART.PartitionOutput(Fluid_copy, tiles_output, config,
-                                                     Grid.xBnum, Grid.yBnum, Grid.zBnum);
+                                                     Grid.xBnum, Grid.yBnum, Grid.zBnum)
+
+      ---------------------------------------------------------------------------
+      -- Initialize the mixture
+      ---------------------------------------------------------------------------
+
+      var [Mix] = MIX.InitMixture(Fluid, tiles, Fluid_Zones.p_All, config);
 
       ---------------------------------------------------------------------------
       -- Declare BC symbols
@@ -852,14 +940,14 @@ local function mkInstance() local INSTANCE = {}
       [BCOND.DeclSymbols(BC, Fluid, tiles, Fluid_Zones, Grid, config, Mix)];
 
       ---------------------------------------------------------------------------
-      -- Create one-dimensional averages
+      -- Declare averages symbols
       ---------------------------------------------------------------------------
 @ESCAPE if AVERAGES then @EMIT
       [AVG.DeclSymbols(Averages, Grid, Fluid, p_All, config, MAPPER)];
 @TIME end @EPACSE
 
       ---------------------------------------------------------------------------
-      -- Create probes
+      -- Declare probes symbols
       ---------------------------------------------------------------------------
       [PROBES.DeclSymbols(Probes, Grid, Fluid, p_All, config)];
 
@@ -870,9 +958,16 @@ local function mkInstance() local INSTANCE = {}
          var vProbe = config.IO.volumeProbes.values[p]
          var dirname = [&int8](C.malloc(256))
          C.snprintf(dirname, 256, '%s/%s', config.Mapping.outDir, vProbe.outDir)
-         var _1 = IO.createDir(dirname)
+         var _1 = IO.createDir(0, dirname)
          C.free(dirname)
       end
+
+      ---------------------------------------------------------------------------
+      -- Declare electric field solver symbols
+      ---------------------------------------------------------------------------
+@ESCAPE if ELECTRIC_FIELD then @EMIT
+      [EFIELD.DeclSymbols(EfieldData, Fluid, tiles, Fluid_Zones, Grid, config, MAPPER)];
+@TIME end @EPACSE
 
    end end -- DeclSymbols
 
@@ -911,10 +1006,10 @@ local function mkInstance() local INSTANCE = {}
       var [Fluid_Ghost] = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
 
       -- Unpack the ghost partitions that we are going to need
-      var {p_MetricGhostsX, p_MetricGhostsY, p_MetricGhostsZ, p_MetricGhosts} = Fluid_Ghost
+      var {p_MetricGhosts} = Fluid_Ghost
 
       -- Wait for the ghost partitions to be created
-      -- TODO: we could aviod this fence by changing the mapper such that 
+      -- TODO: we could aviod this fence by changing the mapper such that
       --       we ensure that all the recurring tasks are mapped on regions
       --       collocated with the Ghosts
       __fence(__execution, __block)
@@ -960,6 +1055,8 @@ local function mkInstance() local INSTANCE = {}
       -- Initialize averages
       ---------------------------------------------------------------------------
 @ESCAPE if AVERAGES then @EMIT
+      -- Initialize averages partitions
+      [AVG.InitPartitions(Averages, Grid, Fluid, p_All, config)];
       -- Initialize averages
       [AVG.InitRakesAndPlanes(Averages)];
 @TIME end @EPACSE
@@ -968,7 +1065,7 @@ local function mkInstance() local INSTANCE = {}
       -- Initialize solution
       ---------------------------------------------------------------------------
       if config.Flow.initCase.type == SCHEMA.FlowInitCase_Uniform then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initCase.u.Uniform.molarFracs, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initCase.u.Uniform.molarFracs, Mix)
          __demand(__index_launch)
          for c in tiles do
             INIT.InitializeUniform(p_All[c],
@@ -979,7 +1076,7 @@ local function mkInstance() local INSTANCE = {}
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_Random then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initCase.u.Random.molarFracs, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initCase.u.Random.molarFracs, Mix)
          __demand(__index_launch)
          for c in tiles do
             INIT.InitializeRandom(p_All[c],
@@ -990,7 +1087,7 @@ local function mkInstance() local INSTANCE = {}
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_TaylorGreen2DVortex then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initCase.u.TaylorGreen2DVortex.molarFracs, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initCase.u.TaylorGreen2DVortex.molarFracs, Mix)
          __demand(__index_launch)
          for c in tiles do
             INIT.InitializeTaylorGreen2D(p_All[c],
@@ -1005,7 +1102,7 @@ local function mkInstance() local INSTANCE = {}
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_TaylorGreen3DVortex then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initCase.u.TaylorGreen3DVortex.molarFracs, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initCase.u.TaylorGreen3DVortex.molarFracs, Mix)
          __demand(__index_launch)
          for c in tiles do
             INIT.InitializeTaylorGreen3D(p_All[c],
@@ -1020,7 +1117,7 @@ local function mkInstance() local INSTANCE = {}
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_Perturbed then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initCase.u.Perturbed.molarFracs, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initCase.u.Perturbed.molarFracs, Mix)
          __demand(__index_launch)
          for c in tiles do
             INIT.InitializePerturbed(p_All[c],
@@ -1031,42 +1128,42 @@ local function mkInstance() local INSTANCE = {}
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_RiemannTestOne then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initMixture, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initMixture, Mix)
          __demand(__index_launch)
          for c in tiles do
-            INIT.InitializeRiemannTestOne(p_All[c], initMolarFracs, Mix)
+            INIT.InitializeRiemannTestOne(p_All[c], initMolarFracs)
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_RiemannTestTwo then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initMixture, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initMixture, Mix)
          __demand(__index_launch)
          for c in tiles do
-            INIT.InitializeRiemannTestTwo(p_All[c], initMolarFracs, Mix)
+            INIT.InitializeRiemannTestTwo(p_All[c], initMolarFracs)
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_SodProblem then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initMixture, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initMixture, Mix)
          __demand(__index_launch)
          for c in tiles do
-            INIT.InitializeSodProblem(p_All[c], initMolarFracs, Mix)
+            INIT.InitializeSodProblem(p_All[c], initMolarFracs)
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_LaxProblem then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initMixture, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initMixture, Mix)
          __demand(__index_launch)
          for c in tiles do
-            INIT.InitializeLaxProblem(p_All[c], initMolarFracs, Mix)
+            INIT.InitializeLaxProblem(p_All[c], initMolarFracs)
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_ShuOsherProblem then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initMixture, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initMixture, Mix)
          __demand(__index_launch)
          for c in tiles do
-            INIT.InitializeShuOsherProblem(p_All[c], initMolarFracs, Mix)
+            INIT.InitializeShuOsherProblem(p_All[c], initMolarFracs)
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_VortexAdvection2D then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initMixture, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initMixture, Mix)
          __demand(__index_launch)
          for c in tiles do
             INIT.InitializeVortexAdvection2D(p_All[c],
@@ -1085,7 +1182,7 @@ local function mkInstance() local INSTANCE = {}
          end
 
       elseif config.Flow.initCase.type == SCHEMA.FlowInitCase_ChannelFlow then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initCase.u.ChannelFlow.molarFracs, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initCase.u.ChannelFlow.molarFracs, Mix)
          __demand(__index_launch)
          for c in tiles do
             INIT.InitializeChannelFlow(p_All[c],
@@ -1125,7 +1222,7 @@ local function mkInstance() local INSTANCE = {}
       end
 
       if config.Flow.resetMixture then
-         var initMolarFracs = CHEM.ParseConfigMixture(config.Flow.initMixture, Mix)
+         var initMolarFracs = MIX.ParseConfigMixture(config.Flow.initMixture, Mix)
          __demand(__index_launch)
          for c in tiles do
             CHEM.ResetMixture(p_All[c], p_Interior[c], initMolarFracs)
@@ -1138,9 +1235,6 @@ local function mkInstance() local INSTANCE = {}
       __demand(__index_launch)
       for c in tiles do
          METRIC.InitializeMetric(p_MetricGhosts[c],
-                                 p_MetricGhostsX[c],
-                                 p_MetricGhostsY[c],
-                                 p_MetricGhostsZ[c],
                                  p_All[c],
                                  Fluid_bounds,
                                  config.Grid.xWidth, config.Grid.yWidth, config.Grid.zWidth)
@@ -1158,6 +1252,13 @@ local function mkInstance() local INSTANCE = {}
       -- Initialize boundary conditions
       ---------------------------------------------------------------------------
       [BCOND.InitBCs(BC, Fluid_Zones, config, Mix)];
+
+      ---------------------------------------------------------------------------
+      -- Initialize electric field solver
+      ---------------------------------------------------------------------------
+@ESCAPE if ELECTRIC_FIELD then @EMIT
+      [EFIELD.Init(EfieldData, tiles, Grid, config)];
+@TIME end @EPACSE
 
       ---------------------------------------------------------------------------
       -- Initialize quantities for time stepping
@@ -1187,7 +1288,15 @@ local function mkInstance() local INSTANCE = {}
                                           BC.RecycleAverageFI,
                                           config,
                                           Mix,
-                                          Integrator_simTime)
+                                          Integrator_simTime);
+
+      ---------------------------------------------------------------------------
+      -- Update the electric field
+      ---------------------------------------------------------------------------
+@ESCAPE if ELECTRIC_FIELD then @EMIT
+      [EFIELD.UpdateElectricField(EfieldData, Fluid, Fluid_Zones, Fluid_Ghost,
+                                  tiles, Fluid_bounds, Mix, config)];
+@TIME end @EPACSE
 
       ---------------------------------------------------------------------------
       -- Initialize data for IO
@@ -1261,7 +1370,7 @@ local function mkInstance() local INSTANCE = {}
       var averageRhoU = 0.0
       __demand(__index_launch)
       for c in tiles do
-         AveragePressure      += STAT.CalculateAveragePressure(p_All[c], p_Interior[c]) 
+         AveragePressure      += STAT.CalculateAveragePressure(p_All[c], p_Interior[c])
       end
       __demand(__index_launch)
       for c in tiles do
@@ -1333,21 +1442,8 @@ local function mkInstance() local INSTANCE = {}
 
 @ESCAPE if AVERAGES then @EMIT
       -- Add averages
-      if ((Integrator_timeStep % config.IO.AveragesSamplingInterval == 0) and
-         ((config.IO.YZAverages.length ~= 0) or
-          (config.IO.XZAverages.length ~= 0) or
-          (config.IO.XYAverages.length ~= 0) or
-          (config.IO.XAverages.length  ~= 0) or
-          (config.IO.YAverages.length  ~= 0) or
-          (config.IO.ZAverages.length  ~= 0) )) then
-
-         -- Update temperature gradient for mean heat flux
-         __demand(__index_launch)
-         for c in tiles do
-            VARS.GetTemperatureGradients(p_GradientGhosts[c], p_All[c], Fluid_bounds)
-         end
-
-         [AVG.AddAverages(Averages, Integrator_deltaTime, config, Mix)]
+      if (Integrator_timeStep % config.IO.AveragesSamplingInterval == 0) then
+         [AVG.AddAverages(Averages, Fluid_bounds, Integrator_deltaTime, config, Mix)]
       end
 
 @ESCAPE if TIMING then @EMIT
@@ -1362,7 +1458,7 @@ local function mkInstance() local INSTANCE = {}
             var SpeciesNames = MIX.GetSpeciesNames(Mix)
             var dirname = [&int8](C.malloc(256))
             C.snprintf(dirname, 256, '%s/fluid_iter%010d', config.Mapping.outDir, Integrator_timeStep)
-            var _1 = IO.createDir(dirname)
+            var _1 = IO.createDir(0, dirname)
             _1 = HDF.dump(                 _1, tiles_output, dirname, Fluid, Fluid_copy, p_Output, p_Output_copy)
             _1 = HDF.write.timeStep(       _1, tiles_output, dirname, Fluid, p_Output, Integrator_timeStep)
             _1 = HDF.write.simTime(        _1, tiles_output, dirname, Fluid, p_Output, Integrator_simTime)
@@ -1371,7 +1467,7 @@ local function mkInstance() local INSTANCE = {}
             _1 = HDF.write.channelForcing( _1, tiles_output, dirname, Fluid, p_Output, config.Flow.turbForcing.u.CHANNEL.Forcing);
 
 @ESCAPE if AVERAGES then @EMIT
-            [AVG.WriteAverages(Averages, tiles, dirname, IO, SpeciesNames, config)];
+            [AVG.WriteAverages(_1, Averages, tiles, dirname, IO, SpeciesNames, config)];
 @TIME end @EPACSE
 
             C.free(dirname)
@@ -1391,7 +1487,7 @@ local function mkInstance() local INSTANCE = {}
             C.snprintf(dirname, 256, '%s/%s/iter%010d', config.Mapping.outDir, vProbe.outDir, Integrator_timeStep)
             var p_Vprobe      = static_cast(partition(disjoint, Fluid,      tiles_output), p_Vprobes[p])
             var p_Vprobe_copy = static_cast(partition(disjoint, Fluid_copy, tiles_output), p_Vprobes_copy[p])
-            var _1 = IO.createDir(dirname)
+            var _1 = IO.createDir(0, dirname)
             _1 = HDF.dump(                 _1, tiles_output, dirname, Fluid, Fluid_copy, p_Vprobe, p_Vprobe_copy)
             _1 = HDF.write.timeStep(       _1, tiles_output, dirname, Fluid, p_Vprobe, Integrator_timeStep)
             _1 = HDF.write.simTime(        _1, tiles_output, dirname, Fluid, p_Vprobe, Integrator_simTime)
@@ -1540,6 +1636,20 @@ local function mkInstance() local INSTANCE = {}
                                              Mix,
                                              Integrator_simTime);
 
+         -- Update the electric field
+@ESCAPE if ELECTRIC_FIELD then @EMIT
+   @ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+   @TIME end @EPACSE
+
+         [EFIELD.UpdateElectricField(EfieldData, Fluid, Fluid_Zones, Fluid_Ghost,
+                                     tiles, Fluid_bounds, Mix, config)];
+
+   @ESCAPE if TIMING then @EMIT
+         [T] = IO.Console_WriteTiming([T], config.Mapping, "workSingle", @LINE, C.legion_get_current_time_in_nanos())
+   @TIME end @EPACSE
+@TIME end @EPACSE
+
 @ESCAPE if DEBUG_OUTPUT then @EMIT
          CheckDebugOutput(Fluid, Fluid_copy,
                           tiles, tiles_output,
@@ -1561,7 +1671,7 @@ local function mkInstance() local INSTANCE = {}
                Integrator_simTime = Integrator_time_old + Integrator_deltaTime
          @TIME else @EMIT
                if config.Integrator.implicitChemistry then
-                  Integrator_simTime =   Integrator_time_old 
+                  Integrator_simTime =   Integrator_time_old
                                        + Integrator_deltaTime * 0.5 *(1.0 + [RK_C[STAGE][3]])
                else
                   Integrator_simTime = Integrator_time_old + [RK_C[STAGE][3]] * Integrator_deltaTime
@@ -1597,6 +1707,11 @@ local function mkInstance() local INSTANCE = {}
    -----------------------------------------------------------------------------
 
    function INSTANCE.Cleanup(config) return rquote
+
+      -- Cleanup electric field solver symbols
+@ESCAPE if ELECTRIC_FIELD then @EMIT
+      [EFIELD.Cleanup(EfieldData, tiles, config)];
+@TIME end @EPACSE
 
       -- Wait for everything above to finish
       __fence(__execution, __block)

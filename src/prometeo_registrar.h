@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -32,9 +32,17 @@
 
 #include "prometeo_mapper.h"
 #include "prometeo_variables.h"
+#include "prometeo_mixture.h"
 #include "prometeo_metric.h"
 #include "prometeo_sensor.h"
+#include "prometeo_chem.h"
+#include "prometeo_bc.h"
 #include "prometeo_rhs.h"
+#include "prometeo_cfl.h"
+#include "prometeo_average.h"
+#ifdef ELECTRIC_FIELD
+#include "prometeo_electricField.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {

@@ -19,12 +19,28 @@ local Ref_e = terralib.global(`arrayof(double, [r_e]))
 local Ref_d = terralib.global(`arrayof(double, [r_d]))
 local Ref_s = terralib.global(`arrayof(double, [r_s]))
 
-local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
+-------------------------------------------------------------------------------
+-- ACTIVATE ELECTRIC FIELD SOLVER
+-------------------------------------------------------------------------------
+
+local ELECTRIC_FIELD = false
+if os.getenv("ELECTRIC_FIELD") == "1" then
+   ELECTRIC_FIELD = true
+   print("#############################################################################")
+   print("WARNING: You are compiling with electric field solver.")
+   print("#############################################################################")
+end
+
+local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
+if ELECTRIC_FIELD then
+   types_inc_flags:insert("-DELECTRIC_FIELD")
+end
+local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
 local Fluid_columns = TYPES.Fluid_columns
 
 --External modules
 local MACRO = require "prometeo_macro"
-local METRIC = (require 'prometeo_metric')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
 local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
 local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns, PART.zones_partitions)
 
@@ -135,7 +151,7 @@ task main()
 
    -- Create partitions to support stencils
    var Fluid_Ghosts = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
-   var {p_MetricGhosts, p_MetricGhostsX, p_MetricGhostsY, p_MetricGhostsZ} = Fluid_Ghosts
+   var {p_MetricGhosts} = Fluid_Ghosts
 
    __demand(__index_launch)
    for c in tiles do
@@ -153,9 +169,6 @@ task main()
    __demand(__index_launch)
    for c in tiles do
       METRIC.InitializeMetric(p_MetricGhosts[c],
-                              p_MetricGhostsX[c],
-                              p_MetricGhostsY[c],
-                              p_MetricGhostsZ[c],
                               p_All[c],
                               Fluid_bounds,
                               xW, yW, zW);

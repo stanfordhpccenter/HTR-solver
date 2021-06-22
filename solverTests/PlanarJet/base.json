@@ -42,8 +42,10 @@
       "cfl" : 0.8,
       "fixedDeltaTime" : 4.0e-3,
       "implicitChemistry" : false,
-      "hybridScheme" : true,
-      "vorticityScale" : 1.0
+      "EulerScheme" : {
+         "type" : "Hybrid",
+         "vorticityScale" : 1.0
+      }
    },
 
    "BC" : {
@@ -80,7 +82,15 @@
    },
 
    "Flow" : {
-      "mixture": { "type" : "CH41StMix" },
+      "mixture": {
+         "type" : "CH41StMix",
+         "LRef" : 1.0,
+         "TRef" : 1.0,
+         "PRef" : 1.0,
+         "XiRef" : {
+            "Species" : [{"Name" : "O2", "MolarFrac" : 1.0 }]
+         }
+      },
       "initCase" : {
          "type" : "Restart",
          "restartDir" : ""
@@ -109,6 +119,7 @@
       "YAverages" : [],
       "ZAverages" : [],
       "volumeProbes" : []
-   }
+   },
 
+   "Efield" : { "type" : "Off" }
 }

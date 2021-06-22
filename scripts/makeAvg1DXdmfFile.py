@@ -49,7 +49,7 @@ XMF_FOOTER = """
 parser = argparse.ArgumentParser()
 parser.add_argument('--avgdir', nargs='?', const='.', default='.',
                     help='directory with all the simulation output')
-parser.add_argument('--nplane', nargs=1, default=0,
+parser.add_argument('--nplane', default=0, type=int,
                     help='index of the average plane to be processed')
 args = parser.parse_args()
 

@@ -32,8 +32,7 @@
       "cfl" : 0.9,
       "fixedDeltaTime" : 4.0e-3,
       "implicitChemistry" : false,
-      "hybridScheme" : true,
-      "vorticityScale" : 1.0
+      "EulerScheme" : { "type" : "SkewSymmetric" }
    },
 
    "BC" : {
@@ -121,5 +120,7 @@
       "YAverages" : [],
       "ZAverages" : [],
       "volumeProbes" : []
-   }
+   },
+
+   "Efield" : { "type" : "Off" }
 }

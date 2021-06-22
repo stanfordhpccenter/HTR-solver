@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -47,9 +47,9 @@
 #endif
 #endif
 
-// Modified Docros sensor 
+// Modified Docros sensor
 __CUDA_H__
-inline double DucrosSensor(const double *vGradX, const double *vGradY, const double *vGradZ, const double eps) {
+inline double DucrosSensor(const Vec3 &vGradX, const Vec3 &vGradY, const Vec3 &vGradZ, const double eps) {
    const double div = vGradX[0] + vGradY[1] + vGradZ[2];
    const double div2 = div*div;
    const double omz = vGradX[1] - vGradY[0];

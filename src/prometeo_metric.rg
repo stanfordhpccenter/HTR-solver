@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -29,7 +29,7 @@
 
 import "regent"
 
-return function(SCHEMA, Fluid_columns) local Exports = {}
+return function(SCHEMA, TYPES, Fluid_columns) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -39,7 +39,6 @@ local C = regentlib.c
 local MATH = require "math_utils"
 local MACRO = require "prometeo_macro"
 local CONST = require "prometeo_const"
-local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
 
 local pow  = regentlib.pow(double)
 local fabs = regentlib.fabs(double)
@@ -76,15 +75,15 @@ local nStencils = CONST.nStencils
 -- NOTE: DO NOT USE THESE COEFFICIENTS IN ACTUAL TASKS (unless they are CPU only)
 --       THEY ARE HERE UNTIL THE TEST SUITE IS TRANSITIONED TO C++
 
-local Cp           = COEFFS.Cp
-local Recon_Plus   = COEFFS.Recon_Plus
-local Recon_Minus  = COEFFS.Recon_Minus
-local Coeffs_Plus  = COEFFS.Coeffs_Plus
-local Coeffs_Minus = COEFFS.Coeffs_Minus
-local Interp       = COEFFS.Interp
-local Grad         = COEFFS.Grad
-local KennedyOrder = COEFFS.KennedyOrder
-local KennedyCoeff = COEFFS.KennedyCoeff
+local Cp           = COEFFS.Cp_cpu
+local Recon_Plus   = COEFFS.Recon_Plus_cpu
+local Recon_Minus  = COEFFS.Recon_Minus_cpu
+local Coeffs_Plus  = COEFFS.Coeffs_Plus_cpu
+local Coeffs_Minus = COEFFS.Coeffs_Minus_cpu
+local Interp       = COEFFS.Interp_cpu
+local Grad         = COEFFS.Grad_cpu
+local KennedyOrder = COEFFS.KennedyOrder_cpu
+local KennedyCoeff = COEFFS.KennedyCoeff_cpu
 
 -- Helper functions
 local function GetCp(dir, c, t, i, b)
@@ -264,9 +263,6 @@ end)
 -------------------------------------------------------------------------------
 
 extern task Exports.InitializeMetric(MetricGhosts : region(ispace(int3d), Fluid_columns),
-                                     XGhosts : region(ispace(int3d), Fluid_columns),
-                                     YGhosts : region(ispace(int3d), Fluid_columns),
-                                     ZGhosts : region(ispace(int3d), Fluid_columns),
                                      Fluid : region(ispace(int3d), Fluid_columns),
                                      Fluid_bounds : rect3d,
                                      Grid_xWidth : double, Grid_yWidth : double, Grid_zWidth : double)
@@ -277,7 +273,6 @@ where
    writes(Fluid.{dcsi_d, deta_d, dzet_d}),
    writes(Fluid.{dcsi_s, deta_s, dzet_s})
 end
-Exports.InitializeMetric:set_calling_convention(regentlib.convention.manual())
 Exports.InitializeMetric:set_task_id(TYPES.TID_InitializeMetric)
 --for k, v in pairs(Exports.InitializeMetric:get_params_struct():getentries()) do
 --   print(k, v)
@@ -306,7 +301,6 @@ Exports.mkCorrectGhostMetric = terralib.memoize(function(sdir)
       reads(Fluid.[nType]),
       reads writes(Fluid.[N])
    end
-   CorrectGhostMetric:set_calling_convention(regentlib.convention.manual())
    if sdir == "x" then
       CorrectGhostMetric:set_task_id(TYPES.TID_CorrectGhostMetricX)
    elseif sdir == "y" then

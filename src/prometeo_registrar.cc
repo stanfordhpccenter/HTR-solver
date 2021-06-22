@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -36,6 +36,9 @@ void register_all() {
    // Register task for primitive and auxiliary variables
    register_variables_tasks();
 
+   // Register task for the mixture
+   register_mixture_tasks();
+
    // Register task for the metric
    register_metric_tasks();
 
@@ -44,4 +47,21 @@ void register_all() {
 
    // Register task for the RHS
    register_rhs_tasks();
+
+   // Register task for the chemistry
+   register_chem_tasks();
+
+   // Register task for the bcs
+   register_bc_tasks();
+
+   // Register task for spatial and temporal averages
+   register_average_tasks();
+
+   // Register task that compute CFL number
+   register_cfl_tasks();
+
+#ifdef ELECTRIC_FIELD
+   // Register task for the electric field solver and ion wind
+   register_electricField_tasks();
+#endif
 }

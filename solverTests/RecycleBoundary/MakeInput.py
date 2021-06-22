@@ -67,7 +67,7 @@ rhoW = ConstPropMix.GetDensity(Tw, PInf, config)
 r = Pr**(1.0/3.0)
 Taw = TInf*(1.0 + r*0.5*(gamma - 1.0)*MaInf**2)
 
-config["Integrator"]["vorticityScale"] = UInf/delta99In
+config["Integrator"]["EulerScheme"]["vorticityScale"] = UInf/delta99In
 
 ##############################################################################
 #                        Compute similarity solution                         #
@@ -346,6 +346,8 @@ def writeTile(xt, yt, zt):
       fout.create_dataset("MolarFracs_profile",    shape=shape, dtype = np.dtype("(1,)f8"))
       fout.create_dataset("velocity_profile",      shape=shape, dtype = np.dtype("(3,)f8"))
       fout.create_dataset("temperature_profile",   shape=shape, dtype = np.dtype("f8"))
+      if (os.path.expandvars("$ELECTRIC_FIELD") == "1"):
+         fout.create_dataset("electricPotential",  shape=shape, dtype = np.dtype("f8"))
 
       fout["centerCoordinates"][:] = centerCoordinates
       fout["cellWidth"][:] = cellWidth

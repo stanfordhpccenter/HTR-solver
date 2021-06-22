@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -48,7 +48,7 @@ Exports.Species = {
    MolarFrac = double,
 }
 Exports.Mixture = {
-   Species = UpTo(10, Exports.Species),
+   Species = UpTo(20, Exports.Species),
 }
 
 -- Unions & enumeration constants
@@ -166,8 +166,44 @@ Exports.MixtureModel = Union{
       gasConstant = double,
       gamma = double,
    },
-   AirMix = {},
-   CH41StMix = {},
+   AirMix = {
+      LRef = double,
+      PRef = double,
+      TRef = double,
+      XiRef = Exports.Mixture,
+   },
+   CH41StMix = {
+      LRef = double,
+      PRef = double,
+      TRef = double,
+      XiRef = Exports.Mixture,
+   },
+   CH4_30SpMix = {
+      LRef = double,
+      PRef = double,
+      TRef = double,
+      XiRef = Exports.Mixture,
+   },
+   CH4_43SpIonsMix = {
+      LRef = double,
+      PRef = double,
+      TRef = double,
+      XiRef = Exports.Mixture,
+      -- Relative dielectric permittivity
+--      esp_r = double,
+   },
+   FFCM1Mix = {
+      LRef = double,
+      PRef = double,
+      TRef = double,
+      XiRef = Exports.Mixture,
+   },
+   BoivinMix = {
+      LRef = double,
+      PRef = double,
+      TRef = double,
+      XiRef = Exports.Mixture,
+   },
 }
 
 Exports.FlowInitCase = Union{
@@ -228,6 +264,28 @@ Exports.FlowInitCase = Union{
 
 Exports.GridType = Enum('Uniform','Cosine','TanhMinus','TanhPlus','Tanh','SinhMinus','SinhPlus','Sinh')
 
+Exports.EulerSchemes = Union{
+   SkewSymmetric = {},
+   TENOA = {},
+   TENOLAD = {},
+   Hybrid = {
+      vorticityScale = double,
+   },
+}
+
+-- Electric field model struct
+Exports.EFieldStruct = Union{
+   Off = {},
+   Ybc = {
+      -- Mean electric potential at the bottom boundary (in computational units)
+      Phi_bottom = double,
+      -- Mean electric potential at the top boundary (in computational units)
+      Phi_top = double,
+      -- Activate Robin boundary conditions
+      Robin_bc = bool
+   }
+}
+
 -- Sections of config struct
 Exports.MappingStruct = {
    -- number of tiles in which to split the domain
@@ -285,10 +343,8 @@ Exports.IntegratorStruct = {
    fixedDeltaTime = double,
    -- implicit or explicit approach for chemistry
    implicitChemistry = bool,
-   ---- flag to activate the hybrid scheme
-   hybridScheme = bool,
-   -- vorticity scale for the Ducros sensor
-   vorticityScale = double,
+   -- Switch for the euler schemes
+   EulerScheme = Exports.EulerSchemes,
 }
 
 Exports.FlowStruct = {
@@ -330,6 +386,7 @@ Exports.Config = {
   Integrator = Exports.IntegratorStruct,
   Flow = Exports.FlowStruct,
   IO = Exports.IOStruct,
+  Efield = Exports.EFieldStruct,
 }
 
 return Exports

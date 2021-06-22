@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -38,8 +38,9 @@ using namespace Legion;
 // LOAD PROMETEO UTILITIES AND MODULES
 //-----------------------------------------------------------------------------
 
+#include "task_helper.hpp"
+#include "PointDomain_helper.hpp"
 #include "prometeo_types.h"
-#include "task_helper.h"
 #include "prometeo_metric.h"
 #include "prometeo_metric.inl"
 
@@ -50,11 +51,11 @@ using namespace Legion;
 template<direction dir>
 __CUDA_H__
 inline double unwarpCoordinate(double x, const double w, const int off,
-                               Point<3> p, const Rect<3> bounds);
+                               Point<3> p, const Rect<3> &bounds);
 template<>
 __CUDA_H__
 inline double unwarpCoordinate<Xdir>(double x, const double w, const int off,
-                                     Point<3> p, const Rect<3> bounds) {
+                                     Point<3> p, const Rect<3> &bounds) {
    p.x += off;
    // if we are below the lower bound start by shifting:
    // - x by -1 width
@@ -65,7 +66,7 @@ inline double unwarpCoordinate<Xdir>(double x, const double w, const int off,
 template<>
 __CUDA_H__
 inline double unwarpCoordinate<Ydir>(double y, const double w, const int off,
-                                     Point<3> p, const Rect<3> bounds) {
+                                     Point<3> p, const Rect<3> &bounds) {
    p.y += off;
    // if we are below the lower bound start by shifting:
    // - y by -1 width
@@ -76,7 +77,7 @@ inline double unwarpCoordinate<Ydir>(double y, const double w, const int off,
 template<>
 __CUDA_H__
 inline double unwarpCoordinate<Zdir>(double z, const double w, const int off,
-                                     Point<3> p, const Rect<3> bounds) {
+                                     Point<3> p, const Rect<3> &bounds) {
    p.z += off;
    // if we are below the lower bound start by shifting:
    // - z by -1 width
@@ -94,18 +95,12 @@ public:
    struct Args {
       uint64_t arg_mask[1];
       LogicalRegion MetricGhost;
-      LogicalRegion XGhost;
-      LogicalRegion YGhost;
-      LogicalRegion ZGhost;
       LogicalRegion Fluid;
       Rect<3> Fluid_bounds;
       double Grid_xWidth;
       double Grid_yWidth;
       double Grid_zWidth;
       FieldID MetricGhost_fields [FID_last - 101];
-      FieldID XGhost_fields [FID_last - 101];
-      FieldID YGhost_fields [FID_last - 101];
-      FieldID ZGhost_fields [FID_last - 101];
       FieldID Fluid_fields [FID_last - 101];
    };
 public:
@@ -118,18 +113,14 @@ public:
    // Direction dependent quantities
    template<direction dir>
    __CUDA_H__
-   static inline double reconstructCoordEuler(const AccessorRO<Vec3, 3> centerCoordinates,
-                                              const Point<3> p,
+   static inline double reconstructCoordEuler(const AccessorRO<Vec3, 3> &centerCoordinates,
+                                              const Point<3> &p,
                                               const double width,
                                               const int nType,
                                               const coord_t dsize,
-                                              const Rect<3> bounds) {
+                                              const Rect<3> &bounds) {
 
-      // TODO: implement some sort of static_if
-      int iN;
-      if      (dir == Xdir) iN = 0;
-      else if (dir == Ydir) iN = 1;
-      else if (dir == Zdir) iN = 2;
+      constexpr int iN = normalIndex(dir);
 
       // Compute stencil points
       const Point<3> pM2 = warpPeriodic<dir, Minus>(bounds, p, dsize, offM2(nType));
@@ -150,20 +141,16 @@ public:
 
    template<direction dir>
    __CUDA_H__
-   static inline void ComputeDiffusionMetrics(const AccessorRW<double, 3> m_d,
-                                              const AccessorRW<double, 3> m_s,
-                                              const AccessorRO<  Vec3, 3> centerCoordinates,
-                                              const Point<3> p,
+   static inline void ComputeDiffusionMetrics(const AccessorWO<double, 3> &m_d,
+                                              const AccessorWO<double, 3> &m_s,
+                                              const AccessorRO<  Vec3, 3> &centerCoordinates,
+                                              const Point<3> &p,
                                               const double width,
                                               const int nType,
                                               const coord_t dsize,
-                                              const Rect<3> bounds) {
+                                              const Rect<3> &bounds) {
 
-      // TODO: implement some sort of static_if
-      int iN;
-      if      (dir == Xdir) iN = 0;
-      else if (dir == Ydir) iN = 1;
-      else if (dir == Zdir) iN = 2;
+      constexpr int iN = normalIndex(dir);
 
       const Point<3> pM1 = warpPeriodic<dir, Minus>(bounds, p, dsize, offM1(nType));
       const Point<3> pP1 = warpPeriodic<dir, Plus >(bounds, p, dsize, offP1(nType));
@@ -215,13 +202,14 @@ private:
    static const FieldID FID_m;
 public:
    __CUDA_H__
-   static inline void CorrectLeftStaggered(const AccessorRW<double, 3> m,
-                                           const AccessorRO<  Vec3, 3> centerCoordinates,
-                                           const Point<3> p) {
-      int iN; Point<3> pp1; Point<3> pp2;
-      if      (dir == Xdir) { iN = 0; pp1 = p + Point<3>(1, 0, 0); pp2 = p + Point<3>(2, 0, 0); }
-      else if (dir == Ydir) { iN = 1; pp1 = p + Point<3>(0, 1, 0); pp2 = p + Point<3>(0, 2, 0); }
-      else if (dir == Zdir) { iN = 2; pp1 = p + Point<3>(0, 0, 1); pp2 = p + Point<3>(0, 0, 2); }
+   static inline void CorrectLeftStaggered(const AccessorRW<double, 3> &m,
+                                           const AccessorRO<  Vec3, 3> &centerCoordinates,
+                                           const Point<3> &p) {
+      constexpr int iN = normalIndex(dir);
+      Point<3> pp1; Point<3> pp2;
+      if      (dir == Xdir) { pp1 = p + Point<3>(1, 0, 0); pp2 = p + Point<3>(2, 0, 0); }
+      else if (dir == Ydir) { pp1 = p + Point<3>(0, 1, 0); pp2 = p + Point<3>(0, 2, 0); }
+      else if (dir == Zdir) { pp1 = p + Point<3>(0, 0, 1); pp2 = p + Point<3>(0, 0, 2); }
       m[p] = 1.0/(- 8.0/3.0*centerCoordinates[p  ][iN]
                   + 3.0    *centerCoordinates[pp1][iN]
                   - 1.0/3.0*centerCoordinates[pp2][iN]);
@@ -229,25 +217,27 @@ public:
       // for computational efficiency. Remeber this comment when you compute the fluxes
    };
    __CUDA_H__
-   static inline void CorrectLeftCollocated(const AccessorRW<double, 3> m,
-                                            const AccessorRO<  Vec3, 3> centerCoordinates,
-                                            const Point<3> p) {
-      int iN; Point<3> pp1; Point<3> pp2;
-      if      (dir == Xdir) { iN = 0; pp1 = p + Point<3>(1, 0, 0); pp2 = p + Point<3>(2, 0, 0); }
-      else if (dir == Ydir) { iN = 1; pp1 = p + Point<3>(0, 1, 0); pp2 = p + Point<3>(0, 2, 0); }
-      else if (dir == Zdir) { iN = 2; pp1 = p + Point<3>(0, 0, 1); pp2 = p + Point<3>(0, 0, 2); }
+   static inline void CorrectLeftCollocated(const AccessorRW<double, 3> &m,
+                                            const AccessorRO<  Vec3, 3> &centerCoordinates,
+                                            const Point<3> &p) {
+      constexpr int iN = normalIndex(dir);
+      Point<3> pp1; Point<3> pp2;
+      if      (dir == Xdir) { pp1 = p + Point<3>(1, 0, 0); pp2 = p + Point<3>(2, 0, 0); }
+      else if (dir == Ydir) { pp1 = p + Point<3>(0, 1, 0); pp2 = p + Point<3>(0, 2, 0); }
+      else if (dir == Zdir) { pp1 = p + Point<3>(0, 0, 1); pp2 = p + Point<3>(0, 0, 2); }
       m[p] = 1.0/(- 1.5*centerCoordinates[p  ][iN]
                   + 2.0*centerCoordinates[pp1][iN]
                   - 0.5*centerCoordinates[pp2][iN]);
    };
    __CUDA_H__
-   static inline void CorrectRightStaggered(const AccessorRW<double, 3> m,
-                                            const AccessorRO<  Vec3, 3> centerCoordinates,
-                                            const Point<3> p) {
-      int iN; Point<3> pm1; Point<3> pm2;
-      if      (dir == Xdir) { iN = 0; pm1 = p - Point<3>(1, 0, 0); pm2 = p - Point<3>(2, 0, 0); }
-      else if (dir == Ydir) { iN = 1; pm1 = p - Point<3>(0, 1, 0); pm2 = p - Point<3>(0, 2, 0); }
-      else if (dir == Zdir) { iN = 2; pm1 = p - Point<3>(0, 0, 1); pm2 = p - Point<3>(0, 0, 2); }
+   static inline void CorrectRightStaggered(const AccessorRW<double, 3> &m,
+                                            const AccessorRO<  Vec3, 3> &centerCoordinates,
+                                            const Point<3> &p) {
+      constexpr int iN = normalIndex(dir);
+      Point<3> pm1; Point<3> pm2;
+      if      (dir == Xdir) { pm1 = p - Point<3>(1, 0, 0); pm2 = p - Point<3>(2, 0, 0); }
+      else if (dir == Ydir) { pm1 = p - Point<3>(0, 1, 0); pm2 = p - Point<3>(0, 2, 0); }
+      else if (dir == Zdir) { pm1 = p - Point<3>(0, 0, 1); pm2 = p - Point<3>(0, 0, 2); }
       m[p] = 1.0/(  8.0/3.0*centerCoordinates[p  ][iN]
                   - 3.0    *centerCoordinates[pm1][iN]
                   + 1.0/3.0*centerCoordinates[pm2][iN]);
@@ -255,13 +245,14 @@ public:
       // for computational efficiency. Remeber this comment when you compute the fluxes
    };
    __CUDA_H__
-   static inline void CorrectRightCollocated(const AccessorRW<double, 3> m,
-                                             const AccessorRO<  Vec3, 3> centerCoordinates,
-                                             const Point<3> p) {
-      int iN; Point<3> pm1; Point<3> pm2;
-      if      (dir == Xdir) { iN = 0; pm1 = p - Point<3>(1, 0, 0); pm2 = p - Point<3>(2, 0, 0); }
-      else if (dir == Ydir) { iN = 1; pm1 = p - Point<3>(0, 1, 0); pm2 = p - Point<3>(0, 2, 0); }
-      else if (dir == Zdir) { iN = 2; pm1 = p - Point<3>(0, 0, 1); pm2 = p - Point<3>(0, 0, 2); }
+   static inline void CorrectRightCollocated(const AccessorRW<double, 3> &m,
+                                             const AccessorRO<  Vec3, 3> &centerCoordinates,
+                                             const Point<3> &p) {
+      constexpr int iN = normalIndex(dir);
+      Point<3> pm1; Point<3> pm2;
+      if      (dir == Xdir) { pm1 = p - Point<3>(1, 0, 0); pm2 = p - Point<3>(2, 0, 0); }
+      else if (dir == Ydir) { pm1 = p - Point<3>(0, 1, 0); pm2 = p - Point<3>(0, 2, 0); }
+      else if (dir == Zdir) { pm1 = p - Point<3>(0, 0, 1); pm2 = p - Point<3>(0, 0, 2); }
       m[p] = 1.0/(  1.5*centerCoordinates[p  ][iN]
                   - 2.0*centerCoordinates[pm1][iN]
                   + 0.5*centerCoordinates[pm2][iN]);

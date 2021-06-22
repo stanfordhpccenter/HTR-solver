@@ -84,7 +84,7 @@ avg = Averages.avg1D(args.input_dir+"/ZAverages/", 0)
 ##############################################################################
 
 # Skin Friction coefficient
-Cf0 = 2.0*avg.tau[0,0,3]/(rhoInf*UInf**2)
+Cf0 = 2.0*avg.tau[0,0,1]/(rhoInf*UInf**2)
 def getX0(Cf0):
    def VanDriestII(x0):
       Rexv = rhoInf*UInf*(avg.centerCoordinates[0,0,0] + x0)/muInf
@@ -162,8 +162,8 @@ for i in range(nx):
       theta[i]  += 0.5*dy*(rhoUNorm[j  ]*(1.0 - UNorm[j  ])+
                            rhoUNorm[j-1]*(1.0 - UNorm[j-1]))
 
-uTau     = np.sqrt(avg.tau[0,:,3]/avg.rho_avg[0,:])
-cf       = 2.0*avg.tau[0,:,3]/(rhoInf*UInf**2)
+uTau     = np.sqrt(avg.tau[0,:,1]/avg.rho_avg[0,:])
+cf       = 2.0*avg.tau[0,:,1]/(rhoInf*UInf**2)
 ReTau    = avg.rho_avg[0,:]*uTau*delta99/avg.mu_avg[0,:]
 ReDelta  = avg.rho_avg[-1,:]*ufav[-1,:]*delta99/avg.mu_avg[-1,:]
 ReTheta  = avg.rho_avg[-1,:]*ufav[-1,:]*  theta/avg.mu_avg[-1,:]
@@ -207,7 +207,7 @@ if not os.path.exists(figureDir):
 ##############################
 iFig = 0
 plt.figure(iFig); iFig +=1
-plt.plot(avg.centerCoordinates[0,:,0], 2.0*avg.tau[0,:,3]/(rhoInf*UInf**2),   "k", label="Present formulation")
+plt.plot(avg.centerCoordinates[0,:,0], 2.0*avg.tau[0,:,1]/(rhoInf*UInf**2),   "k", label="Present formulation")
 plt.plot(avg.centerCoordinates[0,:,0],                              cfTurb, "-.k", label="Van Driest II")
 plt.xlabel(r"$(x-x_0)/\delta_0$", fontsize = 20)
 plt.ylabel(r"$\overline{C_f}$"  , fontsize = 20)

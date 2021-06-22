@@ -87,6 +87,10 @@ class avg2D:
       self.vYi_favg = f["vYi_favg"][:][0,:]
       self.wYi_favg = f["wYi_favg"][:][0,:]
 
+      if "electricPotential_avg" in f:
+         self.electricPotential_avg = f["electricPotential_avg"][:][0,:]
+         self.chargeDensity_avg     = f["chargeDensity_avg"    ][:][0,:]
+
       self.SpeciesNames = f.attrs.get("SpeciesNames")
 
       if symmetric : self.avgYSymmetric()
@@ -120,7 +124,7 @@ class avg2D:
       self.velocity_rey[:,2] -=  self.velocity_avg[:,1]*self.velocity_avg[:,2]
 
       self.rho_avg  /= weight
-      self.rho_rms  /= weight 
+      self.rho_rms  /= weight
       self.mu_avg   /= weight
       self.lam_avg  /= weight
       self.SoS_avg  /= weight
@@ -211,6 +215,10 @@ class avg2D:
          self.uYi_favg[:,isp] /= weight
          self.vYi_favg[:,isp] /= weight
          self.wYi_favg[:,isp] /= weight
+
+      if hasattr(self, "electricPotential_avg"):
+         self.electricPotential_avg /= weight
+         self.chargeDensity_avg     /= weight
 
    def avgYSymmetric(self):
       self.pressure_avg    = 0.5*(self.pressure_avg + self.pressure_avg[::-1])
@@ -316,6 +324,10 @@ class avg2D:
       self.vYi_favg[:,:] = 0.5*(self.vYi_favg[:,:] - self.vYi_favg[::-1,:])
       self.wYi_favg[:,:] = 0.5*(self.wYi_favg[:,:] + self.wYi_favg[::-1,:])
 
+      if hasattr(self, "electricPotential_avg"):
+         self.electricPotential_avg = 0.5*(self.electricPotential_avg + self.electricPotential_avg[::-1])
+         self.chargeDensity_avg     = 0.5*(self.chargeDensity_avg     + self.chargeDensity_avg    [::-1])
+
 class avg1D:
    def parseTiles(self, dirname, plane):
       # read tiles and join them
@@ -367,6 +379,7 @@ class avg1D:
       with h5py.File(self.tiles[0], "r") as fin:
          self.SpeciesNames = fin.attrs.get("SpeciesNames")
          self.nSpec = len(self.SpeciesNames)
+         hasElectric = ("electricPotential_avg" in fin)
 
       # define data plane
       weight = np.ndarray(self.shape)
@@ -443,6 +456,10 @@ class avg1D:
       self.uYi_favg = np.ndarray(self.shape, dtype=np.dtype("("+str(self.nSpec)+",)f8"))
       self.vYi_favg = np.ndarray(self.shape, dtype=np.dtype("("+str(self.nSpec)+",)f8"))
       self.wYi_favg = np.ndarray(self.shape, dtype=np.dtype("("+str(self.nSpec)+",)f8"))
+
+      if hasElectric:
+         self.electricPotential_avg = np.ndarray(self.shape)
+         self.chargeDensity_avg     = np.ndarray(self.shape)
 
       for i, t in enumerate(self.tiles):
          f = h5py.File(t, "r")
@@ -525,6 +542,10 @@ class avg1D:
          self.uYi_favg[ind] = f["uYi_favg"][:][0,:,:]
          self.vYi_favg[ind] = f["vYi_favg"][:][0,:,:]
          self.wYi_favg[ind] = f["wYi_favg"][:][0,:,:]
+
+         if hasElectric:
+            self.electricPotential_avg[ind] = f["electricPotential_avg"][:][0,:,:]
+            self.chargeDensity_avg[ind]     = f["chargeDensity_avg"    ][:][0,:,:]
 
       # Complete average process
       for i in range(3):
@@ -647,3 +668,6 @@ class avg1D:
          self.vYi_favg[:,:,isp] /= weight
          self.wYi_favg[:,:,isp] /= weight
 
+      if hasElectric:
+         self.electricPotential_avg /= weight
+         self.chargeDensity_avg     /= weight

@@ -1,7 +1,8 @@
 # Build Image for Bitbucket
-# Use command: docker build -t mariodr/legion-docker:ubuntu16.04-dcr -f dockerfile.bitbucket .
+# Use command: docker build -t mariodr/legion-docker:ubuntu20.04-dcr -f dockerfile.bitbucket .
 
-FROM stanfordlegion/gitlab-ci:ubuntu16.04
+#FROM stanfordlegion/gitlab-ci:ubuntu16.04
+FROM registry.gitlab.com/stanfordlegion/legion/gitlab-ci-20.04
 
 MAINTAINER Mario Di Renzo <mariodr@stanford.edu>
 
@@ -10,8 +11,8 @@ ENV CC=gcc \
     LEGION_DIR="/usr/local/legion" \
     HDF_HEADER="hdf5/serial/hdf5.h" \
     HDF_LIBNAME="hdf5_serial" \
-    TERRA_DIR="/usr/local/terra35" \
-    LLVM_CONFIG="llvm-config-3.5" \
+    TERRA_DIR="/usr/local/terra9" \
+    LLVM_CONFIG="llvm-config-9" \
     MAX_DIM=3 \
     USE_CUDA=0 \
     USE_OPENMP=1 \

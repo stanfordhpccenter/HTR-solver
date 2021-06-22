@@ -29,13 +29,13 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns, zones_partitions, ghost_partitions) local Exports = {}
+return function(SCHEMA, MIX, TYPES, Fluid_columns,
+                zones_partitions, ghost_partitions) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
 -------------------------------------------------------------------------------
 local C = regentlib.c
-local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
 
 -------------------------------------------------------------------------------
 -- SHOCK-SENSOR ROUTINES
@@ -66,7 +66,6 @@ local mkUpdateShockSensor = terralib.memoize(function(dir)
       reads(Fluid.[nType]),
       writes(Fluid.[shockSensor])
    end
-   UpdateShockSensor:set_calling_convention(regentlib.convention.manual())
    if     (dir == "x") then
       UpdateShockSensor:set_task_id(TYPES.TID_UpdateShockSensorX)
    elseif (dir == "y") then
@@ -94,21 +93,21 @@ do
         p_XSensorGhosts, p_YSensorGhosts, p_ZSensorGhosts} = Fluid_Ghost;
 
    -- Compute the sensors only if we are running with the hybrid scheme
-   if config.Integrator.hybridScheme then
+   if (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_Hybrid) then
       __demand(__index_launch)
       for c in tiles do
          [mkUpdateShockSensor("x")](p_XEulerGhosts[c], p_All[c], p_x_faces[c],
-                                    Fluid.bounds, config.Integrator.vorticityScale)
+                                    Fluid.bounds, config.Integrator.EulerScheme.u.Hybrid.vorticityScale)
       end
       __demand(__index_launch)
       for c in tiles do
          [mkUpdateShockSensor("y")](p_YEulerGhosts[c], p_All[c], p_y_faces[c],
-                                    Fluid.bounds, config.Integrator.vorticityScale)
+                                    Fluid.bounds, config.Integrator.EulerScheme.u.Hybrid.vorticityScale)
       end
       __demand(__index_launch)
       for c in tiles do
          [mkUpdateShockSensor("z")](p_ZEulerGhosts[c], p_All[c], p_z_faces[c],
-                                    Fluid.bounds, config.Integrator.vorticityScale)
+                                    Fluid.bounds, config.Integrator.EulerScheme.u.Hybrid.vorticityScale)
       end
    end
 end

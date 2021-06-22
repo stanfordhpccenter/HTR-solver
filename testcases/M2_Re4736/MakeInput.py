@@ -63,7 +63,7 @@ assert abs((UInf*rhoInf)/(ReIn*muInf) - 1) < 1e-12
 
 # Inlet boundary layer thickness
 delta99In = muInf*ReIn/(UInf*rhoInf)
-config["Integrator"]["vorticityScale"] = UInf/delta99In
+config["Integrator"]["EulerScheme"]["vorticityScale"] = UInf/delta99In
 
 # Wall properties
 r = Pr**(1.0/3.0)

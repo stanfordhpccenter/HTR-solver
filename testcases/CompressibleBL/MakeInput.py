@@ -123,7 +123,7 @@ for i in range(Np):
    if (uB[i] > 0.99):
       delta = yB[i]
       break
-config["Integrator"]["vorticityScale"] = UInf/delta
+config["Integrator"]["EulerScheme"]["vorticityScale"] = UInf/delta
 
 uB *= UInf
 vB *= UInf

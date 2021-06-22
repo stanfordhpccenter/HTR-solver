@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -29,8 +29,9 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, METRIC, Fluid_columns,
-                zones_partitions, ghost_partitions, ATOMIC) local Exports = {}
+return function(SCHEMA, MIX, METRIC, TYPES, Fluid_columns,
+                zones_partitions, ghost_partitions,
+                ATOMIC) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -38,7 +39,6 @@ return function(SCHEMA, MIX, METRIC, Fluid_columns,
 local UTIL = require 'util-desugared'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
-local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -108,7 +108,6 @@ local mkUpdateUsingHybridEulerFlux = terralib.memoize(function(dir)
       reads writes(Fluid.Conserved_t),
       [coherence_mode]
    end
-   UpdateUsingHybridEulerFlux:set_calling_convention(regentlib.convention.manual())
    --for k, v in pairs(UpdateUsingFlux:get_params_struct():getentries()) do
    --   print(k, v)
    --   for k2, v2 in pairs(v) do print(k2, v2) end
@@ -162,7 +161,6 @@ local mkUpdateUsingTENOAEulerFlux = terralib.memoize(function(dir)
       reads writes(Fluid.Conserved_t),
       [coherence_mode]
    end
-   UpdateUsingTENOAEulerFlux:set_calling_convention(regentlib.convention.manual())
    --for k, v in pairs(UpdateUsingFlux:get_params_struct():getentries()) do
    --   print(k, v)
    --   for k2, v2 in pairs(v) do print(k2, v2) end
@@ -175,6 +173,106 @@ local mkUpdateUsingTENOAEulerFlux = terralib.memoize(function(dir)
       UpdateUsingTENOAEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxZ)
    end
    return UpdateUsingTENOAEulerFlux
+end)
+
+local mkUpdateUsingTENOLADEulerFlux = terralib.memoize(function(dir)
+   local UpdateUsingTENOLADEulerFlux
+
+--   local FluxC
+   local nType
+   local m_e
+   if (dir == "x") then
+--      FluxC = "FluxXCorr"
+      nType = "nType_x"
+      m_e   = "dcsi_e"
+   elseif (dir == "y") then
+--      FluxC = "FluxYCorr"
+      nType = "nType_y"
+      m_e   = "deta_e"
+   elseif (dir == "z") then
+--      FluxC = "FluxZCorr"
+      nType = "nType_z"
+      m_e   = "dzet_e"
+   else assert(false) end
+
+   extern task UpdateUsingTENOLADEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
+                                           DiffGhost : region(ispace(int3d), Fluid_columns),
+                                           FluxGhost : region(ispace(int3d), Fluid_columns),
+                                           [Fluid],
+                                           ModCells : region(ispace(int3d), Fluid_columns),
+                                           Fluid_bounds : rect3d,
+                                           mix : MIX.Mixture)
+   where
+      reads(EulerGhost.Conserved),
+      reads(EulerGhost.rho),
+      reads(EulerGhost.velocity),
+      reads(EulerGhost.pressure),
+      reads(EulerGhost.SoS),
+      reads(DiffGhost.{MassFracs, temperature}),
+      reads(FluxGhost.[nType]),
+      reads(Fluid.[m_e]),
+      reads writes(Fluid.Conserved_t),
+      [coherence_mode]
+   end
+   --for k, v in pairs(UpdateUsingFlux:get_params_struct():getentries()) do
+   --   print(k, v)
+   --   for k2, v2 in pairs(v) do print(k2, v2) end
+   --end
+   if     (dir == "x") then
+      UpdateUsingTENOLADEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxX)
+   elseif (dir == "y") then
+      UpdateUsingTENOLADEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxY)
+   elseif (dir == "z") then
+      UpdateUsingTENOLADEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxZ)
+   end
+   return UpdateUsingTENOLADEulerFlux
+end)
+
+local mkUpdateUsingSkewSymmetricEulerFlux = terralib.memoize(function(dir)
+   local UpdateUsingSkewSymmetricEulerFlux
+
+--   local FluxC
+   local nType
+   local m_e
+   if (dir == "x") then
+--      FluxC = "FluxXCorr"
+      nType = "nType_x"
+      m_e   = "dcsi_e"
+   elseif (dir == "y") then
+--      FluxC = "FluxYCorr"
+      nType = "nType_y"
+      m_e   = "deta_e"
+   elseif (dir == "z") then
+--      FluxC = "FluxZCorr"
+      nType = "nType_z"
+      m_e   = "dzet_e"
+   else assert(false) end
+
+   extern task UpdateUsingSkewSymmetricEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
+                                                 FluxGhost : region(ispace(int3d), Fluid_columns),
+                                                 [Fluid],
+                                                 ModCells : region(ispace(int3d), Fluid_columns),
+                                                 Fluid_bounds : rect3d,
+                                                 mix : MIX.Mixture)
+   where
+      reads(EulerGhost.Conserved),
+      reads(EulerGhost.rho),
+      reads(EulerGhost.MassFracs),
+      reads(EulerGhost.velocity),
+      reads(EulerGhost.pressure),
+      reads(FluxGhost.[nType]),
+      reads(Fluid.[m_e]),
+      reads writes(Fluid.Conserved_t),
+      [coherence_mode]
+   end
+   if     (dir == "x") then
+      UpdateUsingSkewSymmetricEulerFlux:set_task_id(TYPES.TID_UpdateUsingSkewSymmetricEulerFluxX)
+   elseif (dir == "y") then
+      UpdateUsingSkewSymmetricEulerFlux:set_task_id(TYPES.TID_UpdateUsingSkewSymmetricEulerFluxY)
+   elseif (dir == "z") then
+      UpdateUsingSkewSymmetricEulerFlux:set_task_id(TYPES.TID_UpdateUsingSkewSymmetricEulerFluxZ)
+   end
+   return UpdateUsingSkewSymmetricEulerFlux
 end)
 
 __demand(__inline)
@@ -194,7 +292,7 @@ do
         p_XEulerGhosts2,  p_YEulerGhosts2,  p_ZEulerGhosts2,
         p_XSensorGhosts2, p_YSensorGhosts2, p_ZSensorGhosts2} = Fluid_Ghost;
 
-   if config.Integrator.hybridScheme then
+   if (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_Hybrid) then
       -- Call tasks with hybrid scheme
       __demand(__index_launch)
       for c in tiles do
@@ -214,7 +312,7 @@ do
                                              p_XFluxGhosts[c], p_All[c], p_x_divg[c], Fluid.bounds, Mix)
       end
 
-   else
+   elseif (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_TENOA) then
       -- Call tasks with TENO-A scheme
       __demand(__index_launch)
       for c in tiles do
@@ -234,6 +332,45 @@ do
                                             p_All[c], p_x_divg[c], Fluid.bounds, Mix)
       end
 
+   elseif (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_TENOLAD) then
+      -- Call tasks with TENO-A scheme
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOLADEulerFlux("z")](p_ZEulerGhosts2[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
+                                              p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOLADEulerFlux("y")](p_YEulerGhosts2[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
+                                              p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOLADEulerFlux("x")](p_XEulerGhosts2[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
+                                              p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+      end
+
+   elseif (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_SkewSymmetric) then
+      -- Call tasks with SkewSymmetric scheme
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingSkewSymmetricEulerFlux("z")](p_ZEulerGhosts2[c], p_ZFluxGhosts[c],
+                                                    p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingSkewSymmetricEulerFlux("y")](p_YEulerGhosts2[c], p_YFluxGhosts[c],
+                                                    p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingSkewSymmetricEulerFlux("x")](p_XEulerGhosts2[c], p_XFluxGhosts[c],
+                                                    p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+      end
    end
 end
 
@@ -258,7 +395,7 @@ local mkUpdateUsingDiffusionFlux = terralib.memoize(function(dir)
    elseif (dir == "y") then
       nType  = "nType_y"
       m_d    = "deta_d"
-      m_s    =  "deta_s"
+      m_s    = "deta_s"
       vGrad1 = "velocityGradientX"
       vGrad2 = "velocityGradientZ"
    elseif (dir == "z") then
@@ -277,7 +414,7 @@ local mkUpdateUsingDiffusionFlux = terralib.memoize(function(dir)
                                         mix : MIX.Mixture)
    where
       reads(DiffGhost.Conserved),
-      reads(DiffGhost.{temperature, velocity, MolarFracs}),
+      reads(DiffGhost.{MolarFracs, temperature, velocity}),
       reads(DiffGhost.{rho, mu, lam, Di}),
       reads(DiffGhost.{[vGrad1], [vGrad2]}),
       reads(FluxGhost.[nType]),
@@ -286,7 +423,6 @@ local mkUpdateUsingDiffusionFlux = terralib.memoize(function(dir)
       reads writes(Fluid.Conserved_t),
       [coherence_mode]
    end
-   UpdateUsingDiffusionFlux:set_calling_convention(regentlib.convention.manual())
    --for k, v in pairs(UpdateUsingDiffusionFlux:get_params_struct():getentries()) do
    --   print(k, v)
    --   for k2, v2 in pairs(v) do print(k2, v2) end
@@ -341,38 +477,42 @@ end
 Exports.mkUpdateUsingFluxNSCBCInflow = terralib.memoize(function(dir)
    local UpdateUsingFluxNSCBCInflow
 
-   if dir == "xNeg" then
-      extern task UpdateUsingFluxNSCBCInflow(Fluid    : region(ispace(int3d), Fluid_columns),
-                                             Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                             mix : MIX.Mixture)
-      where
-         reads(Fluid.{nType_x}),
-         reads(Fluid.dcsi_d),
-         reads(Fluid.{rho, SoS}),
-         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
-         reads(Fluid.velocityGradientX),
-         reads(Fluid.{dudtBoundary, dTdtBoundary}),
-         reads writes(Fluid.Conserved_t)
-      end
-      UpdateUsingFluxNSCBCInflow:set_calling_convention(regentlib.convention.manual())
-      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowXNeg)
-
+   local nType
+   local m_d
+   local vGrad
+   if     dir == "xNeg" then
+      nType = "nType_x"
+      m_d = "dcsi_d"
+      vGrad = "velocityGradientX"
+   elseif dir == "yNeg" then
+      nType = "nType_y"
+      m_d = "deta_d"
+      vGrad = "velocityGradientY"
    elseif dir == "yPos" then
-      extern task UpdateUsingFluxNSCBCInflow(Fluid    : region(ispace(int3d), Fluid_columns),
-                                             Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                             mix : MIX.Mixture)
-      where
-         reads(Fluid.{nType_y}),
-         reads(Fluid.deta_d),
-         reads(Fluid.{rho, SoS}),
-         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
-         reads(Fluid.velocityGradientY),
-         reads(Fluid.{dudtBoundary, dTdtBoundary}),
-         reads writes(Fluid.Conserved_t)
-      end
-      UpdateUsingFluxNSCBCInflow:set_calling_convention(regentlib.convention.manual())
-      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowYPos)
+      nType = "nType_y"
+      m_d = "deta_d"
+      vGrad = "velocityGradientY"
+   end
 
+   extern task UpdateUsingFluxNSCBCInflow(Fluid    : region(ispace(int3d), Fluid_columns),
+                                          Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                          mix : MIX.Mixture)
+   where
+      reads(Fluid.[nType]),
+      reads(Fluid.[m_d]),
+      reads(Fluid.{rho, SoS}),
+      reads(Fluid.{MassFracs, pressure, temperature, velocity}),
+      reads(Fluid.[vGrad]),
+      reads(Fluid.{dudtBoundary, dTdtBoundary}),
+      reads writes(Fluid.Conserved_t)
+   end
+
+   if     dir == "xNeg" then
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowXNeg)
+   elseif dir == "yNeg" then
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowYNeg)
+   elseif dir == "yPos" then
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowYPos)
    else assert(false) end
 
    return UpdateUsingFluxNSCBCInflow
@@ -381,73 +521,46 @@ end)
 -- Adds NSCBC fluxes to the outflow cells
 Exports.mkUpdateUsingFluxNSCBCOutflow  = terralib.memoize(function(dir)
    local UpdateUsingFluxNSCBCOutflow
-   local sigma = 0.25
 
-   if dir == "xPos" then
-      extern task UpdateUsingFluxNSCBCOutflow([Fluid],
-                                              Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                              mix : MIX.Mixture,
-                                              MaxMach : double,
-                                              LengthScale : double,
-                                              Pinf : double)
-      where
-         reads(Fluid.{nType_x}),
-         reads(Fluid.dcsi_d),
-         reads(Fluid.{rho, mu, SoS}),
-         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
-         reads(Fluid.Conserved),
-         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads writes(Fluid.Conserved_t),
-         [coherence_mode]
-      end
-      UpdateUsingFluxNSCBCOutflow:set_calling_convention(regentlib.convention.manual())
-      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowXPos)
---      for k, v in pairs(UpdateUsingFluxNSCBCOutflow:get_params_struct():getentries()) do
---         print(k, v)
---         for k2, v2 in pairs(v) do print(k2, v2) end
---      end
-
+   local nType
+   local m_d
+   if     dir == "xPos" then
+      nType = "nType_x"
+      m_d = "dcsi_d"
    elseif dir == "yNeg" then
-      extern task UpdateUsingFluxNSCBCOutflow([Fluid],
-                                              Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                              mix : MIX.Mixture,
-                                              MaxMach : double,
-                                              LengthScale : double,
-                                              Pinf : double)
-      where
-         reads(Fluid.{nType_y}),
-         reads(Fluid.deta_d),
-         reads(Fluid.{rho, mu, SoS}),
-         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
-         reads(Fluid.Conserved),
-         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads writes(Fluid.Conserved_t),
-         [coherence_mode]
-      end
-      UpdateUsingFluxNSCBCOutflow:set_calling_convention(regentlib.convention.manual())
-      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYNeg)
-
+      nType = "nType_y"
+      m_d = "deta_d"
    elseif dir == "yPos" then
-      extern task UpdateUsingFluxNSCBCOutflow([Fluid],
-                                              Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                              mix : MIX.Mixture,
-                                              MaxMach : double,
-                                              LengthScale : double,
-                                              Pinf : double)
-      where
-         reads(Fluid.{nType_y}),
-         reads(Fluid.deta_d),
-         reads(Fluid.{rho, mu, SoS}),
-         reads(Fluid.{MassFracs, pressure, temperature, velocity}),
-         reads(Fluid.Conserved),
-         reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-         reads writes(Fluid.Conserved_t),
-         [coherence_mode]
-      end
-      UpdateUsingFluxNSCBCOutflow:set_calling_convention(regentlib.convention.manual())
-      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYPos)
-
+      nType = "nType_y"
+      m_d = "deta_d"
    end
+   extern task UpdateUsingFluxNSCBCOutflow([Fluid],
+                                           Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+                                           mix : MIX.Mixture,
+                                           MaxMach : double,
+                                           LengthScale : double,
+                                           Pinf : double)
+   where
+      reads(Fluid.[nType]),
+      reads(Fluid.[m_d]),
+      reads(Fluid.{rho, mu, SoS}),
+      reads(Fluid.{MassFracs, pressure, temperature, velocity}),
+      reads(Fluid.Conserved),
+      reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
+      reads writes(Fluid.Conserved_t),
+      [coherence_mode]
+   end
+   if     dir == "xPos" then
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowXPos)
+   elseif dir == "yNeg" then
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYNeg)
+   elseif dir == "yPos" then
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYPos)
+   end
+--   for k, v in pairs(UpdateUsingFluxNSCBCOutflow:get_params_struct():getentries()) do
+--      print(k, v)
+--      for k2, v2 in pairs(v) do print(k2, v2) end
+--   end
    return UpdateUsingFluxNSCBCOutflow
 end)
 
@@ -466,7 +579,7 @@ where
 do
    __demand(__openmp)
    for c in ModCells do
-      for i=0, 3 do 
+      for i=0, 3 do
          Fluid[c].Conserved_t[irU+i] += Fluid[c].rho*Flow_bodyForce[i]
       end
       Fluid[c].Conserved_t[irE] += Fluid[c].rho*MACRO.dot(Flow_bodyForce, Fluid[c].velocity)

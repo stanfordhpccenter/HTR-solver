@@ -180,6 +180,7 @@ function run_m100 {
     sbatch --export=ALL \
         -N "$NUM_NODES" -t "$WALLTIME" -p "$QUEUE" --gres=gpu:4 $DEPS $SPECIALQ \
         --ntasks-per-node="$RANKS_PER_NODE" --cpus-per-task="$CORES_PER_RANK" \
+        --account="$ACCOUNT" \
          "$HTR_DIR"/jobscripts/m100.slurm
    # Resources:
    # 256GB RAM per node
@@ -188,21 +189,43 @@ function run_m100 {
    # 4 nVidia Volta V100
 }
 
+function run_kraken {
+   export QUEUE="${QUEUE:-gpu}"
+   DEPS=
+   if [[ ! -z "$AFTER" ]]; then
+      DEPS="-d afterok:$AFTER"
+   fi
+   sbatch --export=ALL \
+       -N "$NUM_NODES" -t "$WALLTIME" -p "$QUEUE" $DEPS \
+       --ntasks-per-node="$RANKS_PER_NODE" --cpus-per-task=35 \
+       "$HTR_DIR"/jobscripts/kraken.slurm
+}
+
 function run_local {
-    if (( NUM_NODES > 1 )); then
-        quit "Too many nodes requested"
-    fi
-    # Overrides for local, non-GPU run
-    LOCAL_RUN=1
-    USE_CUDA=0
-    RESERVED_CORES=2
-    NUMA_PER_RANK=1
-    # Synthesize final command
-    CORES_PER_NODE="$(grep ^cpu\\scores /proc/cpuinfo | uniq |  awk '{print $4}')"
-    RAM_PER_NODE="$(free -m | head -2 | tail -1 | awk '{print $2}')"
-    RAM_PER_NODE=$(( RAM_PER_NODE / 2 ))
-    source "$HTR_DIR"/jobscripts/jobscript_shared.sh
-    $COMMAND
+   if (( NUM_NODES > 1 )); then
+      quit "Too many nodes requested"
+   fi
+   # Overrides for local, non-GPU run
+   LOCAL_RUN=1
+   USE_CUDA=0
+   RESERVED_CORES=2
+   # Synthesize final command
+   CORES_PER_NODE="$(lscpu | awk -F ":" '/Core/ { c=$2; }; /Socket/ { print c*$2 }')"
+   RAM_PER_NODE="$(free -m | head -2 | tail -1 | awk '{print $2}')"
+   RAM_PER_NODE=$(( RAM_PER_NODE / 2 ))
+   NUMA_PER_RANK="$(lscpu | awk -F ":" '/NUMA node\(s\)/ { gsub(/ /,""); print $2 }')"
+   # Do not use more than one util or bgwork
+   UTIL_THREADS=1
+   BGWORK_THREADS=1
+   # If the machine uses hyperthreading we do not need to reserve any core
+   THREADS_PER_NODE="$(grep --count ^processor /proc/cpuinfo)"
+   if (( CORES_PER_NODE != THREADS_PER_NODE )); then
+      RESERVED_CORES=1
+   fi
+   # Generate command
+   source "$HTR_DIR"/jobscripts/jobscript_shared.sh
+   # Run
+   $COMMAND
 }
 
 ###############################################################################
@@ -210,20 +233,22 @@ function run_local {
 ###############################################################################
 
 if [[ "$(uname -n)" == *"lassen"* ]]; then
-    run_lassen
+   run_lassen
 elif [[ "$(uname -n)" == *"yellowstone"* ]]; then
-    run_yellowstone
+   run_yellowstone
 elif [[ "$(uname -n)" == *"armstrong"* ]]; then
-    run_armstrong
+   run_armstrong
 elif [[ "$(uname -n)" == *"sapling"* ]]; then
-    run_sapling
+   run_sapling
 elif [[ "$(uname -n)" == *"quartz"* ]]; then
-    run_quartz
+   run_quartz
 elif [[ "$(uname -n)" == *"r033c01s"* ]]; then
-    run_galileo
+   run_galileo
 elif [[ "$(hostname -d)" == *"m100"* ]]; then
-    run_m100
+   run_m100
+elif [[ "$(uname -n)" == *"kraken"* ]]; then
+   run_kraken
 else
-    echo 'Hostname not recognized; assuming local machine run w/o GPUs'
-    run_local
+   echo 'Hostname not recognized; assuming local machine run w/o GPUs'
+   run_local
 fi

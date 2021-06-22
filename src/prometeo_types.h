@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -32,10 +32,6 @@
 
 #include <stdbool.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include "prometeo_const.h"
 
 #ifndef nSpec
@@ -44,6 +40,10 @@ extern "C" {
 
 #ifndef nEq
    #error "nEq is undefined"
+#endif
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 struct Fluid_columns {
@@ -72,17 +72,25 @@ struct Fluid_columns {
    double lam;
    double Di[nSpec];
    double SoS;
+#if (defined(ELECTRIC_FIELD) && (nIons > 0))
+   double Ki[nIons];
+#endif
    // Primitive variables
    double pressure;
    double temperature;
    double MassFracs[ nSpec];
    double MolarFracs[nSpec];
    double velocity[3];
+   // Electric variables
+#ifdef ELECTRIC_FIELD
+   double electricPotential;
+   double electricField[3];
+#endif
    // Gradients
    double velocityGradientX[  3];
    double velocityGradientY[  3];
    double velocityGradientZ[  3];
-   double temperatureGradient[3];
+//   double temperatureGradient[3];
    // Conserved variables
    double Conserved[      nEq];
    double Conserved_old[  nEq];
@@ -139,17 +147,25 @@ enum FieldIDs {
    FID_lam,
    FID_Di,
    FID_SoS,
+#if (defined(ELECTRIC_FIELD) && (nIons > 0))
+   FID_Ki,
+#endif
    // Primitive variables
    FID_pressure,
    FID_temperature,
    FID_MassFracs,
    FID_MolarFracs,
    FID_velocity,
+   // Electric variables
+#ifdef ELECTRIC_FIELD
+   FID_electricPotential,
+   FID_electricField,
+#endif
    // Gradients
    FID_velocityGradientX,
    FID_velocityGradientY,
    FID_velocityGradientZ,
-   FID_temperatureGradient,
+//   FID_temperatureGradient,
    // Conserved variables
    FID_Conserved,
    FID_Conserved_old,
@@ -182,34 +198,103 @@ enum FieldIDs {
 };
 
 enum {
-   TID_InitializeMetric = 1,
+   TID_LoadMixture = 1,
+   // Metric tasks
+   TID_InitializeMetric,
    TID_CorrectGhostMetricX,
    TID_CorrectGhostMetricY,
    TID_CorrectGhostMetricZ,
+   // Variables tasks
    TID_UpdatePropertiesFromPrimitive,
+   TID_UpdateConservedFromPrimitive,
+   TID_UpdatePrimitiveFromConserved,
    TID_GetVelocityGradients,
-   TID_GetTemperatureGradient,
+//   TID_GetTemperatureGradient,
+   // Sensor tasks
    TID_UpdateShockSensorX,
    TID_UpdateShockSensorY,
    TID_UpdateShockSensorZ,
+   // RHS tasks
    TID_UpdateUsingHybridEulerFluxX,
    TID_UpdateUsingHybridEulerFluxY,
    TID_UpdateUsingHybridEulerFluxZ,
    TID_UpdateUsingTENOAEulerFluxX,
    TID_UpdateUsingTENOAEulerFluxY,
    TID_UpdateUsingTENOAEulerFluxZ,
+   TID_UpdateUsingTENOLADEulerFluxX,
+   TID_UpdateUsingTENOLADEulerFluxY,
+   TID_UpdateUsingTENOLADEulerFluxZ,
+   TID_UpdateUsingSkewSymmetricEulerFluxX,
+   TID_UpdateUsingSkewSymmetricEulerFluxY,
+   TID_UpdateUsingSkewSymmetricEulerFluxZ,
    TID_UpdateUsingDiffusionFluxX,
    TID_UpdateUsingDiffusionFluxY,
    TID_UpdateUsingDiffusionFluxZ,
    TID_UpdateUsingFluxNSCBCInflowXNeg,
+   TID_UpdateUsingFluxNSCBCInflowYNeg,
    TID_UpdateUsingFluxNSCBCInflowYPos,
    TID_UpdateUsingFluxNSCBCOutflowXPos,
    TID_UpdateUsingFluxNSCBCOutflowYNeg,
-   TID_UpdateUsingFluxNSCBCOutflowYPos
+   TID_UpdateUsingFluxNSCBCOutflowYPos,
+   // BC tasks
+   TID_AddRecycleAverageBC,
+   TID_SetNSCBC_InflowBC_X,
+   TID_SetNSCBC_InflowBC_Y,
+   TID_SetNSCBC_InflowBC_Z,
+   TID_SetNSCBC_OutflowBC,
+   TID_SetIncomingShockBC,
+   TID_SetRecycleRescalingBC,
+   // Chemistry tasks
+   TID_UpdateChemistry,
+   TID_AddChemistrySources,
+   // CFL tasks
+   TID_CalculateMaxSpectralRadius,
+   // Average tasks
+   TID_Add2DAveragesX,
+   TID_Add2DAveragesY,
+   TID_Add2DAveragesZ,
+   TID_Add1DAveragesX,
+   TID_Add1DAveragesY,
+   TID_Add1DAveragesZ,
+#ifdef ELECTRIC_FIELD
+   // Electric field solver tasks
+   TID_initFFTplans,
+   TID_destroyFFTplans,
+   TID_performDirFFTFromField,
+   TID_performDirFFTFromMix,
+   TID_performInvFFT,
+   TID_solveTridiagonals,
+   TID_GetElectricField,
+   TID_UpdateUsingIonDriftFluxX,
+   TID_UpdateUsingIonDriftFluxY,
+   TID_UpdateUsingIonDriftFluxZ,
+   TID_AddIonWindSources,
+   TID_CorrectIonsBCXNeg,
+   TID_CorrectIonsBCXPos,
+   TID_CorrectIonsBCYNeg,
+   TID_CorrectIonsBCYPos,
+   TID_CorrectIonsBCZNeg,
+   TID_CorrectIonsBCZPos,
+#endif
+};
+
+enum REDOP_ID{
+   REGENT_REDOP_SUM_VEC3 = 101,
+   REGENT_REDOP_SUM_VECNSP,
+   REGENT_REDOP_SUM_VEC6,
 };
 
 #ifdef __cplusplus
 }
+#endif
+
+#ifdef __cplusplus
+#include "my_array.hpp"
+// Define common tipe of arrays and matrices that we are going to use
+// NOTE: Regent is not going to see this when includes this file
+typedef MyArray<double,     3> Vec3;
+typedef MyArray<double, nSpec> VecNSp;
+typedef MyArray<double,   nEq> VecNEq;
 #endif
 
 #endif // Prometeo_Types_H

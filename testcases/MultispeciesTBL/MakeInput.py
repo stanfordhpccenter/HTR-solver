@@ -135,7 +135,7 @@ def getCfTurb(xGrid):
 
    return cf
 
-Cf = getCfTurb(config["Grid"]["xWidth"]+x0)
+Cf = getCfTurb(config["Grid"]["xWidth"]+x0/deltaStarIn)
 TauW = Cf*(rhoInf*UInf**2)*0.5
 uTau = np.sqrt(TauW/rhoW)
 deltaNu = muW/(uTau*rhoW)
@@ -147,12 +147,43 @@ for i in range(len(uB)):
    if (uB[i] > 0.99*UInf):
       delta = yB[i]
       break
-config["Integrator"]["vorticityScale"] = UInf/delta
 
+# Normalization scales
+LRef = config["Flow"]["mixture"]["LRef"] = deltaStarIn
+TRef = config["Flow"]["mixture"]["TRef"] = TInf
+PRef = config["Flow"]["mixture"]["PRef"] = PInf
+rhoRef = rhoInf
+uRef = np.sqrt(PRef/rhoRef)
+config["Flow"]["mixture"]["XiRef"] = [
+   {"Name" : "N2", "MolarFrac" : N2B[-1]},
+   {"Name" : "O2", "MolarFrac" : O2B[-1]},
+   {"Name" : "NO", "MolarFrac" : NOB[-1]},
+   {"Name" :  "O", "MolarFrac" :  OB[-1]},
+   {"Name" :  "N", "MolarFrac" :  NB[-1]}]
+
+# Normalize everything
+TInf = 1.0
+PInf = 1.0
+rhoInf = 1.0
+UInf /= uRef
+cInf /= uRef
+muInf /= np.sqrt(config["Flow"]["mixture"]["PRef"]*rhoRef)*LRef
+
+Tw /= config["Flow"]["mixture"]["TRef"]
+muW /= np.sqrt(config["Flow"]["mixture"]["PRef"]*rhoRef)*LRef
+rhoW /= rhoRef
+delta /= config["Flow"]["mixture"]["LRef"]
+
+config["Integrator"]["EulerScheme"]["vorticityScale"] = UInf/delta
+
+x0 /= LRef
+deltaStarIn /= LRef
+deltaNu /= LRef
 config["Grid"]["origin"][0] = x0
-config["Grid"]["xWidth"] *= deltaStarIn
-config["Grid"]["yWidth"] *= deltaStarIn
-config["Grid"]["zWidth"] *= deltaStarIn
+
+uB /= uRef
+TB /= TRef
+rhoB /= rhoRef
 
 ##############################################################################
 #                            Boundary conditions                             #
@@ -231,7 +262,7 @@ print(config["Grid"]["xWidth"]/deltaNu, " x ",
       config["Grid"]["zWidth"]/deltaNu)
 
 print(dx[0]/deltaNu, " x ",
-      dy[0]/deltaNu, " x ",
+      dy[1]/deltaNu, " x ",
       dz[0]/deltaNu)
 
 # Set maxTime

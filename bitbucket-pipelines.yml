@@ -3,7 +3,7 @@
 # Only use spaces to indent your .yml configuration.
 # -----
 # You can specify a custom docker image from Docker Hub as your build environment.
-image: mariodr/legion-docker:ubuntu16.04-dcr
+image: mariodr/legion-docker:HTR-1.3
 
 pipelines:
    default:

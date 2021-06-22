@@ -73,9 +73,9 @@ def process(case, i):
    T   = f['temperature'      ][0,0,:]
    Xi  = f['MolarFracs'       ][0,0,:][:,:]
 
-   u   /= 3.477201e+02
-   p   /= abs(  p[xNum-1])
-   rho /= abs(rho[xNum-1])
+   u   /= np.sqrt(1.4)
+   #p   /= abs(  p[xNum-1])
+   #rho /= abs(rho[xNum-1])
 
 
    ##############################################################################

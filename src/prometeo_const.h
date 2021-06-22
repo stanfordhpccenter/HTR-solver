@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -31,34 +31,22 @@
 #ifndef __PROMETEO_CONST_H__
 #define __PROMETEO_CONST_H__
 
+//-----------------------------------------------------------------------------
+// LOAD THE EQUATION OF STATE
+//-----------------------------------------------------------------------------
+#define QUOTEME(M)       #M
+#define INCLUDE_FILE(M)  QUOTEME(M.hpp)
+#include INCLUDE_FILE( EOS )
+#undef QUOTEME
+#undef INCLUDE_FILE
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 //-----------------------------------------------------------------------------
-// LOAD THE EQUATION OF STATE
+// SOLVER CONSTANTS
 //-----------------------------------------------------------------------------
-#define QUOTEME(M)       #M
-#define INCLUDE_FILE(M)  QUOTEME(M.h)
-#include INCLUDE_FILE( EOS )
-#undef QUOTEME
-#undef INCLUDE_FILE
-
-//-----------------------------------------------------------------------------
-// CONSTANTS
-//-----------------------------------------------------------------------------
-
-#define RGAS  8.3144598        // [J/(mol K)]
-#define Na    6.02214086e23    // [1/mol]
-#define kb    1.38064852e-23   // [m^2 kg /( s^2 K)]
-#define PI    3.1415926535898
-
-// Stencil indices
-#define Stencil1  0
-#define Stencil2  1
-#define Stencil3  2
-#define Stencil4  3
-#define nStencils  4
 
 // SSP Runge-Kutta method Gottlieb et al. (2001)
 // RK_C[*][1] -- Coefficinets for solution at time n

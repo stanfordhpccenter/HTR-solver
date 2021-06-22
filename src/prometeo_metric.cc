@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -39,7 +39,7 @@ void InitializeMetricTask::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 5);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for variables in the Ghost regions
@@ -49,17 +49,17 @@ void InitializeMetricTask::cpu_base_impl(
    const AccessorRO<   int, 3> acc_nType_z          (regions[0], FID_nType_z);
 
    // Accessors for metrics
-   const AccessorRW<double, 3> acc_dcsi_e(regions[4], FID_dcsi_e);
-   const AccessorRW<double, 3> acc_deta_e(regions[4], FID_deta_e);
-   const AccessorRW<double, 3> acc_dzet_e(regions[4], FID_dzet_e);
+   const AccessorWO<double, 3> acc_dcsi_e(regions[1], FID_dcsi_e);
+   const AccessorWO<double, 3> acc_deta_e(regions[1], FID_deta_e);
+   const AccessorWO<double, 3> acc_dzet_e(regions[1], FID_dzet_e);
 
-   const AccessorRW<double, 3> acc_dcsi_d(regions[4], FID_dcsi_d);
-   const AccessorRW<double, 3> acc_deta_d(regions[4], FID_deta_d);
-   const AccessorRW<double, 3> acc_dzet_d(regions[4], FID_dzet_d);
+   const AccessorWO<double, 3> acc_dcsi_d(regions[1], FID_dcsi_d);
+   const AccessorWO<double, 3> acc_deta_d(regions[1], FID_deta_d);
+   const AccessorWO<double, 3> acc_dzet_d(regions[1], FID_dzet_d);
 
-   const AccessorRW<double, 3> acc_dcsi_s(regions[4], FID_dcsi_s);
-   const AccessorRW<double, 3> acc_deta_s(regions[4], FID_deta_s);
-   const AccessorRW<double, 3> acc_dzet_s(regions[4], FID_dzet_s);
+   const AccessorWO<double, 3> acc_dcsi_s(regions[1], FID_dcsi_s);
+   const AccessorWO<double, 3> acc_deta_s(regions[1], FID_deta_s);
+   const AccessorWO<double, 3> acc_dzet_s(regions[1], FID_dzet_s);
 
    // Extract execution domains
    Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());

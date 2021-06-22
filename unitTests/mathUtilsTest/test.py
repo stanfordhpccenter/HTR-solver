@@ -5,8 +5,9 @@ import unittest
 import subprocess
 import testAll
 
-class unitTest(unittest.TestCase, testAll.TestBase):
+class unitTest(unittest.TestCase, testAll.MultiTestBase):
    name = "mathUtilsTest"
+   tests = ["mathUtilsTest", "CPPmathUtilsTest"]
 
 if __name__ == "__main__":
    unittest.main()

@@ -1,0 +1,48 @@
+// Copyright (c) "2019, by Stanford University
+//               Developer: Mario Di Renzo
+//               Affiliation: Center for Turbulence Research, Stanford University
+//               URL: https://ctr.stanford.edu
+//               Citation: Di Renzo, M., Lin, F., and Urzay, J. (2020).
+//                         HTR solver: An open-source exascale-oriented task-based
+//                         multi-GPU high-order code for hypersonic aerothermodynamics.
+//                         Computer Physics Communications 255, 107262"
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//    * Redistributions of source code must retain the above copyright
+//      notice, this list of conditions and the following disclaimer.
+//    * Redistributions in binary form must reproduce the above copyright
+//      notice, this list of conditions and the following disclaimer in the
+//      documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
+// DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+// ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#include "prometeo_mixture.hpp"
+
+// Define a constant memory that will hold the Mixture struct
+__device__ __constant__ Mix mix;
+
+__host__
+void LoadMixtureTask::gpu_base_impl(
+                      const Args &args,
+                      const std::vector<PhysicalRegion> &regions,
+                      const std::vector<Future>         &futures,
+                      Context ctx, Runtime *runtime)
+{
+   assert(regions.size() == 1);
+   assert(futures.size() == 0);
+
+   // Copy the mixture to the device
+   cudaMemcpyToSymbol(mix, &(args.mix), sizeof(Mix), 0, cudaMemcpyHostToDevice);
+}
+

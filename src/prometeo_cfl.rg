@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -29,97 +29,34 @@
 
 import "regent"
 
-return function(MIX, Fluid_columns) local Exports = {}
-
--- Variable indices
-local nSpec = MIX.nSpec       -- Number of species composing the mixture
+return function(MIX, TYPES, ELECTRIC_FIELD) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
 -------------------------------------------------------------------------------
 local C = regentlib.c
-local fabs = regentlib.fabs(double)
+
+local Fluid_columns = TYPES.Fluid_columns
 
 -------------------------------------------------------------------------------
 -- STABILITY CONDITIONS ROUTINES
 -------------------------------------------------------------------------------
 
-local __demand(__inline)
-task CalculateConvectiveSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns), c : int3d)
-where
-   reads(Fluid.{cellWidth, velocity, SoS})
-do
-   return (max(max(((fabs(Fluid[c].velocity[0])+Fluid[c].SoS)/Fluid[c].cellWidth[0]),
-                   ((fabs(Fluid[c].velocity[1])+Fluid[c].SoS)/Fluid[c].cellWidth[1])),
-                   ((fabs(Fluid[c].velocity[2])+Fluid[c].SoS)/Fluid[c].cellWidth[2])))
+local Prop = terralib.newlist({"rho", "mu", "lam", "Di", "SoS"})
+local Vars = terralib.newlist({"velocity", "MassFracs", "temperature"})
+if (ELECTRIC_FIELD and (MIX.nIons > 0)) then
+   Prop:insert("Ki")
+   Vars:insert("electricField")
 end
-
-local __demand(__inline)
-task CalculateViscousSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns), c : int3d)
-where
-   reads(Fluid.{cellWidth, rho, mu})
-do
-   var nu = Fluid[c].mu/Fluid[c].rho
-   return ((max(max((nu/(Fluid[c].cellWidth[0]*Fluid[c].cellWidth[0])),
-                    (nu/(Fluid[c].cellWidth[1]*Fluid[c].cellWidth[1]))),
-                    (nu/(Fluid[c].cellWidth[2]*Fluid[c].cellWidth[2]))))*4.0)
-end
-
-local __demand(__inline)
-task CalculateHeatConductionSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns),
-                                           c : int3d,
-                                           mix : MIX.Mixture)
+extern task Exports.CalculateMaxSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns),
+                                               ModCells : region(ispace(int3d), Fluid_columns),
+                                               mix : MIX.Mixture) : double
 where
    reads(Fluid.cellWidth),
-   reads(Fluid.{MassFracs, temperature}),
-   reads(Fluid.{rho, lam})
-do
-   var cp   = MIX.GetHeatCapacity(Fluid[c].temperature, Fluid[c].MassFracs, mix)
-   var DifT = (Fluid[c].lam/(cp*Fluid[c].rho))
-   return ((max(max((DifT/(Fluid[c].cellWidth[0]*Fluid[c].cellWidth[0])),
-                    (DifT/(Fluid[c].cellWidth[1]*Fluid[c].cellWidth[1]))),
-                    (DifT/(Fluid[c].cellWidth[2]*Fluid[c].cellWidth[2]))))*4.0)
+   reads(Fluid.[Prop]),
+   reads(Fluid.[Vars])
 end
-
-local __demand(__inline)
-task CalculateSpeciesDiffusionSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns), c : int3d)
-where
-   reads(Fluid.{cellWidth, Di})
-do
-   var acc = -math.huge
-   for i=0, nSpec do
-      acc max= ((max(max((Fluid[c].Di[i]/(Fluid[c].cellWidth[0]*Fluid[c].cellWidth[0])),
-                         (Fluid[c].Di[i]/(Fluid[c].cellWidth[1]*Fluid[c].cellWidth[1]))),
-                         (Fluid[c].Di[i]/(Fluid[c].cellWidth[2]*Fluid[c].cellWidth[2]))))*4.0)
-   end
-   return acc
-end
-
-__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.CalculateMaxSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns),
-                                        ModCells : region(ispace(int3d), Fluid_columns),
-                                        mix : MIX.Mixture)
-where
-   reads(Fluid.cellWidth),
-   reads(Fluid.{velocity, SoS}),
-   reads(Fluid.{rho, mu}),
-   reads(Fluid.{MassFracs, temperature, lam}),
-   reads(Fluid.Di)
-do
-   var acc = -math.huge
-   __demand(__openmp)
-   for c in ModCells do
-      -- Advection
-      acc max= CalculateConvectiveSpectralRadius(Fluid, c)
-      -- Momentum diffusion
-      acc max= CalculateViscousSpectralRadius(Fluid, c)
-      -- Heat Conduction
-      acc max= CalculateHeatConductionSpectralRadius(Fluid, c, mix)
-      -- Species diffusion
-      acc max= CalculateSpeciesDiffusionSpectralRadius(Fluid, c)
-   end
-   return acc
-end
+Exports.CalculateMaxSpectralRadius:set_task_id(TYPES.TID_CalculateMaxSpectralRadius)
 
 return Exports end
 

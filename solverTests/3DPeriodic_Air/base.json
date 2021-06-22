@@ -32,8 +32,10 @@
       "cfl" : 0.5,
       "fixedDeltaTime" : 5.0e-4,
       "implicitChemistry" : false,
-      "hybridScheme" : true,
-      "vorticityScale" : 1.0
+      "EulerScheme" : {
+         "type" : "Hybrid",
+         "vorticityScale" : 1.0
+      }
    },
 
    "BC" : {
@@ -46,12 +48,21 @@
    },
 
    "Flow" : {
-      "mixture": { "type" : "AirMix" },
+      "mixture": {
+         "type" : "AirMix",
+         "LRef" : 1.0,
+         "TRef" : 500.0,
+         "PRef" : 1.0e5,
+         "XiRef" : {
+            "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
+                         {"Name" : "O2", "MolarFrac" : 0.21 }]
+         }
+      },
       "initCase" : {
          "type" : "TaylorGreen3DVortex",
-         "pressure" : 1e5,
-         "temperature" :  500.0,
-         "velocity" : 1.0,
+         "pressure" : 1.0,
+         "temperature" :  1.0,
+         "velocity" : 0.002634364032587426,
          "molarFracs" : {
             "Species" : [{"Name" : "N2", "MolarFrac" : 0.79 },
                          {"Name" : "O2", "MolarFrac" : 0.21 }]
@@ -80,5 +91,7 @@
       "YAverages" : [],
       "ZAverages" : [],
       "volumeProbes" : []
-   }
+   },
+
+   "Efield" : { "type" : "Off" }
 }

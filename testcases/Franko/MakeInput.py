@@ -153,7 +153,7 @@ for i in range(Np):
       delta = yBin[i]
       break
 
-config["Integrator"]["vorticityScale"] = UInf/delta
+config["Integrator"]["EulerScheme"]["vorticityScale"] = UInf/delta
 
 # Rescale quantities
 uB *= UInf

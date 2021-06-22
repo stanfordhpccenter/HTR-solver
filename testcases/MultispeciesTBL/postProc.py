@@ -139,7 +139,7 @@ figureDir = "Figures"
 if not os.path.exists(figureDir):
    os.makedirs(figureDir)
 
-Cf = 2.0*Xavg.tau[:,3]/(rhoInf*UInf**2)
+Cf = 2.0*Xavg.tau[:,1]/(rhoInf*UInf**2)
 Q  = -Xavg.q[:,1]/(rhoInf*UInf*UInf*UInf)
 
 plt.rcParams.update({'font.size': 12})

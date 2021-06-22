@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -58,13 +58,20 @@ end
 
 -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.Console_WriteHeader(config_Mapping : SCHEMA.MappingStruct)
-   [emitConsoleWrite(config_Mapping, 'Iter\t'..
-                                     'Sim Time\t'..
-                                     'Wall t\t'..
-                                     'Delta Time\t'..
-                                     'Avg Press\t'..
-                                     'Avg Temp\t'..
-                                     'Average KE\n')];
+   [emitConsoleWrite(config_Mapping, '%10s'..
+                                     '%15s'..
+                                     '%13s'..
+                                     '%15s'..
+                                     '%15s'..
+                                     '%15s'..
+                                     '%15s\n',
+                                     'Iter',
+                                     'Sim Time',
+                                     'Wall t',
+                                     'Delta Time',
+                                     'Avg Press',
+                                     'Avg Temp',
+                                     'Average KE')];
 end
 
 -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
@@ -77,13 +84,13 @@ task Exports.Console_Write(config_Mapping : SCHEMA.MappingStruct,
                            Flow_averageTemperature : double,
                            Flow_averageKineticEnergy : double)
    var currTime = C.legion_get_current_time_in_micros() / 1000;
-   [emitConsoleWrite(config_Mapping, '%d\t'..
-                                     '%e\t'..
-                                     '%llu.%03llu\t'..
-                                     '%e\t'..
-                                     '%e\t'..
-                                     '%e\t'..
-                                     '%e\n',
+   [emitConsoleWrite(config_Mapping, '%10d'..
+                                     '%15.7e'..
+                                     '%9llu.%03llu'..
+                                     '%15.7e'..
+                                     '%15.7e'..
+                                     '%15.7e'..
+                                     '%15.7e\n',
                      Integrator_timeStep,
                      Integrator_simTime,
                      rexpr (currTime - startTime) / 1000 end,
@@ -122,10 +129,14 @@ end
 -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.Probe_WriteHeader(config_Mapping : SCHEMA.MappingStruct,
                                probeId : int)
-   [emitProbeWrite(config_Mapping, probeId, 'Iter\t'..
-                                            'Time\t'..
-                                            'Temperature\t'..
-                                            'Pressure\n')];
+   [emitProbeWrite(config_Mapping, probeId, '%10s'..
+                                            '%15s' ..
+                                            '%15s' ..
+                                            '%15s\n',
+                                            'Iter',
+                                            'Time',
+                                            'Temperature',
+                                            'Pressure')];
 end
 
 -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
@@ -135,10 +146,10 @@ task Exports.Probe_Write(config_Mapping : SCHEMA.MappingStruct,
                          Integrator_simTime : double,
                          avgTemperature : double,
                          avgPressure : double)
-   [emitProbeWrite(config_Mapping, probeId, '%6d\t'..
-                                            '%12.7e\t' ..
-                                            '%12.7e\t' ..
-                                            '%12.7e\n',
+   [emitProbeWrite(config_Mapping, probeId, '%10d'..
+                                            '%15.7e' ..
+                                            '%15.7e' ..
+                                            '%15.7e\n',
                                             Integrator_timeStep,
                                             Integrator_simTime,
                                             avgTemperature,
@@ -175,9 +186,9 @@ task Exports.Console_WriteTiming( _ : int,
 end
 
 -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.createDir(dirname : regentlib.string)
+task Exports.createDir(_ : int, dirname : regentlib.string)
    UTIL.createDir(dirname)
-   return 0
+   return _
 end
 
 return Exports end

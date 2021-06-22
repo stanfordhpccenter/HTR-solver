@@ -57,10 +57,10 @@ where
    reads(r1.[IOVars])
 do
    for c in r0 do
-      regentlib.assert(r0[c].a    == r1[c].a,    "mathUtilsTest: ERROR on region")
-      regentlib.assert(r0[c].b[0] == r1[c].b[0], "mathUtilsTest: ERROR on region")
-      regentlib.assert(r0[c].b[1] == r1[c].b[1], "mathUtilsTest: ERROR on region")
-      regentlib.assert(r0[c].b[2] == r1[c].b[2], "mathUtilsTest: ERROR on region")
+      regentlib.assert(r0[c].a    == r1[c].a,    "hdfTest: ERROR on region")
+      regentlib.assert(r0[c].b[0] == r1[c].b[0], "hdfTest: ERROR on region")
+      regentlib.assert(r0[c].b[1] == r1[c].b[1], "hdfTest: ERROR on region")
+      regentlib.assert(r0[c].b[2] == r1[c].b[2], "hdfTest: ERROR on region")
    end
 end
 
@@ -104,8 +104,8 @@ task main()
    simTime  = HDF.read.simTime( 0, tiles, dirname, r1, p_r1)
    HDF.load(0, tiles, dirname, r1, r1_copy, p_r1, p_r1_copy)
 
-   regentlib.assert(timeStep == 12345,    "mathUtilsTest: ERROR on timeStep")
-   regentlib.assert(simTime == 123.4567,    "mathUtilsTest: ERROR on simTime")
+   regentlib.assert(timeStep == 12345,    "hdfTest: ERROR on timeStep")
+   regentlib.assert(simTime == 123.4567,  "hdfTest: ERROR on simTime")
    check(r0, r1)
 
    __fence(__execution, __block)

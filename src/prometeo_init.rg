@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -29,7 +29,7 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, CHEM, Fluid_columns) local Exports = {}
+return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -55,7 +55,7 @@ local Primitives = CONST.Primitives
 -- INITIALIZATION ROUTINES
 -------------------------------------------------------------------------------
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeUniform(Fluid : region(ispace(int3d), Fluid_columns),
                                initPressure : double,
                                initTemperature : double,
@@ -96,7 +96,7 @@ do
    end
 end
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.InitializeTaylorGreen2D(Fluid : region(ispace(int3d), Fluid_columns),
                              taylorGreenPressure : double,
                              taylorGreenTemperature : double,
@@ -110,9 +110,8 @@ where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
 do
-   __demand(__openmp)
+   MIX.ClipYi(&taylorGreenMolarFracs[0], mix)
    for c in Fluid do
-      MIX.ClipYi(taylorGreenMolarFracs)
       var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, mix)
       var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, mix)
       var xy = Fluid[c].centerCoordinates
@@ -122,11 +121,11 @@ do
       var factor = (cos((2.0*xy[0]))+cos((2.0*xy[1])))
       var pressure = (taylorGreenPressure+(((taylorGreenDensity*pow(taylorGreenVelocity, 2.0))/4.0)*factor))
       Fluid[c].pressure = pressure
-      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure)
+      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure, mix)
    end
 end
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.InitializeTaylorGreen3D(Fluid : region(ispace(int3d), Fluid_columns),
                              taylorGreenPressure : double,
                              taylorGreenTemperature : double,
@@ -140,9 +139,8 @@ where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
 do
-   __demand(__openmp)
+   MIX.ClipYi(&taylorGreenMolarFracs[0], mix)
    for c in Fluid do
-      MIX.ClipYi(taylorGreenMolarFracs)
       var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, mix)
       var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, mix)
       var xy = Fluid[c].centerCoordinates
@@ -153,7 +151,7 @@ do
       var factorB = (cos((2.0*xy[0]))+cos((2.0*xy[1])))
       var pressure = (taylorGreenPressure+((((taylorGreenDensity*pow(taylorGreenVelocity, 2.0))/16.0)*factorA)*factorB))
       Fluid[c].pressure = pressure
-      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure)
+      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure, mix)
    end
 end
 
@@ -179,10 +177,9 @@ do
 end
 
 -- Test 1 in Toro "Riemann Solvers and Numerical Methods for Fluid Dynamics" (2013)
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeRiemannTestOne(Fluid : region(ispace(int3d), Fluid_columns),
-                                      initMolarFracs : double[nSpec],
-                                      mix : MIX.Mixture)
+                                      initMolarFracs : double[nSpec])
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
@@ -204,10 +201,9 @@ do
 end
 
 -- Test 4 in Toro "Riemann Solvers and Numerical Methods for Fluid Dynamics" (2013)
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeRiemannTestTwo(Fluid : region(ispace(int3d), Fluid_columns),
-                                      initMolarFracs : double[nSpec],
-                                      mix : MIX.Mixture)
+                                      initMolarFracs : double[nSpec])
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
@@ -228,10 +224,9 @@ do
    end
 end
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeSodProblem(Fluid : region(ispace(int3d), Fluid_columns),
-                                  initMolarFracs : double[nSpec],
-                                  mix : MIX.Mixture)
+                                  initMolarFracs : double[nSpec])
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
@@ -252,10 +247,9 @@ do
    end
 end
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeLaxProblem(Fluid : region(ispace(int3d), Fluid_columns),
-                                  initMolarFracs : double[nSpec],
-                                  mix : MIX.Mixture)
+                                  initMolarFracs : double[nSpec])
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
@@ -276,10 +270,9 @@ do
    end
 end
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeShuOsherProblem(Fluid : region(ispace(int3d), Fluid_columns),
-                                       initMolarFracs : double[nSpec],
-                                       mix : MIX.Mixture)
+                                       initMolarFracs : double[nSpec])
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
@@ -300,7 +293,7 @@ do
    end
 end
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task Exports.InitializeVortexAdvection2D(Fluid : region(ispace(int3d), Fluid_columns),
                                          VortexPressure : double,
                                          VortexTemperature : double,
@@ -312,7 +305,6 @@ where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
 do
-   __demand(__openmp)
    for c in Fluid do
       var Beta = 5.0
       var x0 = 0.0
@@ -323,7 +315,7 @@ do
       var r2 = rx*rx + ry*ry
 
       var MixW = MIX.GetMolarWeightFromXi(VortexMolarFracs, mix)
-      var Yi = MIX.GetMassFractions(MixW, VortexMolarFracs, mix)
+      var Yi : double[nSpec]; MIX.GetMassFractions(&Yi[0], MixW, VortexMolarFracs, mix)
       var gamma = MIX.GetGamma(VortexTemperature, MixW, Yi, mix)
       var T = VortexTemperature*(1.0 - (gamma - 1.0)*Beta*Beta/(8*PI*PI*gamma)*exp(1.0 - r2))
       var P = VortexPressure*pow(T, gamma/(gamma - 1.0))
@@ -337,7 +329,7 @@ do
    end
 end
 
-__demand(__cuda,__leaf) -- MANUALLY PARALLELIZED,
+__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
 task Exports.InitializeGrossmanCinnellaProblem(Fluid : region(ispace(int3d), Fluid_columns),
                                                mix : MIX.Mixture)
 where
@@ -361,8 +353,8 @@ do
 
    C.snprintf([&int8](leftMix.Species.values[4].Name), 10, "O")
    leftMix.Species.values[4].MolarFrac = 2.125451e-01
-   var LeftMolarFracs = CHEM.ParseConfigMixture(leftMix, mix)
-   
+   var LeftMolarFracs = MIX.ParseConfigMixture(leftMix, mix)
+
    -- Right-hand side mixture
    var rightMix : SCHEMA.Mixture
    rightMix.Species.length = 2
@@ -371,7 +363,7 @@ do
 
    C.snprintf([&int8](rightMix.Species.values[1].Name), 10, "O2")
    rightMix.Species.values[1].MolarFrac = 0.210000e+00
-   var RightMolarFracs = CHEM.ParseConfigMixture(rightMix, mix)
+   var RightMolarFracs = MIX.ParseConfigMixture(rightMix, mix)
 
    __demand(__openmp)
    for c in Fluid do
@@ -379,13 +371,13 @@ do
        if (x < 0.5) then
           Fluid[c].MolarFracs = LeftMolarFracs
           Fluid[c].velocity = array(0.0, 0.0, 0.0)
-          Fluid[c].pressure = 1.95256e5
-          Fluid[c].temperature = 9000.0
+          Fluid[c].pressure = 1.95256e1
+          Fluid[c].temperature = 30.0
        else
           Fluid[c].MolarFracs = RightMolarFracs
           Fluid[c].velocity = array(0.0, 0.0, 0.0)
-          Fluid[c].pressure = 1.0e4
-          Fluid[c].temperature = 300.0
+          Fluid[c].pressure = 1.0
+          Fluid[c].temperature = 1.0
        end
    end
 end
@@ -409,7 +401,7 @@ do
    -- Initializes the channel with a streamwise velocity profile ~y^4
    -- streaks and random noise are used for the spanwise and wall-normal directions
    -- the fluid composition is uniform
-   MIX.ClipYi(initMolarFracs)
+   MIX.ClipYi(&initMolarFracs[0], mix)
 
    var rngState : C.drand48_data
    C.srand48_r(C.legion_get_current_time_in_nanos(), &rngState)

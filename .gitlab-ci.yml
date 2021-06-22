@@ -5,8 +5,7 @@
 # Global variables (will be set in every job):
 variables:
    MAX_DIM: "3"
-   LEGION_BRANCH: "control_replication"
-#   LEGION_BRANCH: "master"
+   LEGION_COMMIT: "e1ce6c67f58a0e6b70023c31d202eebc88efa265"
    HTR_DIR: "$CI_PROJECT_DIR"
    REALM_BACKTRACE: "1"
 #  TIMELIMIT: "600"  # each test should take less than 10 minutes
@@ -64,6 +63,16 @@ variables:
   USE_PROF: "1"
 
 ###
+### Optional modules
+###
+
+.noelectricSolver: &noelectricSolver
+   ELECTRIC_FIELD: "0"
+
+.electricSolver: &electricSolver
+   ELECTRIC_FIELD: "1"
+
+###
 ### Setup
 ###
 
@@ -85,17 +94,9 @@ before_script:
    - |
       cd $LEGION_DIR/language
       git fetch
-      git checkout $LEGION_BRANCH
-      UPSTREAM=${1:-'@{u}'}
-      LOCAL=$(git rev-parse @)
-      REMOTE=$(git rev-parse "$UPSTREAM")
-      if [ $LOCAL != $REMOTE ]; then
-         echo "Updating Legion"
-         git reset --hard $REMOTE
-      fi
-      scripts/setup_env.py --llvm-version 38
+      git checkout $LEGION_COMMIT
+      scripts/setup_env.py --llvm-version 90
       cd $HTR_DIR
-
 
 ###
 ### Tags
@@ -146,20 +147,30 @@ before_script:
 ctr-205-1_release_unitTests:
    <<: [*ctr-205-1, *unitTests]
    variables:
-      <<: [*release, *openmp, *hdf5]
+      <<: [*release, *openmp, *hdf5, *noelectricSolver]
 
 ctr-205-1_release_solverTests:
    <<: [*ctr-205-1, *solverTests]
    variables:
-      <<: [*release, *openmp, *hdf5]
+      <<: [*release, *openmp, *hdf5, *noelectricSolver]
 
 ctr-205-1_debug_unitTests:
    <<: [*ctr-205-1, *unitTests]
    variables:
-      <<: [*debug, *openmp, *hdf5]
+      <<: [*debug, *openmp, *hdf5, *noelectricSolver]
 
 ctr-205-1_debug_quickSolverTests:
    <<: [*ctr-205-1, *quickSolverTests]
    variables:
-      <<: [*debug, *openmp, *hdf5]
+      <<: [*debug, *openmp, *hdf5, *noelectricSolver]
+
+ctr-205-1_release_electricSolver_unitTests:
+   <<: [*ctr-205-1, *unitTests]
+   variables:
+      <<: [*release, *openmp, *hdf5, *electricSolver]
+
+ctr-205-1_release_electricSolver_solverTests:
+   <<: [*ctr-205-1, *solverTests]
+   variables:
+      <<: [*release, *openmp, *hdf5, *electricSolver]
 

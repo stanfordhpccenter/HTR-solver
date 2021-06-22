@@ -226,7 +226,7 @@ assert weight.shape[0] == yGrid.size
 
 rhoW = rho_avg[0]
 muW = mu_avg[0]
-tauW = tau[0,3]
+tauW = tau[0,1]
 uTau = np.sqrt(tauW/rhoW)
 ReTau = rhoW*uTau*yWidth*0.5/muW
 

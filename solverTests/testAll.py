@@ -25,6 +25,7 @@ def checkSolutionFile(path, refFile, tol=1e-10):
       tile = h5py.File(tl, "r")
       for fld in tile:
          f   =    tile[fld][:]
+         if (fld == "electricPotential" and not(fld in refFile)): continue
          ref = refFile[fld][:]
          if  (len(f.shape) == 3):
             for (k,j,i), value in np.ndenumerate(f):
@@ -129,5 +130,10 @@ class Test3DTiledBase(TestTiledBase):
 
 if __name__ == "__main__":
    suite = unittest.TestLoader().discover(os.path.expandvars("$HTR_DIR/solverTests/"), pattern = "test.py")
+   # Remove tests that are not appropriate for our configuration
+   for group in suite:
+      for test in group:
+         if (os.path.expandvars("$ELECTRIC_FIELD") != "1"):
+            if (test._tests[0].testName == "Speelman_DV250"): suite._tests.remove(group)
    result = 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
    sys.exit(result)

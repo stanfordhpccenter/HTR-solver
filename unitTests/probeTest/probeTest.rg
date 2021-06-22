@@ -5,41 +5,38 @@ import "regent"
 
 local C = regentlib.c
 local fabs = regentlib.fabs(double)
-local SCHEMA = terralib.includec("../../src/config_schema.h")
+local SCHEMA = terralib.includec("config_schema.h")
 local UTIL = require 'util-desugared'
 
 local Config = SCHEMA.Config
 
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
-local MIX = (require "AirMix")(SCHEMA)
-local nSpec = MIX.nSpec
-local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
 local Primitives = CONST.Primitives
 local Properties = CONST.Properties
 
-local struct Fluid_columns {
-   cellWidth : double[3];
-   -- Primitive variables
-   pressure    : double;
-   temperature : double;
-   MolarFracs  : double[nSpec];
-   velocity    : double[3];
-   -- Properties
-   rho  : double;
-   mu   : double;
-   lam  : double;
-   Di   : double[nSpec];
-   SoS  : double;
-   -- Gradients
-   velocityGradientX   : double[3];
-   velocityGradientY   : double[3];
-   velocityGradientZ   : double[3];
-   temperatureGradient : double[3];
-   -- Conserved varaibles
-   Conserved       : double[nEq];
-}
+-------------------------------------------------------------------------------
+-- ACTIVATE ELECTRIC FIELD SOLVER
+-------------------------------------------------------------------------------
+
+local ELECTRIC_FIELD = false
+if os.getenv("ELECTRIC_FIELD") == "1" then
+   ELECTRIC_FIELD = true
+   print("#############################################################################")
+   print("WARNING: You are compiling with electric field solver.")
+   print("#############################################################################")
+end
+
+local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
+if ELECTRIC_FIELD then
+   types_inc_flags:insert("-DELECTRIC_FIELD")
+end
+local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
+local Fluid_columns = TYPES.Fluid_columns
+local MIX = (require 'prometeo_mixture')(SCHEMA, TYPES)
+local nSpec = MIX.nSpec
+local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
 --External modules
 local IO = (require 'prometeo_IO')(SCHEMA)
@@ -102,7 +99,7 @@ local Grid = {
 task main()
    -- Init config
    var config : Config
-   
+
    config.Grid.xNum = Npx
    config.Grid.yNum = Npy
    config.Grid.zNum = Npz

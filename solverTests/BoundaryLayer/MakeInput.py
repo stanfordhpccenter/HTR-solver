@@ -50,7 +50,7 @@ P    = config["BC"]["xBCLeft"]["P"]
 UInf = 2083.67
 Rex0 = 100000
 
-config["Integrator"]["vorticityScale"] = UInf/0.0528088569936
+config["Integrator"]["EulerScheme"]["vorticityScale"] = UInf/0.0528088569936
 
 aInf = np.sqrt(gamma*R*TInf)
 MaInf = UInf/aInf
@@ -197,6 +197,8 @@ for xt in range(0, Ntiles[0]):
             fout.create_dataset("MolarFracs_profile",    shape=shape, dtype = np.dtype("(1,)f8"))
             fout.create_dataset("velocity_profile",      shape=shape, dtype = np.dtype("(3,)f8"))
             fout.create_dataset("temperature_profile",   shape=shape, dtype = np.dtype("f8"))
+            if (os.path.expandvars("$ELECTRIC_FIELD") == "1"):
+               fout.create_dataset("electricPotential",  shape=shape, dtype = np.dtype("f8"))
 
             fout["centerCoordinates"][:] = centerCoordinates
             fout["cellWidth"][:] = cellWidth

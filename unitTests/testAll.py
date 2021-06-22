@@ -53,5 +53,10 @@ class MultiTestBase(object):
 
 if __name__ == "__main__":
    suite = unittest.TestLoader().discover(os.path.expandvars("$HTR_DIR/unitTests/"), pattern = "test.py")
+   # Remove tests that are not appropriate for our configuration
+   for group in suite:
+      for test in group:
+         if (os.path.expandvars("$ELECTRIC_FIELD") != "1"):
+            if (test._tests[0].name == "poissonTest"): suite._tests.remove(group)
    result = 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
    sys.exit(result)

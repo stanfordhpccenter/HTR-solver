@@ -5,6 +5,7 @@ import "regent"
 
 local C = regentlib.c
 local fabs = regentlib.fabs(double)
+local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
 local REGISTRAR = terralib.includec("prometeo_variables.h")
 local UTIL = require 'util-desugared'
@@ -13,19 +14,35 @@ local Config = SCHEMA.Config
 
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
-local MIX = (require "AirMix")(SCHEMA)
-local nSpec = MIX.nSpec
-local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
 local Primitives = CONST.Primitives
 local Properties = CONST.Properties
 
-local TYPES = terralib.includec("prometeo_types.h", {"-DEOS="..os.getenv("EOS")})
+-------------------------------------------------------------------------------
+-- ACTIVATE ELECTRIC FIELD SOLVER
+-------------------------------------------------------------------------------
+
+local ELECTRIC_FIELD = false
+if os.getenv("ELECTRIC_FIELD") == "1" then
+   ELECTRIC_FIELD = true
+   print("#############################################################################")
+   print("WARNING: You are compiling with electric field solver.")
+   print("#############################################################################")
+end
+
+local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
+if ELECTRIC_FIELD then
+   types_inc_flags:insert("-DELECTRIC_FIELD")
+end
+local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
 local Fluid_columns = TYPES.Fluid_columns
+local MIX = (require 'prometeo_mixture')(SCHEMA, TYPES)
+local nSpec = MIX.nSpec
+local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
 --External modules
-local METRIC = (require 'prometeo_metric')(SCHEMA, Fluid_columns)
-local VARS = (require 'prometeo_variables')(SCHEMA, MIX, METRIC, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
+local VARS = (require 'prometeo_variables')(SCHEMA, MIX, METRIC, TYPES, ELECTRIC_FIELD)
 
 -- Test parameters
 local Npx = 16
@@ -35,7 +52,7 @@ local Nx = 2
 local Ny = 2
 local Nz = 2
 
---local R = rexpr 8.3144598 end
+local R = rexpr 8.3144598 end
 local P = rexpr 101325.0 end
 local T = rexpr 5000.0 end
 local Xi = rexpr array(0.4, 0.2, 0.15, 0.15, 0.1) end
@@ -43,14 +60,28 @@ local v  = rexpr array(1.0, 2.0, 3.0) end
 local Tres = rexpr 500.0 end
 
 -- Expected properties
-local eRho = rexpr 6.2899871101668e-02 end
-local eMu  = rexpr 1.2424467023580e-04 end
-local eLam = rexpr 2.4040340390246e-01 end
-local eDi  = rexpr array(2.5146873480781e-03, 2.4389311883618e-03, 2.4550965167542e-03, 3.6168277168130e-03, 3.9165634179846e-03) end
-local eSoS = rexpr 1.4518705966651e+03 end
+local eRho = rexpr 6.2899525132668e-02 end
+local eMu  = rexpr 1.2424432854120e-04 end
+local eLam = rexpr 2.4040406505225e-01 end
+local eDi  = rexpr array(2.5146942638910e-03, 2.4389378958326e-03, 2.4551032686824e-03, 3.6168376636972e-03, 3.9165741891924e-03) end
+local eSoS = rexpr 1.4518745895533e+03 end
 
 -- Expected conserved variables
-local eConserved  = rexpr array(2.7311049167620e-02, 1.5598263689963e-02, 1.0970170602665e-02, 5.1208217189288e-03, 3.8995659224908e-03, 6.2899871101668e-02, 1.2579974220334e-01, 1.8869961330500e-01, 5.4092397631210e+05) end
+local eConserved  = rexpr array(2.3342371515176e-02, 1.3331617683677e-02, 9.3760512904744e-03, 4.3766946590956e-03, 3.3329044209192e-03, 1.8268107194243e-04, 3.6536214388485e-04, 5.4804321582728e-04, 5.3385045774457e+00) end
+
+-- Normalization quantities
+local LRef = rexpr 1.0 end
+local PRef = rexpr 101325.0 end
+local TRef = rexpr 300.0 end
+local YO2Ref = rexpr 0.22 end
+local YN2Ref = rexpr 0.78 end
+local MixWRef = rexpr 1.0/([YN2Ref]/28.0134e-3 + [YO2Ref]/(2*15.999e-3)) end
+local rhoRef = rexpr [PRef]*[MixWRef]/([R]*[TRef]) end
+local eRef = rexpr [PRef]/[rhoRef] end
+local uRef = rexpr sqrt([PRef]/[rhoRef]) end
+local muRef = rexpr sqrt([PRef]*[rhoRef])*[LRef] end
+local lamRef = rexpr sqrt([PRef]*[rhoRef])*[LRef]*[R]/[MixWRef] end
+local DiRef = rexpr sqrt([PRef]/[rhoRef])*[LRef] end
 
 __demand(__inline)
 task InitializeCell(Fluid : region(ispace(int3d), Fluid_columns))
@@ -71,11 +102,11 @@ do
    fill(Fluid.dcsi_s, 0.0)
    fill(Fluid.deta_s, 0.0)
    fill(Fluid.dzet_s, 0.0)
-   fill(Fluid.pressure, [P])
-   fill(Fluid.temperature, [T])
+   fill(Fluid.pressure, [P]/[PRef])
+   fill(Fluid.temperature, [T]/[TRef])
    fill(Fluid.MassFracs, [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
    fill(Fluid.MolarFracs, [Xi])
-   fill(Fluid.velocity, [v])
+   fill(Fluid.velocity, array([v][0]/[uRef], [v][1]/[uRef], [v][2]/[uRef]))
    fill(Fluid.rho, 0.0)
    fill(Fluid.mu , 0.0)
    fill(Fluid.lam, 0.0)
@@ -84,7 +115,7 @@ do
    fill(Fluid.velocityGradientX,   array(0.0, 0.0, 0.0))
    fill(Fluid.velocityGradientY,   array(0.0, 0.0, 0.0))
    fill(Fluid.velocityGradientZ,   array(0.0, 0.0, 0.0))
-   fill(Fluid.temperatureGradient, array(0.0, 0.0, 0.0))
+--   fill(Fluid.temperatureGradient, array(0.0, 0.0, 0.0))
    fill(Fluid.Conserved, [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
 end
 
@@ -94,13 +125,13 @@ where
    reads(Fluid.[Properties])
 do
    for c in Fluid do
-      regentlib.assert(fabs((Fluid[c].rho/[eRho]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (rho)")
-      regentlib.assert(fabs((Fluid[c].mu /[eMu ]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (mu)")
-      regentlib.assert(fabs((Fluid[c].lam/[eLam]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (lam)")
+      regentlib.assert(fabs((Fluid[c].rho*[rhoRef]/[eRho]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (rho)")
+      regentlib.assert(fabs((Fluid[c].mu *[ muRef]/[eMu ]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (mu)")
+      regentlib.assert(fabs((Fluid[c].lam*[lamRef]/[eLam]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (lam)")
       for i=0, nSpec do
-         regentlib.assert(fabs((Fluid[c].Di[i]/[eDi][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (Di)")
+         regentlib.assert(fabs((Fluid[c].Di[i]*[DiRef]/[eDi][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (Di)")
       end
-      regentlib.assert(fabs((Fluid[c].SoS/[eSoS]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (SoS)")
+      regentlib.assert(fabs((Fluid[c].SoS*[uRef]/[eSoS]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePropertiesFromPrimitive (SoS)")
    end
 end
 
@@ -150,22 +181,22 @@ do
    for c in Fluid do
       var interior  = MACRO.in_interior(c, 1, Npx, 1, Npy, 1, Npz)
       if interior then
-         regentlib.assert(fabs((Fluid[c].pressure/[P]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved")
-         regentlib.assert(fabs((Fluid[c].temperature/[T]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved")
+         regentlib.assert(fabs((Fluid[c].pressure*[PRef]/[P]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved (P)")
+         regentlib.assert(fabs((Fluid[c].temperature*[TRef]/[T]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved (T)")
          for i=0, nSpec do
-            regentlib.assert(fabs((Fluid[c].MolarFracs[i]/[Xi][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved")
+            regentlib.assert(fabs((Fluid[c].MolarFracs[i]/[Xi][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved (Xi)")
          end
          for i=0, 3 do
-            regentlib.assert(fabs((Fluid[c].velocity[i]/[v][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved")
+            regentlib.assert(fabs((Fluid[c].velocity[i]*[uRef]/[v][i]) - 1.0) < 1e-8, "variablesTest: ERROR in UpdatePrimitiveFromConserved (v)")
          end
       else
-         regentlib.assert(Fluid[c].pressure == 0.0, "variablesTest: ERROR in UpdatePrimitiveFromConserved")
-         regentlib.assert(Fluid[c].temperature == [Tres], "variablesTest: ERROR in UpdatePrimitiveFromConserved")
+         regentlib.assert(Fluid[c].pressure == 0.0, "variablesTest: ERROR in UpdatePrimitiveFromConserved (P)")
+         regentlib.assert(Fluid[c].temperature*[TRef] == [Tres], "variablesTest: ERROR in UpdatePrimitiveFromConserved (T)")
          for i=0, nSpec do
-            regentlib.assert(Fluid[c].MolarFracs[i] == 0.0, "variablesTest: ERROR in UpdatePrimitiveFromConserved")
+            regentlib.assert(Fluid[c].MolarFracs[i] == 0.0, "variablesTest: ERROR in UpdatePrimitiveFromConserved (Xi)")
          end
          for i=0, 3 do
-            regentlib.assert(Fluid[c].velocity[i] == 0.0, "variablesTest: ERROR in UpdatePrimitiveFromConserved")
+            regentlib.assert(Fluid[c].velocity[i] == 0.0, "variablesTest: ERROR in UpdatePrimitiveFromConserved (v)")
          end
       end
    end
@@ -176,7 +207,15 @@ task main()
    -- Init the mixture
    var config : Config
    config.Flow.mixture.type = SCHEMA.MixtureModel_AirMix
-   var Mix = MIX.InitMixture(config)
+   config.Flow.mixture.u.AirMix.LRef = [LRef]
+   config.Flow.mixture.u.AirMix.TRef = [TRef]
+   config.Flow.mixture.u.AirMix.PRef = [PRef]
+   config.Flow.mixture.u.AirMix.XiRef.Species.length = 2
+   C.snprintf([&int8](config.Flow.mixture.u.AirMix.XiRef.Species.values[0].Name), 10, "O2")
+   C.snprintf([&int8](config.Flow.mixture.u.AirMix.XiRef.Species.values[1].Name), 10, "N2")
+   config.Flow.mixture.u.AirMix.XiRef.Species.values[0].MolarFrac = [MixWRef]*[YO2Ref]/(2*15.999e-3)
+   config.Flow.mixture.u.AirMix.XiRef.Species.values[1].MolarFrac = [MixWRef]*[YN2Ref]/28.0134e-3
+   var Mix = MIX.InitMixtureStruct(config)
 
    -- Define the domain
    var xBnum = 1
@@ -236,7 +275,7 @@ task main()
 
    -- Test UpdatePrimitiveFromConserved
    fill(Fluid.pressure, 0.0)
-   fill(Fluid.temperature, [Tres])
+   fill(Fluid.temperature, [Tres]/[TRef])
    fill(Fluid.MolarFracs, [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
    fill(Fluid.velocity, array(0.0, 0.0, 0.0))
    __demand(__index_launch)

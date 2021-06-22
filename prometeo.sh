@@ -29,7 +29,7 @@ export DEBUG="${DEBUG:-0}"
 export RANKS_PER_NODE="${RANKS_PER_NODE:-1}"
 
 # How many cores per rank to reserve for the runtime
-export RESERVED_CORES="${RESERVED_CORES:-4}"
+export RESERVED_CORES="${RESERVED_CORES:-6}"
 
 ###############################################################################
 # Helper functions
@@ -53,10 +53,14 @@ def numRanks(sample):
   zRanks = int(tiles[2]) / int(tilesPerRank[2])
   return int(xRanks * yRanks * zRanks)
 def mixture(sample):
-  assert sample['Flow']['mixture']['type'] == 'ConstPropMix'  or \
-         sample['Flow']['mixture']['type'] == 'IsentropicMix' or \
-         sample['Flow']['mixture']['type'] == 'AirMix'        or \
-         sample['Flow']['mixture']['type'] == 'CH41StMix'
+  assert sample['Flow']['mixture']['type'] == 'ConstPropMix'    or \
+         sample['Flow']['mixture']['type'] == 'IsentropicMix'   or \
+         sample['Flow']['mixture']['type'] == 'AirMix'          or \
+         sample['Flow']['mixture']['type'] == 'CH41StMix'       or \
+         sample['Flow']['mixture']['type'] == 'CH4_30SpMix'     or \
+         sample['Flow']['mixture']['type'] == 'CH4_43SpIonsMix' or \
+         sample['Flow']['mixture']['type'] == 'FFCM-1Mix'       or \
+         sample['Flow']['mixture']['type'] == 'BoivinMix'
   return sample['Flow']['mixture']['type']
 f = json.load(open('$1'))
 if '$2' == 'single':

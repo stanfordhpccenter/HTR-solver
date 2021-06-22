@@ -141,9 +141,6 @@ local fspace ghost_partitions(Fluid  : region(ispace(int3d), Fluid_columns), til
    p_ZSensorGhosts2 : partition(aliased, Fluid, tiles),
    -- Metric routines
    p_MetricGhosts  : partition(aliased, Fluid, tiles),
-   p_MetricGhostsX : partition(aliased, Fluid, tiles),
-   p_MetricGhostsY : partition(aliased, Fluid, tiles),
-   p_MetricGhostsZ : partition(aliased, Fluid, tiles),
    -- Euler fluxes routines
    p_XEulerGhosts : partition(aliased, Fluid, tiles),
    p_YEulerGhosts : partition(aliased, Fluid, tiles),
@@ -156,9 +153,15 @@ local fspace ghost_partitions(Fluid  : region(ispace(int3d), Fluid_columns), til
    p_ZSensorGhosts : partition(aliased, Fluid, tiles),
 }
 
+local fspace average_ghost_partitions(Fluid  : region(ispace(int3d), Fluid_columns), tiles : ispace(int3d)) {
+   -- Gradient routines
+   p_GradientGhosts : partition(aliased, Fluid, tiles),
+}
+
 Exports.zones_partitions = zones_partitions
 Exports.output_partitions = output_partitions
 Exports.ghost_partitions = ghost_partitions
+Exports.average_ghost_partitions = average_ghost_partitions
 
 -------------------------------------------------------------------------------
 -- ZONES PARTITIONING ROUTINES
@@ -1243,13 +1246,6 @@ do
          [emitEulerGhostRegion("z", Fluid, aux, MetricGhostsZ)];
    [UTIL.emitPartitionNameAttach(rexpr p_MetricGhosts end, "p_MetricGhosts")];
 
-   var p_MetricGhostsX = Fluid & MetricGhostsX
-   var p_MetricGhostsY = Fluid & MetricGhostsY
-   var p_MetricGhostsZ = Fluid & MetricGhostsZ;
-   [UTIL.emitPartitionNameAttach(rexpr p_MetricGhostsX end, "p_MetricGhostsX")];
-   [UTIL.emitPartitionNameAttach(rexpr p_MetricGhostsY end, "p_MetricGhostsY")];
-   [UTIL.emitPartitionNameAttach(rexpr p_MetricGhostsZ end, "p_MetricGhostsZ")];
-
    -- Euler fluxes routines (uses [-2:+3] direction by direction)
    var p_XEulerGhosts = p_x_faces | x_facesM2 | x_facesM1 | x_facesP1 | x_facesP2 | x_facesP3
    var p_YEulerGhosts = p_y_faces | y_facesM2 | y_facesM1 | y_facesP1 | y_facesP2 | y_facesP3
@@ -1284,9 +1280,6 @@ do
       p_AllWithGhosts = p_AllWithGhosts,
       -- Metric routines
       p_MetricGhosts  = p_MetricGhosts,
-      p_MetricGhostsX = p_MetricGhostsX,
-      p_MetricGhostsY = p_MetricGhostsY,
-      p_MetricGhostsZ = p_MetricGhostsZ,
       -- Fluxes stencil access
       p_XFluxGhosts = p_XFluxGhosts,
       p_YFluxGhosts = p_YFluxGhosts,
@@ -1314,6 +1307,65 @@ do
       p_YSensorGhosts = p_YSensorGhosts,
       p_ZSensorGhosts = p_ZSensorGhosts
    }
+end
+
+__demand(__inline)
+task Exports.PartitionAverageGhost(
+                  Fluid : region(ispace(int3d), Fluid_columns),
+                  p_All : partition(disjoint, Fluid, ispace(int3d)),
+                  p_Avg : partition(aliased, Fluid, ispace(int1d)),
+                  cr_Avg : cross_product(p_Avg, p_All),
+                  n_Avg : int)
+where
+   reads(Fluid)
+do
+   var tiles = p_All.colors
+   -- This line matches the maximum number of average specified in config_schema.lua:341-347
+   var p : average_ghost_partitions(Fluid, tiles)[10]
+
+   if (n_Avg > 0) then
+      -- Define an auxiliary region that will store the stencil indices
+      var aux = region(Fluid.ispace, indices_columns)
+      var All     = aux & p_All
+
+      -- Compute stencil indices
+      InitializeIndices(aux, tiles, All)
+      __demand(__index_launch)
+      for c in tiles do
+         ComputeIndices(p_All[c], All[c], Fluid.bounds)
+      end
+
+      -- Define the Ghost partition for each partition of the cross product
+      for i=0, n_Avg do
+         var Avg = aux & cr_Avg[i]
+
+         -- Compute auxiliary partitions
+         var AvgM1x = [emitGhostRegion("x", -1, aux, aux, Avg)];
+         var AvgP1x = [emitGhostRegion("x",  1, aux, aux, Avg)];
+
+         var AvgM1y = [emitGhostRegion("y", -1, aux, aux, Avg)];
+         var AvgP1y = [emitGhostRegion("y",  1, aux, aux, Avg)];
+
+         var AvgM1z = [emitGhostRegion("z", -1, aux, aux, Avg)];
+         var AvgP1z = [emitGhostRegion("z",  1, aux, aux, Avg)];
+
+         -- Gradient tasks use [-1:+1] in all three directions
+         var p_GradientGhosts = Fluid & (Avg | AvgM1x | AvgP1x |
+                                               AvgM1y | AvgP1y |
+                                               AvgM1z | AvgP1z);
+         [UTIL.emitPartitionNameAttach(rexpr p_GradientGhosts end, "p_GradientGhosts")];
+
+         -- Store in the array of fspaces
+         p[i] = [average_ghost_partitions(Fluid, tiles)] {
+            -- Gradient routines
+            p_GradientGhosts =  p_GradientGhosts,
+         }
+      end
+
+      -- Delete aux (avoid deletion until Legion issue #812 is fixed)
+      --__delete(aux)
+   end
+   return p
 end
 
 return Exports end

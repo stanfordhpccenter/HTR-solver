@@ -351,7 +351,7 @@ local one =
 -- EXPORTED TASKS
 -------------------------------------------------------------------------------
 
-local -- NOT LEAF, MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+local __demand(__inner) -- NOT LEAF, MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task dumpTile(_ : int,
               dirname : regentlib.string,
               r : region(ispace(indexType), fSpace),
@@ -386,7 +386,7 @@ where reads(r.[flds]), reads writes(s.[flds]), r * s do
   return __
 end
 
-local -- NOT LEAF, MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+local __demand(__inner) -- NOT LEAF, MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
 task loadTile(_ : int,
               dirname : regentlib.string,
               r : region(ispace(indexType), fSpace),

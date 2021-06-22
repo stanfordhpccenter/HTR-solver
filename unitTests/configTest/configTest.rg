@@ -52,8 +52,8 @@ task check(config : Config)
    regentlib.assert(config.Integrator.maxTime == 20.0,          "configTest: ERROR on config.Integrator.maxTime")
    regentlib.assert(config.Integrator.cfl == 0.9,               "configTest: ERROR on config.Integrator.cfl")
    regentlib.assert(config.Integrator.fixedDeltaTime == 4.0e-3, "configTest: ERROR on config.Integrator.fixedDeltaTime")
-   regentlib.assert(config.Integrator.hybridScheme == true,     "configTest: ERROR on config.Integrator.hybridScheme")
-   regentlib.assert(config.Integrator.vorticityScale == 1.0,    "configTest: ERROR on config.Integrator.vorticityScale")
+   regentlib.assert(config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_SkewSymmetric,
+                                                                "configTest: ERROR on config.Integrator.EulerScheme.type")
    -- Flow section
    regentlib.assert(config.Flow.mixture.type == SCHEMA.MixtureModel_ConstPropMix,      "configTest: ERROR on config.Flow.mixture.type")
    regentlib.assert(config.Flow.mixture.u.ConstPropMix.gasConstant == 287.15,          "configTest: ERROR on config.Flow.mixture.gasConstant")
@@ -83,6 +83,8 @@ task check(config : Config)
    regentlib.assert(config.IO.restartEveryTimeSteps == 10000,   "configTest: ERROR on config.IO.restartEveryTimeSteps")
    regentlib.assert(config.IO.probesSamplingInterval == 1,      "configTest: ERROR on config.IO.probesSamplingInterval")
    regentlib.assert(config.IO.AveragesSamplingInterval == 10,   "configTest: ERROR on config.IO.AveragesSamplingInterval")
+   -- Efield section
+   regentlib.assert(config.Efield.type == SCHEMA.EFieldStruct_Off, "configTest: ERROR on config.Efield.type")
    return 1
 end
 
