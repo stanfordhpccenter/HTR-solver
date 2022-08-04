@@ -29,39 +29,18 @@
 
 import "regent"
 
-return function(SCHEMA, METRIC, Fluid_columns) local Exports = {}
+return function(SCHEMA, Fluid_columns) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
 -------------------------------------------------------------------------------
 local C = regentlib.c
-local UTIL = require "util-desugared"
+local UTIL = require "util"
 local Config = SCHEMA.Config
 
 -------------------------------------------------------------------------------
 -- PARTITIONS FSPACES
 -------------------------------------------------------------------------------
-
-local struct indices_columns {
-   -- X-stencil indices
-   cm2_x : int3d;
-   cm1_x : int3d;
-   cp1_x : int3d;
-   cp2_x : int3d;
-   cp3_x : int3d;
-   -- Y-stencil indices
-   cm2_y : int3d;
-   cm1_y : int3d;
-   cp1_y : int3d;
-   cp2_y : int3d;
-   cp3_y : int3d;
-   -- Z-stencil indices
-   cm2_z : int3d;
-   cm1_z : int3d;
-   cp1_z : int3d;
-   cp2_z : int3d;
-   cp3_z : int3d;
-}
 
 local fspace zones_partitions(Fluid  : region(ispace(int3d), Fluid_columns), tiles : ispace(int3d)) {
    -- Partitions
@@ -97,12 +76,12 @@ local fspace zones_partitions(Fluid  : region(ispace(int3d), Fluid_columns), til
    yPos       : partition(disjoint, Fluid, ispace(int1d)),
    zNeg       : partition(disjoint, Fluid, ispace(int1d)),
    zPos       : partition(disjoint, Fluid, ispace(int1d)),
-   p_xNeg     : cross_product(p_All, xNeg),
-   p_xPos     : cross_product(p_All, xPos),
-   p_yNeg     : cross_product(p_All, yNeg),
-   p_yPos     : cross_product(p_All, yPos),
-   p_zNeg     : cross_product(p_All, zNeg),
-   p_zPos     : cross_product(p_All, zPos),
+   p_xNeg     : cross_product(xNeg, p_All),
+   p_xPos     : cross_product(xPos, p_All),
+   p_yNeg     : cross_product(yNeg, p_All),
+   p_yPos     : cross_product(yPos, p_All),
+   p_zNeg     : cross_product(zNeg, p_All),
+   p_zPos     : cross_product(zPos, p_All),
    -- BC partitions ispaces
    xNeg_ispace : ispace(int3d),
    xPos_ispace : ispace(int3d),
@@ -131,26 +110,26 @@ local fspace ghost_partitions(Fluid  : region(ispace(int3d), Fluid_columns), til
    p_XDiffGhosts : partition(aliased, Fluid, tiles),
    p_YDiffGhosts : partition(aliased, Fluid, tiles),
    p_ZDiffGhosts : partition(aliased, Fluid, tiles),
-   -- Euler fluxes stencil access
-   p_XEulerGhosts2 : partition(aliased, Fluid, tiles),
-   p_YEulerGhosts2 : partition(aliased, Fluid, tiles),
-   p_ZEulerGhosts2 : partition(aliased, Fluid, tiles),
-   -- Shock sensors stencil access
-   p_XSensorGhosts2 : partition(aliased, Fluid, tiles),
-   p_YSensorGhosts2 : partition(aliased, Fluid, tiles),
-   p_ZSensorGhosts2 : partition(aliased, Fluid, tiles),
-   -- Metric routines
-   p_MetricGhosts  : partition(aliased, Fluid, tiles),
+   -- Diffusion fluxes traverse gradients stencil access
+   p_XDiffGradGhosts : partition(aliased, Fluid, tiles),
+   p_YDiffGradGhosts : partition(aliased, Fluid, tiles),
+   p_ZDiffGradGhosts : partition(aliased, Fluid, tiles),
    -- Euler fluxes routines
    p_XEulerGhosts : partition(aliased, Fluid, tiles),
    p_YEulerGhosts : partition(aliased, Fluid, tiles),
    p_ZEulerGhosts : partition(aliased, Fluid, tiles),
-   -- Gradient routines
-   p_GradientGhosts : partition(aliased, Fluid, tiles),
+   -- Shock sensors stencil access
+   p_XSensorGhosts2 : partition(aliased, Fluid, tiles),
+   p_YSensorGhosts2 : partition(aliased, Fluid, tiles),
+   p_ZSensorGhosts2 : partition(aliased, Fluid, tiles),
    -- Shock sensor ghosts
    p_XSensorGhosts : partition(aliased, Fluid, tiles),
    p_YSensorGhosts : partition(aliased, Fluid, tiles),
    p_ZSensorGhosts : partition(aliased, Fluid, tiles),
+   -- Metric routines
+   p_MetricGhosts  : partition(aliased, Fluid, tiles),
+   -- Gradient routines
+   p_GradientGhosts : partition(aliased, Fluid, tiles),
 }
 
 local fspace average_ghost_partitions(Fluid  : region(ispace(int3d), Fluid_columns), tiles : ispace(int3d)) {
@@ -207,6 +186,12 @@ local function isNSCBC_Outflow(Type)
    end
 end
 
+local function isNSCBC_FarField(Type)
+   return rexpr
+      (Type == SCHEMA.FlowBC_NSCBC_FarField)
+   end
+end
+
 local function addRegionsToColor(p, c, Name, indices)
    local __quotes = terralib.newlist()
 
@@ -230,6 +215,7 @@ end
 -- - Dirichlet
 -- - NSCBC_Inflow
 -- - IncomingShock
+-- - NSCBC_FarField
 -- - NSCBC_Outflow
 --
 -- 1 has priority on 2
@@ -268,6 +254,9 @@ local function EdgeTieBreakPolicy(Type1, coloring1, Name1,
       var is_IncomingShock1 = [isIncomingShock(Type1)];
       var is_IncomingShock2 = [isIncomingShock(Type2)];
 
+      var is_NSCBC_FarField1 = [isNSCBC_FarField(Type1)];
+      var is_NSCBC_FarField2 = [isNSCBC_FarField(Type2)];
+
       var is_NSCBC_Outflow1 = [isNSCBC_Outflow(Type1)];
       var is_NSCBC_Outflow2 = [isNSCBC_Outflow(Type2)];
 
@@ -290,14 +279,14 @@ local function EdgeTieBreakPolicy(Type1, coloring1, Name1,
          [addToBcColoring(coloring2, rect, stencil2)]
 
       -- NSCBC_Outflow and IncomingShock
-      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1) and
-              (is_NSCBC_Outflow2 or is_IncomingShock2)) then
+      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1 or is_NSCBC_FarField1) and
+              (is_NSCBC_Outflow2 or is_IncomingShock2 or is_NSCBC_FarField2)) then
          -- This edge belongs to both bcs
          [addToBcColoring(coloring1, rect, stencil1)];
          [addToBcColoring(coloring2, rect, stencil2)]
-      elseif (is_NSCBC_Outflow1 or is_IncomingShock1) then
+      elseif (is_NSCBC_Outflow1 or is_IncomingShock1 or is_NSCBC_FarField1) then
          [addToBcColoring(coloring1, rect, stencil1)]
-      elseif (is_NSCBC_Outflow2 or is_IncomingShock2) then
+      elseif (is_NSCBC_Outflow2 or is_IncomingShock2 or is_NSCBC_FarField2) then
          [addToBcColoring(coloring2, rect, stencil2)]
 
       -- Periodic
@@ -359,6 +348,10 @@ local function CornerTieBreakPolicy(Type1, coloring1, Name1,
       var is_IncomingShock2 = [isIncomingShock(Type2)];
       var is_IncomingShock3 = [isIncomingShock(Type3)];
 
+      var is_NSCBC_FarField1 = [isNSCBC_FarField(Type1)];
+      var is_NSCBC_FarField2 = [isNSCBC_FarField(Type2)];
+      var is_NSCBC_FarField3 = [isNSCBC_FarField(Type3)];
+
       var is_NSCBC_Outflow1 = [isNSCBC_Outflow(Type1)];
       var is_NSCBC_Outflow2 = [isNSCBC_Outflow(Type2)];
       var is_NSCBC_Outflow3 = [isNSCBC_Outflow(Type3)];
@@ -388,33 +381,33 @@ local function CornerTieBreakPolicy(Type1, coloring1, Name1,
          [addToBcColoring(coloring3, rect, stencil3)]
 
       -- NSCBC_Outflow and IncomingShock
-      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1) and
-              (is_NSCBC_Outflow2 or is_IncomingShock2) and
-              (is_NSCBC_Outflow3 or is_IncomingShock3)) then
+      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1 or is_NSCBC_FarField1) and
+              (is_NSCBC_Outflow2 or is_IncomingShock2 or is_NSCBC_FarField2) and
+              (is_NSCBC_Outflow3 or is_IncomingShock3 or is_NSCBC_FarField3)) then
          -- This edge belongs to both bcs
          [addToBcColoring(coloring1, rect, stencil1)];
          [addToBcColoring(coloring2, rect, stencil2)];
          [addToBcColoring(coloring3, rect, stencil3)]
-      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1) and
-              (is_NSCBC_Outflow2 or is_IncomingShock2)) then
+      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1 or is_NSCBC_FarField1) and
+              (is_NSCBC_Outflow2 or is_IncomingShock2 or is_NSCBC_FarField2)) then
          -- This edge belongs to both bcs
          [addToBcColoring(coloring1, rect, stencil1)];
          [addToBcColoring(coloring2, rect, stencil2)]
-      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1) and
-              (is_NSCBC_Outflow3 or is_IncomingShock3)) then
+      elseif ((is_NSCBC_Outflow1 or is_IncomingShock1 or is_NSCBC_FarField1) and
+              (is_NSCBC_Outflow3 or is_IncomingShock3 or is_NSCBC_FarField3)) then
          -- This edge belongs to both bcs
          [addToBcColoring(coloring1, rect, stencil1)];
          [addToBcColoring(coloring3, rect, stencil3)]
-      elseif ((is_NSCBC_Outflow2 or is_IncomingShock2) and
-              (is_NSCBC_Outflow3 or is_IncomingShock3)) then
+      elseif ((is_NSCBC_Outflow2 or is_IncomingShock2 or is_NSCBC_FarField2) and
+              (is_NSCBC_Outflow3 or is_IncomingShock3 or is_NSCBC_FarField3)) then
          -- This edge belongs to both bcs
          [addToBcColoring(coloring2, rect, stencil2)];
          [addToBcColoring(coloring3, rect, stencil3)]
-      elseif (is_NSCBC_Outflow1 or is_IncomingShock1) then
+      elseif (is_NSCBC_Outflow1 or is_IncomingShock1 or is_NSCBC_FarField1) then
          [addToBcColoring(coloring1, rect, stencil1)]
-      elseif (is_NSCBC_Outflow2 or is_IncomingShock2) then
+      elseif (is_NSCBC_Outflow2 or is_IncomingShock2 or is_NSCBC_FarField2) then
          [addToBcColoring(coloring2, rect, stencil2)]
-      elseif (is_NSCBC_Outflow3 or is_IncomingShock3) then
+      elseif (is_NSCBC_Outflow3 or is_IncomingShock3 or is_NSCBC_FarField3) then
          [addToBcColoring(coloring3, rect, stencil3)]
 
       -- Periodic
@@ -426,6 +419,16 @@ local function CornerTieBreakPolicy(Type1, coloring1, Name1,
       else
          regentlib.assert(false, ["Unhandled case in tie breaking of" .. Name1 .. "-" .. Name2 .. "-" .. Name3 .. " corner"])
       end
+   end
+end
+
+local function isNSCBC(BC)
+   return rexpr
+      ((BC == SCHEMA.FlowBC_NSCBC_Inflow    ) or
+       (BC == SCHEMA.FlowBC_NSCBC_Outflow   ) or
+       (BC == SCHEMA.FlowBC_NSCBC_FarField  ) or
+       (BC == SCHEMA.FlowBC_RecycleRescaling) or
+       (BC == SCHEMA.FlowBC_IncomingShock   ))
    end
 end
 
@@ -597,7 +600,7 @@ do
    [EdgeTieBreakPolicy(rexpr BC_xBCLeft  end, rexpr xNeg_coloring end, "xNeg",
                        rexpr BC_yBCRight end, rexpr yPos_coloring end, "yPos",
                        rexpr Fluid_regions[9].bounds end)];
- 
+
    -- [10]: Edge xNeg-zPos
    [EdgeTieBreakPolicy(rexpr BC_xBCLeft  end, rexpr xNeg_coloring end, "xNeg",
                        rexpr BC_zBCRight end, rexpr zPos_coloring end, "zPos",
@@ -703,12 +706,26 @@ do
    var zNegBC = partition(disjoint, Fluid, zNeg_coloring, ispace(int1d,2))
    var zPosBC = partition(disjoint, Fluid, zPos_coloring, ispace(int1d,2))
 
-   var p_xNegBC = cross_product(p_Fluid, xNegBC)
-   var p_xPosBC = cross_product(p_Fluid, xPosBC)
-   var p_yNegBC = cross_product(p_Fluid, yNegBC)
-   var p_yPosBC = cross_product(p_Fluid, yPosBC)
-   var p_zNegBC = cross_product(p_Fluid, zNegBC)
-   var p_zPosBC = cross_product(p_Fluid, zPosBC);
+   var p_xNegBC = cross_product(xNegBC, p_Fluid)
+   var p_xPosBC = cross_product(xPosBC, p_Fluid)
+   var p_yNegBC = cross_product(yNegBC, p_Fluid)
+   var p_yPosBC = cross_product(yPosBC, p_Fluid)
+   var p_zNegBC = cross_product(zNegBC, p_Fluid)
+   var p_zPosBC = cross_product(zPosBC, p_Fluid);
+
+   [UTIL.emitPartitionNameAttach(rexpr p_xNegBC[0] end, "p_xNeg0")];
+   [UTIL.emitPartitionNameAttach(rexpr p_xPosBC[0] end, "p_xPos0")];
+   [UTIL.emitPartitionNameAttach(rexpr p_yNegBC[0] end, "p_yNeg0")];
+   [UTIL.emitPartitionNameAttach(rexpr p_yPosBC[0] end, "p_yPos0")];
+   [UTIL.emitPartitionNameAttach(rexpr p_zNegBC[0] end, "p_zNeg0")];
+   [UTIL.emitPartitionNameAttach(rexpr p_zPosBC[0] end, "p_zPos0")];
+
+   [UTIL.emitPartitionNameAttach(rexpr p_xNegBC[1] end, "p_xNeg1")];
+   [UTIL.emitPartitionNameAttach(rexpr p_xPosBC[1] end, "p_xPos1")];
+   [UTIL.emitPartitionNameAttach(rexpr p_yNegBC[1] end, "p_yNeg1")];
+   [UTIL.emitPartitionNameAttach(rexpr p_yPosBC[1] end, "p_yPos1")];
+   [UTIL.emitPartitionNameAttach(rexpr p_zNegBC[1] end, "p_zNeg1")];
+   [UTIL.emitPartitionNameAttach(rexpr p_zPosBC[1] end, "p_zPos1")];
 
    -- Destroy colors
    regentlib.c.legion_multi_domain_point_coloring_destroy(xNeg_coloring)
@@ -719,12 +736,12 @@ do
    regentlib.c.legion_multi_domain_point_coloring_destroy(zPos_coloring)
 
    -- Create relevant ispaces
-   var xNeg_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, p_Fluid, xNegBC, p_xNegBC)
-   var xPos_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, p_Fluid, xPosBC, p_xPosBC)
-   var yNeg_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, p_Fluid, yNegBC, p_yNegBC)
-   var yPos_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, p_Fluid, yPosBC, p_yPosBC)
-   var zNeg_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, p_Fluid, zNegBC, p_zNegBC)
-   var zPos_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, p_Fluid, zPosBC, p_zPosBC)
+   var xNeg_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, xNegBC, p_Fluid, p_xNegBC)
+   var xPos_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, xPosBC, p_Fluid, p_xPosBC)
+   var yNeg_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, yNegBC, p_Fluid, p_yNegBC)
+   var yPos_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, yPosBC, p_Fluid, p_yPosBC)
+   var zNeg_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, zNegBC, p_Fluid, p_zNegBC)
+   var zPos_ispace = [UTIL.mkExtractRelevantIspace("cross_product", int3d, int3d, Fluid_columns, 0)](Fluid, zPosBC, p_Fluid, p_zPosBC)
 
    -----------------------------------------------------------------------------------------------
    -- END - Boundary conditions regions
@@ -763,15 +780,12 @@ do
 
 
    -- Add boundary cells in case of NSCBC conditions
-   var is_xBCLeft_NSCBC = ((BC_xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) or
-                           (BC_xBCLeft == SCHEMA.FlowBC_RecycleRescaling))
-
-   var is_xBCRight_NSCBC = (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow)
-
-   var is_yBCLeft_NSCBC = (BC_yBCLeft  == SCHEMA.FlowBC_NSCBC_Outflow)
-
-   var is_yBCRight_NSCBC = ((BC_yBCRight == SCHEMA.FlowBC_NSCBC_Outflow) or
-                            (BC_yBCRight == SCHEMA.FlowBC_IncomingShock))
+   var is_xBCLeft_NSCBC  = [isNSCBC(BC_xBCLeft )];
+   var is_xBCRight_NSCBC = [isNSCBC(BC_xBCRight)];
+   var is_yBCLeft_NSCBC  = [isNSCBC(BC_yBCLeft )];
+   var is_yBCRight_NSCBC = [isNSCBC(BC_yBCRight)];
+   var is_zBCLeft_NSCBC  = [isNSCBC(BC_yBCLeft )];
+   var is_zBCRight_NSCBC = [isNSCBC(BC_yBCRight)];
 
    if is_xBCLeft_NSCBC then
       -- xNeg is an NSCBC
@@ -819,6 +833,30 @@ do
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[17].bounds)
    end
 
+   if is_zBCLeft_NSCBC then
+      -- zNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[ 5].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(ydivg_coloring,  int1d(0), Fluid_regions[ 5].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[ 5].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[ 5].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[ 5].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[ 8].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[15].bounds)
+   end
+   if is_zBCRight_NSCBC then
+      -- zPos is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[ 6].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(ydivg_coloring,  int1d(0), Fluid_regions[ 6].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[ 6].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[ 6].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[ 6].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[10].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[16].bounds)
+   end
+
+   -----------------------------------------------------------------------------------------------
    if (is_xBCLeft_NSCBC and is_yBCLeft_NSCBC) then
       -- Edge xNeg-yNeg is an NSCBC
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zdivg_coloring,  int1d(0), Fluid_regions[ 7].bounds)
@@ -827,13 +865,13 @@ do
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[ 7].bounds)
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[19].bounds)
    end
-   if (is_xBCRight_NSCBC and is_yBCLeft_NSCBC) then
-      -- Edge xPos-yNeg is an NSCBC
-      regentlib.c.legion_multi_domain_point_coloring_color_domain(zdivg_coloring,  int1d(0), Fluid_regions[11].bounds)
-      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[11].bounds)
+   if (is_xBCLeft_NSCBC and is_zBCLeft_NSCBC) then
+      -- Edge xNeg-zNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(ydivg_coloring,  int1d(0), Fluid_regions[ 8].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[ 8].bounds)
 
-      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[11].bounds)
-      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[23].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[ 8].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[19].bounds)
    end
    if (is_xBCLeft_NSCBC and is_yBCRight_NSCBC) then
       -- Edge xNeg-yPos is an NSCBC
@@ -843,6 +881,31 @@ do
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[ 9].bounds)
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[20].bounds)
    end
+   if (is_xBCLeft_NSCBC and is_zBCRight_NSCBC) then
+      -- Edge xNeg-zPos is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(ydivg_coloring,  int1d(0), Fluid_regions[10].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[10].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[10].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[21].bounds)
+   end
+   -----------------------------------------------------------------------------------------------
+   if (is_xBCRight_NSCBC and is_yBCLeft_NSCBC) then
+      -- Edge xPos-yNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zdivg_coloring,  int1d(0), Fluid_regions[11].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[11].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[11].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[23].bounds)
+   end
+   if (is_xBCRight_NSCBC and is_zBCLeft_NSCBC) then
+      -- Edge xPos-zNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(ydivg_coloring,  int1d(0), Fluid_regions[12].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[12].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[12].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[23].bounds)
+   end
    if (is_xBCRight_NSCBC and is_yBCRight_NSCBC) then
       -- Edge xPos-yPos is an NSCBC
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zdivg_coloring,  int1d(0), Fluid_regions[13].bounds)
@@ -851,6 +914,48 @@ do
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[13].bounds)
       regentlib.c.legion_multi_domain_point_coloring_color_domain(zfaces_coloring, int1d(0), Fluid_regions[24].bounds)
    end
+   if (is_xBCRight_NSCBC and is_zBCRight_NSCBC) then
+      -- Edge xPos-zPos is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(ydivg_coloring,  int1d(0), Fluid_regions[14].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[14].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[14].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(yfaces_coloring, int1d(0), Fluid_regions[25].bounds)
+   end
+   -----------------------------------------------------------------------------------------------
+   if (is_yBCLeft_NSCBC and is_zBCLeft_NSCBC) then
+      -- Edge yNeg-zNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[15].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[15].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[15].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[19].bounds)
+   end
+   if (is_yBCLeft_NSCBC and is_zBCRight_NSCBC) then
+      -- Edge yNeg-zPos is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[16].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[16].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[16].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[21].bounds)
+   end
+   if (is_yBCRight_NSCBC and is_zBCLeft_NSCBC) then
+      -- Edge yPos-zNeg is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[17].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[17].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[17].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[20].bounds)
+   end
+   if (is_yBCRight_NSCBC and is_zBCRight_NSCBC) then
+      -- Edge yPos-zPos is an NSCBC
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xdivg_coloring,  int1d(0), Fluid_regions[18].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(solve_coloring,  int1d(0), Fluid_regions[18].bounds)
+
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[18].bounds)
+      regentlib.c.legion_multi_domain_point_coloring_color_domain(xfaces_coloring, int1d(0), Fluid_regions[22].bounds)
+   end
+   -----------------------------------------------------------------------------------------------
 
    var xdivg_cells  = partition(disjoint, Fluid, xdivg_coloring,  ispace(int1d,1))
    var ydivg_cells  = partition(disjoint, Fluid, ydivg_coloring,  ispace(int1d,1))
@@ -999,131 +1104,124 @@ end
 -- GHOST PARTITIONING ROUTINES
 -------------------------------------------------------------------------------
 
-local function emitFill(p, t, f, val) return rquote
-   var v = [val]
-   __demand(__index_launch)
-   for c in t do fill(([p][c]).[f], v) end
-end end
+local mkGhostPartiion = terralib.memoize(function(sdir, pType)
+   local GhostPartition
 
-local __demand(__inline)
-task InitializeIndices(r : region(ispace(int3d), indices_columns),
-                       tiles : ispace(int3d),
-                       p_All : partition(disjoint, r, tiles))
-where
-   writes(r)
-do
-   [emitFill(p_All, tiles, "cm2_x", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cm1_x", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp1_x", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp2_x", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp3_x", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cm2_y", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cm1_y", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp1_y", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp2_y", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp3_y", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cm2_z", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cm1_z", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp1_z", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp2_z", rexpr int3d({0, 0, 0}) end)];
-   [emitFill(p_All, tiles, "cp3_z", rexpr int3d({0, 0, 0}) end)];
-end
-
---local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-local __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA (TODO: workaround for Legion issue #812)
-task ComputeIndices(Fluid : region(ispace(int3d), Fluid_columns),
-                    Aux   : region(ispace(int3d), indices_columns),
-                    Fluid_bounds : rect3d)
-where
-   reads(Fluid.{nType_x, nType_y, nType_z}),
-   writes(Aux.{cm2_x, cm1_x, cp1_x, cp2_x, cp3_x}),
-   writes(Aux.{cm2_y, cm1_y, cp1_y, cp2_y, cp3_y}),
-   writes(Aux.{cm2_z, cm1_z, cp1_z, cp2_z, cp3_z})
-do
-   __demand(__openmp)
-   for c in Fluid do
-      -- X direction
-      Aux[c].cm2_x = [METRIC.GetCm2("x", rexpr c end, rexpr Fluid[c].nType_x end, rexpr Fluid_bounds end)];
-      Aux[c].cm1_x = [METRIC.GetCm1("x", rexpr c end, rexpr Fluid[c].nType_x end, rexpr Fluid_bounds end)];
-      Aux[c].cp1_x = [METRIC.GetCp1("x", rexpr c end, rexpr Fluid[c].nType_x end, rexpr Fluid_bounds end)];
-      Aux[c].cp2_x = [METRIC.GetCp2("x", rexpr c end, rexpr Fluid[c].nType_x end, rexpr Fluid_bounds end)];
-      Aux[c].cp3_x = [METRIC.GetCp3("x", rexpr c end, rexpr Fluid[c].nType_x end, rexpr Fluid_bounds end)];
-
-      -- Y direction
-      Aux[c].cm2_y = [METRIC.GetCm2("y", rexpr c end, rexpr Fluid[c].nType_y end, rexpr Fluid_bounds end)];
-      Aux[c].cm1_y = [METRIC.GetCm1("y", rexpr c end, rexpr Fluid[c].nType_y end, rexpr Fluid_bounds end)];
-      Aux[c].cp1_y = [METRIC.GetCp1("y", rexpr c end, rexpr Fluid[c].nType_y end, rexpr Fluid_bounds end)];
-      Aux[c].cp2_y = [METRIC.GetCp2("y", rexpr c end, rexpr Fluid[c].nType_y end, rexpr Fluid_bounds end)];
-      Aux[c].cp3_y = [METRIC.GetCp3("y", rexpr c end, rexpr Fluid[c].nType_y end, rexpr Fluid_bounds end)];
-
-      -- Z direction
-      Aux[c].cm2_z = [METRIC.GetCm2("z", rexpr c end, rexpr Fluid[c].nType_z end, rexpr Fluid_bounds end)];
-      Aux[c].cm1_z = [METRIC.GetCm1("z", rexpr c end, rexpr Fluid[c].nType_z end, rexpr Fluid_bounds end)];
-      Aux[c].cp1_z = [METRIC.GetCp1("z", rexpr c end, rexpr Fluid[c].nType_z end, rexpr Fluid_bounds end)];
-      Aux[c].cp2_z = [METRIC.GetCp2("z", rexpr c end, rexpr Fluid[c].nType_z end, rexpr Fluid_bounds end)];
-      Aux[c].cp3_z = [METRIC.GetCp3("z", rexpr c end, rexpr Fluid[c].nType_z end, rexpr Fluid_bounds end)];
-   end
-end
-
-local function emitEulerGhostRegion(sdir, t, r, p_r)
-   local cm2_d
-   local cm1_d
-   local cp1_d
-   local cp2_d
-   local cp3_d
-   if sdir == "x" then
-      cm2_d = "cm2_x"
-      cm1_d = "cm1_x"
-      cp1_d = "cp1_x"
-      cp2_d = "cp2_x"
-      cp3_d = "cp3_x"
+   local offset
+   local wrapCondLo
+   local wrapCondHi
+   local warpLo
+   local warpHi
+   local chopLo
+   local chopHi
+   if     sdir == "x" then
+      offset = function(off) return rexpr { off, 0, 0} end end
+      wrapCondLo = function(b, r) return rexpr (b.lo.x < r.lo.x) end end
+      wrapCondHi = function(b, r) return rexpr (b.hi.x > r.hi.x) end end
+      warpLo     = function(b, r) return rexpr {r.lo.x, b.lo.y, b.lo.z} end end
+      warpHi     = function(b, r) return rexpr {r.hi.x, b.hi.y, b.hi.z} end end
+      chopLo     = function(b, r) return rquote b.lo.x = max(b.lo.x, r.lo.x) end end
+      chopHi     = function(b, r) return rquote b.hi.x = min(b.hi.x, r.hi.x) end end
    elseif sdir == "y" then
-      cm2_d = "cm2_y"
-      cm1_d = "cm1_y"
-      cp1_d = "cp1_y"
-      cp2_d = "cp2_y"
-      cp3_d = "cp3_y"
+      offset = function(off) return rexpr { 0, off, 0} end end
+      wrapCondLo = function(b, r) return rexpr (b.lo.y < r.lo.y) end end
+      wrapCondHi = function(b, r) return rexpr (b.hi.y > r.hi.y) end end
+      warpLo     = function(b, r) return rexpr {b.lo.x, r.lo.y, b.lo.z} end end
+      warpHi     = function(b, r) return rexpr {b.hi.x, r.hi.y, b.hi.z} end end
+      chopLo     = function(b, r) return rquote b.lo.y = max(b.lo.y, r.lo.y) end end
+      chopHi     = function(b, r) return rquote b.hi.y = min(b.hi.y, r.hi.y) end end
    elseif sdir == "z" then
-      cm2_d = "cm2_z"
-      cm1_d = "cm1_z"
-      cp1_d = "cp1_z"
-      cp2_d = "cp2_z"
-      cp3_d = "cp3_z"
-   end
-   return rexpr
-      image([t], [p_r], [r].[cm2_d]) |
-      image([t], [p_r], [r].[cm1_d]) |
-      image([t], [p_r], [r].[cp1_d]) |
-      image([t], [p_r], [r].[cp2_d]) |
-      image([t], [p_r], [r].[cp3_d])
-   end
-end
+      offset = function(off) return rexpr { 0, 0, off} end end
+      wrapCondLo = function(b, r) return rexpr (b.lo.z < r.lo.z) end end
+      wrapCondHi = function(b, r) return rexpr (b.hi.z > r.hi.z) end end
+      warpLo     = function(b, r) return rexpr {b.lo.x, b.lo.y, r.lo.z} end end
+      warpHi     = function(b, r) return rexpr {b.hi.x, b.hi.y, r.hi.z} end end
+      chopLo     = function(b, r) return rquote b.lo.z = max(b.lo.z, r.lo.z) end end
+      chopHi     = function(b, r) return rquote b.hi.z = min(b.hi.z, r.hi.z) end end
+   else assert(false) end
 
-local function emitGhostRegion(sdir, off, t, r, p_r)
-   local coff_d = "c"
-   if (off == -2) then
-      coff_d = coff_d .. "m2"
-   elseif (off == -1) then
-      coff_d = coff_d .. "m1"
-   elseif (off == 1) then
-      coff_d = coff_d .. "p1"
-   elseif (off == 2) then
-      coff_d = coff_d .. "p2"
-   elseif (off == 3) then
-      coff_d = coff_d .. "p3"
-   else
-      assert(0)
+   local format = require("std/format")
+
+   local addBoxToColor = function(coloring, c, b, r, off, periodic)
+      return rquote
+         b = b + [offset(off)]
+         if periodic then
+            -- Add support for points that are warping around
+            if [wrapCondHi(b, rexpr r.bounds end)] then
+                var lo_w = [warpLo(b, rexpr r.bounds end)];
+                var hi_w = b.hi%r.bounds
+                C.legion_multi_domain_point_coloring_color_domain(coloring, c,
+                     rect3d{lo=lo_w, hi=hi_w})
+            end
+            if [wrapCondLo(b, rexpr r.bounds end)] then
+                var lo_w = b.lo%r.bounds
+                var hi_w = [warpHi(b, rexpr r.bounds end)];
+                C.legion_multi_domain_point_coloring_color_domain(coloring, c,
+                     rect3d{lo=lo_w, hi=hi_w})
+            end
+         end
+         [chopLo(b, rexpr r.bounds end)];
+         [chopHi(b, rexpr r.bounds end)];
+         C.legion_multi_domain_point_coloring_color_domain(coloring, c, b)
+      end
    end
-   coff_d = coff_d .. "_" .. sdir
+
+   if pType == disjoint then
+      __demand(__inline)
+      task GhostPartition(r : region(ispace(int3d), Fluid_columns),
+                          p : partition(pType, r, ispace(int3d)),
+                          off : int,
+                          periodic : bool)
+         var coloring = C.legion_multi_domain_point_coloring_create()
+         for c in p.colors do
+            var b = p[c].bounds;
+            [addBoxToColor(coloring, c, b, r, off, periodic)];
+         end
+         var ip = partition(aliased, r, coloring, p.colors)
+         C.legion_multi_domain_point_coloring_destroy(coloring)
+         return ip
+      end
+   elseif pType == aliased then
+      __demand(__inline)
+      task GhostPartition(r : region(ispace(int3d), Fluid_columns),
+                          p : partition(pType, r, ispace(int3d)),
+                          off : int,
+                          periodic : bool)
+         var coloring = C.legion_multi_domain_point_coloring_create()
+         for c in p.colors do
+            var is = __raw( p[c].ispace )
+            var dom = C.legion_index_space_get_domain(__runtime(), is)
+            var iter = C.legion_rect_in_domain_iterator_create_3d(dom)
+            while (C.legion_rect_in_domain_iterator_valid_3d(iter)) do
+               var b : rect3d = C.legion_rect_in_domain_iterator_get_rect_3d(iter);
+               [addBoxToColor(coloring, c, b, r, off, periodic)];
+               C.legion_rect_in_domain_iterator_step_3d(iter)
+            end
+            C.legion_rect_in_domain_iterator_destroy_3d(iter)
+         end
+         var ip = partition(aliased, r, coloring, p.colors)
+         C.legion_multi_domain_point_coloring_destroy(coloring)
+         return ip
+      end
+   else assert(false) end
+   return GhostPartition
+end)
+
+local function emitEulerGhostRegion(sdir, t, r, p_r, flag)
    return rexpr
-      image([t], [p_r], [r].[coff_d])
+      [mkGhostPartiion(sdir, t)](r, p_r, -2, flag) |
+      [mkGhostPartiion(sdir, t)](r, p_r, -1, flag) |
+      [mkGhostPartiion(sdir, t)](r, p_r,  1, flag) |
+      [mkGhostPartiion(sdir, t)](r, p_r,  2, flag) |
+      [mkGhostPartiion(sdir, t)](r, p_r,  3, flag)
    end
 end
 
 __demand(__inline)
 task Exports.PartitionGhost(Fluid : region(ispace(int3d), Fluid_columns),
                   tiles : ispace(int3d),
-                  Fluid_Zones : zones_partitions(Fluid, tiles))
+                  Fluid_Zones : zones_partitions(Fluid, tiles),
+                  config : Config)
 where
    reads(Fluid)
 do
@@ -1132,83 +1230,52 @@ do
         p_x_faces, p_y_faces, p_z_faces,
         p_x_divg,  p_y_divg,  p_z_divg} = Fluid_Zones
 
-   -- Define an auxiliary region that will store the stencil indices
-   var aux = region(Fluid.ispace, indices_columns)
-   var All     = aux & Fluid_Zones.p_All
-   var x_faces = aux & Fluid_Zones.p_x_faces
-   var y_faces = aux & Fluid_Zones.p_y_faces
-   var z_faces = aux & Fluid_Zones.p_z_faces
-   var x_divg  = aux & Fluid_Zones.p_x_divg
-   var y_divg  = aux & Fluid_Zones.p_y_divg
-   var z_divg  = aux & Fluid_Zones.p_z_divg
+   -- Check if the setup is periodic
+   var Xperiodic = (config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic)
+   var Yperiodic = (config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic)
+   var Zperiodic = (config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic)
 
-   -- Compute stencil indices
-   InitializeIndices(aux, tiles, All)
-   __demand(__index_launch)
-   for c in tiles do
-      ComputeIndices(p_All[c], All[c], Fluid.bounds)
-   end
-
-   -- Compute auxiliary partitions
    -- Fluxes are computed at [0:-1] direction by direction
-   var x_flux = x_divg | image(aux, x_divg, aux.cm1_x)
-   var y_flux = y_divg | image(aux, y_divg, aux.cm1_y)
-   var z_flux = z_divg | image(aux, z_divg, aux.cm1_z)
-
-   var x_fluxM2 = [emitGhostRegion("x", -2, Fluid, aux, x_flux)];
-   var x_fluxM1 = [emitGhostRegion("x", -1, Fluid, aux, x_flux)];
-   var x_fluxP1 = [emitGhostRegion("x",  1, Fluid, aux, x_flux)];
-   var x_fluxP2 = [emitGhostRegion("x",  2, Fluid, aux, x_flux)];
-   var x_fluxP3 = [emitGhostRegion("x",  3, Fluid, aux, x_flux)];
-
-   var y_fluxM2 = [emitGhostRegion("y", -2, Fluid, aux, y_flux)];
-   var y_fluxM1 = [emitGhostRegion("y", -1, Fluid, aux, y_flux)];
-   var y_fluxP1 = [emitGhostRegion("y",  1, Fluid, aux, y_flux)];
-   var y_fluxP2 = [emitGhostRegion("y",  2, Fluid, aux, y_flux)];
-   var y_fluxP3 = [emitGhostRegion("y",  3, Fluid, aux, y_flux)];
-
-   var z_fluxM2 = [emitGhostRegion("z", -2, Fluid, aux, z_flux)];
-   var z_fluxM1 = [emitGhostRegion("z", -1, Fluid, aux, z_flux)];
-   var z_fluxP1 = [emitGhostRegion("z",  1, Fluid, aux, z_flux)];
-   var z_fluxP2 = [emitGhostRegion("z",  2, Fluid, aux, z_flux)];
-   var z_fluxP3 = [emitGhostRegion("z",  3, Fluid, aux, z_flux)];
-
-   var AllM1x = [emitGhostRegion("x", -1, aux, aux, All)];
-   var AllP1x = [emitGhostRegion("x",  1, aux, aux, All)];
-
-   var AllM1y = [emitGhostRegion("y", -1, aux, aux, All)];
-   var AllP1y = [emitGhostRegion("y",  1, aux, aux, All)];
-
-   var AllM1z = [emitGhostRegion("z", -1, aux, aux, All)];
-   var AllP1z = [emitGhostRegion("z",  1, aux, aux, All)];
-
-   var x_facesM2 = [emitGhostRegion("x", -2, Fluid, aux, x_faces)];
-   var x_facesM1 = [emitGhostRegion("x", -1, Fluid, aux, x_faces)];
-   var x_facesP1 = [emitGhostRegion("x",  1, Fluid, aux, x_faces)];
-   var x_facesP2 = [emitGhostRegion("x",  2, Fluid, aux, x_faces)];
-   var x_facesP3 = [emitGhostRegion("x",  3, Fluid, aux, x_faces)];
-
-   var y_facesM2 = [emitGhostRegion("y", -2, Fluid, aux, y_faces)];
-   var y_facesM1 = [emitGhostRegion("y", -1, Fluid, aux, y_faces)];
-   var y_facesP1 = [emitGhostRegion("y",  1, Fluid, aux, y_faces)];
-   var y_facesP2 = [emitGhostRegion("y",  2, Fluid, aux, y_faces)];
-   var y_facesP3 = [emitGhostRegion("y",  3, Fluid, aux, y_faces)];
-
-   var z_facesM2 = [emitGhostRegion("z", -2, Fluid, aux, z_faces)];
-   var z_facesM1 = [emitGhostRegion("z", -1, Fluid, aux, z_faces)];
-   var z_facesP1 = [emitGhostRegion("z",  1, Fluid, aux, z_faces)];
-   var z_facesP2 = [emitGhostRegion("z",  2, Fluid, aux, z_faces)];
-   var z_facesP3 = [emitGhostRegion("z",  3, Fluid, aux, z_faces)];
-
-   -- Fluxes stencil accesses [-1:0] direction by direction
-   var p_XFluxGhosts = Fluid & x_flux
-   var p_YFluxGhosts = Fluid & y_flux
-   var p_ZFluxGhosts = Fluid & z_flux;
+   var p_XFluxGhosts = p_x_divg | [mkGhostPartiion("x", disjoint)](Fluid, p_x_divg, -1, Xperiodic)
+   var p_YFluxGhosts = p_y_divg | [mkGhostPartiion("y", disjoint)](Fluid, p_y_divg, -1, Yperiodic)
+   var p_ZFluxGhosts = p_z_divg | [mkGhostPartiion("z", disjoint)](Fluid, p_z_divg, -1, Zperiodic);
    [UTIL.emitPartitionNameAttach(rexpr p_XFluxGhosts end, "p_XFluxGhosts")];
    [UTIL.emitPartitionNameAttach(rexpr p_YFluxGhosts end, "p_YFluxGhosts")];
    [UTIL.emitPartitionNameAttach(rexpr p_ZFluxGhosts end, "p_ZFluxGhosts")];
 
-   -- Diffusion fluxes stencil accesses [0:+1] direction by direction
+   -- Compute auxiliary partitions
+   -- X-Euler flux ghosts
+   var x_fluxM2 = [mkGhostPartiion("x", aliased)](Fluid, p_XFluxGhosts, -2, Xperiodic)
+   var x_fluxM1 = [mkGhostPartiion("x", aliased)](Fluid, p_XFluxGhosts, -1, Xperiodic)
+   var x_fluxP1 = [mkGhostPartiion("x", aliased)](Fluid, p_XFluxGhosts,  1, Xperiodic)
+   var x_fluxP2 = [mkGhostPartiion("x", aliased)](Fluid, p_XFluxGhosts,  2, Xperiodic)
+   var x_fluxP3 = [mkGhostPartiion("x", aliased)](Fluid, p_XFluxGhosts,  3, Xperiodic)
+
+   -- Y-Euler flux ghosts
+   var y_fluxM2 = [mkGhostPartiion("y", aliased)](Fluid, p_YFluxGhosts, -2, Yperiodic)
+   var y_fluxM1 = [mkGhostPartiion("y", aliased)](Fluid, p_YFluxGhosts, -1, Yperiodic)
+   var y_fluxP1 = [mkGhostPartiion("y", aliased)](Fluid, p_YFluxGhosts,  1, Yperiodic)
+   var y_fluxP2 = [mkGhostPartiion("y", aliased)](Fluid, p_YFluxGhosts,  2, Yperiodic)
+   var y_fluxP3 = [mkGhostPartiion("y", aliased)](Fluid, p_YFluxGhosts,  3, Yperiodic)
+
+   -- Z-Euler flux ghosts
+   var z_fluxM2 = [mkGhostPartiion("z", aliased)](Fluid, p_ZFluxGhosts, -2, Zperiodic)
+   var z_fluxM1 = [mkGhostPartiion("z", aliased)](Fluid, p_ZFluxGhosts, -1, Zperiodic)
+   var z_fluxP1 = [mkGhostPartiion("z", aliased)](Fluid, p_ZFluxGhosts,  1, Zperiodic)
+   var z_fluxP2 = [mkGhostPartiion("z", aliased)](Fluid, p_ZFluxGhosts,  2, Zperiodic)
+   var z_fluxP3 = [mkGhostPartiion("z", aliased)](Fluid, p_ZFluxGhosts,  3, Zperiodic)
+
+   -- Gradient ghosts
+   var AllM1x = [mkGhostPartiion("x", disjoint)](Fluid, p_All, -1, Xperiodic)
+   var AllP1x = [mkGhostPartiion("x", disjoint)](Fluid, p_All,  1, Xperiodic)
+
+   var AllM1y = [mkGhostPartiion("y", disjoint)](Fluid, p_All, -1, Yperiodic)
+   var AllP1y = [mkGhostPartiion("y", disjoint)](Fluid, p_All,  1, Yperiodic)
+
+   var AllM1z = [mkGhostPartiion("z", disjoint)](Fluid, p_All, -1, Zperiodic)
+   var AllP1z = [mkGhostPartiion("z", disjoint)](Fluid, p_All,  1, Zperiodic)
+
+   -- Diffusion fluxes stencil accesses [0:+1] direction by direction...
    var p_XDiffGhosts = p_XFluxGhosts | x_fluxP1
    var p_YDiffGhosts = p_YFluxGhosts | y_fluxP1
    var p_ZDiffGhosts = p_ZFluxGhosts | z_fluxP1;
@@ -1216,13 +1283,33 @@ do
    [UTIL.emitPartitionNameAttach(rexpr p_YDiffGhosts end, "p_YDiffGhosts")];
    [UTIL.emitPartitionNameAttach(rexpr p_ZDiffGhosts end, "p_ZDiffGhosts")];
 
+   -- ... and of the for traverse gradients
+   var p_XDiffGradGhosts = ( p_XFluxGhosts |
+                           [mkGhostPartiion("y", aliased)](Fluid, p_XDiffGhosts, -1, Yperiodic) |
+                           [mkGhostPartiion("y", aliased)](Fluid, p_XDiffGhosts,  1, Yperiodic) |
+                           [mkGhostPartiion("z", aliased)](Fluid, p_XDiffGhosts, -1, Zperiodic) |
+                           [mkGhostPartiion("z", aliased)](Fluid, p_XDiffGhosts,  1, Zperiodic) )
+   var p_YDiffGradGhosts = ( p_YFluxGhosts |
+                           [mkGhostPartiion("x", aliased)](Fluid, p_YDiffGhosts, -1, Xperiodic) |
+                           [mkGhostPartiion("x", aliased)](Fluid, p_YDiffGhosts,  1, Xperiodic) |
+                           [mkGhostPartiion("z", aliased)](Fluid, p_YDiffGhosts, -1, Zperiodic) |
+                           [mkGhostPartiion("z", aliased)](Fluid, p_YDiffGhosts,  1, Zperiodic) )
+   var p_ZDiffGradGhosts = ( p_ZFluxGhosts |
+                           [mkGhostPartiion("x", aliased)](Fluid, p_ZDiffGhosts, -1, Xperiodic) |
+                           [mkGhostPartiion("x", aliased)](Fluid, p_ZDiffGhosts,  1, Xperiodic) |
+                           [mkGhostPartiion("y", aliased)](Fluid, p_ZDiffGhosts, -1, Yperiodic) |
+                           [mkGhostPartiion("y", aliased)](Fluid, p_ZDiffGhosts,  1, Yperiodic) );
+   [UTIL.emitPartitionNameAttach(rexpr p_XDiffGradGhosts end, "p_XDiffGradGhosts")];
+   [UTIL.emitPartitionNameAttach(rexpr p_YDiffGradGhosts end, "p_YDiffGradGhosts")];
+   [UTIL.emitPartitionNameAttach(rexpr p_ZDiffGradGhosts end, "p_ZDiffGradGhosts")];
+
    -- Euler fluxes stencil accesses [-2:+3] direction by direction
-   var p_XEulerGhosts2 = p_XFluxGhosts | x_fluxM2 | x_fluxM1 | x_fluxP1 | x_fluxP2 | x_fluxP3
-   var p_YEulerGhosts2 = p_YFluxGhosts | y_fluxM2 | y_fluxM1 | y_fluxP1 | y_fluxP2 | y_fluxP3
-   var p_ZEulerGhosts2 = p_ZFluxGhosts | z_fluxM2 | z_fluxM1 | z_fluxP1 | z_fluxP2 | z_fluxP3;
-   [UTIL.emitPartitionNameAttach(rexpr p_XEulerGhosts2 end, "p_XEulerGhosts2")];
-   [UTIL.emitPartitionNameAttach(rexpr p_YEulerGhosts2 end, "p_YEulerGhosts2")];
-   [UTIL.emitPartitionNameAttach(rexpr p_ZEulerGhosts2 end, "p_ZEulerGhosts2")];
+   var p_XEulerGhosts = p_XFluxGhosts | x_fluxM2 | x_fluxM1 | x_fluxP1 | x_fluxP2 | x_fluxP3
+   var p_YEulerGhosts = p_YFluxGhosts | y_fluxM2 | y_fluxM1 | y_fluxP1 | y_fluxP2 | y_fluxP3
+   var p_ZEulerGhosts = p_ZFluxGhosts | z_fluxM2 | z_fluxM1 | z_fluxP1 | z_fluxP2 | z_fluxP3;
+   [UTIL.emitPartitionNameAttach(rexpr p_XEulerGhosts end, "p_XEulerGhosts")];
+   [UTIL.emitPartitionNameAttach(rexpr p_YEulerGhosts end, "p_YEulerGhosts")];
+   [UTIL.emitPartitionNameAttach(rexpr p_ZEulerGhosts end, "p_ZEulerGhosts")];
 
    -- Shock sensors stencil accesses [-1:+1] direction by direction
    var p_XSensorGhosts2 = p_XFluxGhosts | x_fluxM1 | x_fluxP1
@@ -1233,47 +1320,36 @@ do
    [UTIL.emitPartitionNameAttach(rexpr p_ZSensorGhosts2 end, "p_ZSensorGhosts2")];
 
    -- Gradient tasks use [-1:+1] in all three directions
-   var p_GradientGhosts = p_All | (Fluid & (AllM1x | AllP1x | AllM1y | AllP1y | AllM1z | AllP1z));
+   var p_GradientGhosts = p_All | (AllM1x | AllP1x | AllM1y | AllP1y | AllM1z | AllP1z);
    [UTIL.emitPartitionNameAttach(rexpr p_GradientGhosts end, "p_GradientGhosts")];
 
    -- Metric routines (uses the entire stencil in all three directions)
-   var MetricGhostsX = All | AllM1x
-   var MetricGhostsY = All | AllM1y
-   var MetricGhostsZ = All | AllM1z
+   var MetricGhostsX = p_All | AllM1x
+   var MetricGhostsY = p_All | AllM1y
+   var MetricGhostsZ = p_All | AllM1z
    var p_MetricGhosts = p_All |
-         [emitEulerGhostRegion("x", Fluid, aux, MetricGhostsX)] |
-         [emitEulerGhostRegion("y", Fluid, aux, MetricGhostsY)] |
-         [emitEulerGhostRegion("z", Fluid, aux, MetricGhostsZ)];
+         [emitEulerGhostRegion("x", aliased, Fluid, MetricGhostsX, Xperiodic)] |
+         [emitEulerGhostRegion("y", aliased, Fluid, MetricGhostsY, Yperiodic)] |
+         [emitEulerGhostRegion("z", aliased, Fluid, MetricGhostsZ, Zperiodic)];
    [UTIL.emitPartitionNameAttach(rexpr p_MetricGhosts end, "p_MetricGhosts")];
 
-   -- Euler fluxes routines (uses [-2:+3] direction by direction)
-   var p_XEulerGhosts = p_x_faces | x_facesM2 | x_facesM1 | x_facesP1 | x_facesP2 | x_facesP3
-   var p_YEulerGhosts = p_y_faces | y_facesM2 | y_facesM1 | y_facesP1 | y_facesP2 | y_facesP3
-   var p_ZEulerGhosts = p_z_faces | z_facesM2 | z_facesM1 | z_facesP1 | z_facesP2 | z_facesP3;
-   [UTIL.emitPartitionNameAttach(rexpr p_XEulerGhosts end, "p_XEulerGhosts")];
-   [UTIL.emitPartitionNameAttach(rexpr p_YEulerGhosts end, "p_YEulerGhosts")];
-   [UTIL.emitPartitionNameAttach(rexpr p_ZEulerGhosts end, "p_ZEulerGhosts")];
-
-   -- Shock sensors routines (uses [-1:+1] direction by direction)
-   var p_XSensorGhosts = p_x_faces | x_facesM1 | x_facesP1
-   var p_YSensorGhosts = p_y_faces | y_facesM1 | y_facesP1
-   var p_ZSensorGhosts = p_z_faces | z_facesM1 | z_facesP1;
+   -- Shock sensor routines (uses [-2:+3] direction by direction)
+   var p_XSensorGhosts = p_x_faces | [emitEulerGhostRegion("x", disjoint, Fluid, p_x_faces, Xperiodic)];
+   var p_YSensorGhosts = p_y_faces | [emitEulerGhostRegion("y", disjoint, Fluid, p_y_faces, Yperiodic)];
+   var p_ZSensorGhosts = p_z_faces | [emitEulerGhostRegion("z", disjoint, Fluid, p_z_faces, Zperiodic)];
    [UTIL.emitPartitionNameAttach(rexpr p_XSensorGhosts end, "p_XSensorGhosts")];
    [UTIL.emitPartitionNameAttach(rexpr p_YSensorGhosts end, "p_YSensorGhosts")];
    [UTIL.emitPartitionNameAttach(rexpr p_ZSensorGhosts end, "p_ZSensorGhosts")];
 
    -- All With Ghosts
    var p_AllWithGhosts = p_All | p_GradientGhosts | p_MetricGhosts |
-                         p_XFluxGhosts   | p_YFluxGhosts   | p_ZFluxGhosts   |
-                         p_XDiffGhosts   | p_YDiffGhosts   | p_ZDiffGhosts   |
-                         p_XEulerGhosts2 | p_YEulerGhosts2 | p_ZEulerGhosts2 |
-                         p_XSensorGhosts2| p_YSensorGhosts2| p_ZSensorGhosts2|
-                         p_XEulerGhosts  | p_YEulerGhosts  | p_ZEulerGhosts  |
-                         p_XSensorGhosts | p_YSensorGhosts | p_ZSensorGhosts;
+                         p_XFluxGhosts     | p_YFluxGhosts     | p_ZFluxGhosts     |
+                         p_XDiffGhosts     | p_YDiffGhosts     | p_ZDiffGhosts     |
+                         p_XDiffGradGhosts | p_YDiffGradGhosts | p_ZDiffGradGhosts |
+                         p_XEulerGhosts    | p_YEulerGhosts    | p_ZEulerGhosts    |
+                         p_XSensorGhosts2  | p_YSensorGhosts2  | p_ZSensorGhosts2  |
+                         p_XSensorGhosts   | p_YSensorGhosts   | p_ZSensorGhosts;
    [UTIL.emitPartitionNameAttach(rexpr p_AllWithGhosts end, "p_AllWithGhosts")];
-
-   -- Delete aux (avoid deletion until Legion issue #812 is fixed)
-   --__delete(aux)
 
    return [ghost_partitions(Fluid, tiles)]{
       -- All With Ghosts
@@ -1288,24 +1364,24 @@ do
       p_XDiffGhosts = p_XDiffGhosts,
       p_YDiffGhosts = p_YDiffGhosts,
       p_ZDiffGhosts = p_ZDiffGhosts,
-      -- Euler fluxes stencil access
-      p_XEulerGhosts2 = p_XEulerGhosts2,
-      p_YEulerGhosts2 = p_YEulerGhosts2,
-      p_ZEulerGhosts2 = p_ZEulerGhosts2,
-      -- Shock sensors stencil access
-      p_XSensorGhosts2 = p_XSensorGhosts2,
-      p_YSensorGhosts2 = p_YSensorGhosts2,
-      p_ZSensorGhosts2 = p_ZSensorGhosts2,
+      -- Diffusion fluxes traverse gradients stencil access
+      p_XDiffGradGhosts = p_XDiffGradGhosts,
+      p_YDiffGradGhosts = p_YDiffGradGhosts,
+      p_ZDiffGradGhosts = p_ZDiffGradGhosts,
       -- Euler fluxes routines
       p_XEulerGhosts = p_XEulerGhosts,
       p_YEulerGhosts = p_YEulerGhosts,
       p_ZEulerGhosts = p_ZEulerGhosts,
-      -- Gradient routines
-      p_GradientGhosts =  p_GradientGhosts,
+      -- Shock sensors stencil access
+      p_XSensorGhosts2 = p_XSensorGhosts2,
+      p_YSensorGhosts2 = p_YSensorGhosts2,
+      p_ZSensorGhosts2 = p_ZSensorGhosts2,
       -- Shock sensor ghosts
       p_XSensorGhosts = p_XSensorGhosts,
       p_YSensorGhosts = p_YSensorGhosts,
-      p_ZSensorGhosts = p_ZSensorGhosts
+      p_ZSensorGhosts = p_ZSensorGhosts,
+      -- Gradient routines
+      p_GradientGhosts =  p_GradientGhosts
    }
 end
 
@@ -1315,55 +1391,44 @@ task Exports.PartitionAverageGhost(
                   p_All : partition(disjoint, Fluid, ispace(int3d)),
                   p_Avg : partition(aliased, Fluid, ispace(int1d)),
                   cr_Avg : cross_product(p_Avg, p_All),
-                  n_Avg : int)
+                  n_Avg : int,
+                  config : Config)
 where
    reads(Fluid)
 do
    var tiles = p_All.colors
    -- This line matches the maximum number of average specified in config_schema.lua:341-347
-   var p : average_ghost_partitions(Fluid, tiles)[10]
+   var p : average_ghost_partitions(Fluid, tiles)[10];
 
-   if (n_Avg > 0) then
-      -- Define an auxiliary region that will store the stencil indices
-      var aux = region(Fluid.ispace, indices_columns)
-      var All     = aux & p_All
+   -- Check if the setup is periodic
+   var Xperiodic = (config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic)
+   var Yperiodic = (config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic)
+   var Zperiodic = (config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic)
 
-      -- Compute stencil indices
-      InitializeIndices(aux, tiles, All)
-      __demand(__index_launch)
-      for c in tiles do
-         ComputeIndices(p_All[c], All[c], Fluid.bounds)
-      end
+   -- Define the Ghost partition for each partition of the cross product
+   for i=0, n_Avg do
+      var Avg = Fluid & cr_Avg[i]
+      -- Compute auxiliary partitions
+      var AvgM1x = [mkGhostPartiion("x", disjoint)](Fluid, Avg, -1, Xperiodic)
+      var AvgP1x = [mkGhostPartiion("x", disjoint)](Fluid, Avg,  1, Xperiodic)
 
-      -- Define the Ghost partition for each partition of the cross product
-      for i=0, n_Avg do
-         var Avg = aux & cr_Avg[i]
+      var AvgM1y = [mkGhostPartiion("y", disjoint)](Fluid, Avg, -1, Yperiodic)
+      var AvgP1y = [mkGhostPartiion("y", disjoint)](Fluid, Avg,  1, Yperiodic)
 
-         -- Compute auxiliary partitions
-         var AvgM1x = [emitGhostRegion("x", -1, aux, aux, Avg)];
-         var AvgP1x = [emitGhostRegion("x",  1, aux, aux, Avg)];
+      var AvgM1z = [mkGhostPartiion("z", disjoint)](Fluid, Avg, -1, Zperiodic)
+      var AvgP1z = [mkGhostPartiion("z", disjoint)](Fluid, Avg,  1, Zperiodic)
 
-         var AvgM1y = [emitGhostRegion("y", -1, aux, aux, Avg)];
-         var AvgP1y = [emitGhostRegion("y",  1, aux, aux, Avg)];
-
-         var AvgM1z = [emitGhostRegion("z", -1, aux, aux, Avg)];
-         var AvgP1z = [emitGhostRegion("z",  1, aux, aux, Avg)];
-
-         -- Gradient tasks use [-1:+1] in all three directions
-         var p_GradientGhosts = Fluid & (Avg | AvgM1x | AvgP1x |
+      -- Gradient tasks use [-1:+1] in all three directions
+      var p_AvgGradientGhosts = Fluid & (Avg | AvgM1x | AvgP1x |
                                                AvgM1y | AvgP1y |
                                                AvgM1z | AvgP1z);
-         [UTIL.emitPartitionNameAttach(rexpr p_GradientGhosts end, "p_GradientGhosts")];
+      [UTIL.emitPartitionNameAttach(rexpr p_AvgGradientGhosts end, "p_AvgGradientGhosts")];
 
-         -- Store in the array of fspaces
-         p[i] = [average_ghost_partitions(Fluid, tiles)] {
-            -- Gradient routines
-            p_GradientGhosts =  p_GradientGhosts,
-         }
-      end
-
-      -- Delete aux (avoid deletion until Legion issue #812 is fixed)
-      --__delete(aux)
+      -- Store in the array of fspaces
+      p[i] = [average_ghost_partitions(Fluid, tiles)] {
+         -- Gradient routines
+         p_GradientGhosts =  p_AvgGradientGhosts,
+      }
    end
    return p
 end

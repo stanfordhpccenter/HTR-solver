@@ -15,8 +15,6 @@
    "Mapping" : {
       "tiles" : [4,1,1],
       "tilesPerRank" : [4,1,1],
-      "sampleId" : -1,
-      "outDir" : "",
       "wallTime" : 1440
    },
 
@@ -24,16 +22,17 @@
       "xNum" : 1920,
       "yNum" : 171,
       "zNum" : 200,
-      "origin" : [0.0, 0.0, 0.0],
-      "xWidth" : 106.0,
-      "yWidth" : 8.3,
-      "zWidth" : 9.6,
-      "xType" : "Uniform",
-      "yType" : "SinhMinus",
-      "zType" : "Uniform",
-      "xStretching" : 1.0,
-      "yStretching" : 1.0,
-      "zStretching" : 1.0
+      "GridInput" : {
+         "type" : "Cartesian",
+         "origin" : [0.0, 0.0, 0.0],
+         "width" : [106.0, 8.3, 9.6],
+         "xType" : { "type" : "Uniform" },
+         "yType" : {
+            "type" : "SinhMinus",
+            "Stretching" : 1.0
+         },
+         "zType" : { "type" : "Uniform" }
+      }
    },
 
    "Integrator" : {
@@ -42,8 +41,10 @@
       "resetTime" : false,
       "maxIter" : 10000,
       "maxTime" : 20.0,
-      "cfl" : 0.9,
-      "fixedDeltaTime" : 4.0e-3,
+      "TimeStep" : {
+         "type" : "ConstantCFL",
+         "cfl" : 0.9
+      },
       "implicitChemistry" : false,
       "EulerScheme" : {
          "type" : "Hybrid",
@@ -81,7 +82,8 @@
       },
       "yBCRight" : { "type" : "NSCBC_Outflow" },
       "zBCLeft" :  { "type" : "Periodic" },
-      "zBCRight" : { "type" : "Periodic" }
+      "zBCRight" : { "type" : "Periodic" },
+      "bufferZone" : { "type" : "Off" }
    },
 
    "Flow" : {
@@ -108,7 +110,8 @@
       "bodyForce" : [0.0, 0.0, 0.0],
       "turbForcing" : {
          "type" : "OFF"
-      }
+      },
+      "laser" : { "type" : "Off" }
    },
 
    "IO" : {

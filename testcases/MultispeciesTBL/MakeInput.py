@@ -12,9 +12,10 @@ from scipy.optimize import fsolve
 from joblib import Parallel, delayed
 import pandas
 
-# load local modules
+# load HTR modules
 sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
 import gridGen
+import HTRrestart
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--np', nargs='?', default=1, type=int,
@@ -135,7 +136,7 @@ def getCfTurb(xGrid):
 
    return cf
 
-Cf = getCfTurb(config["Grid"]["xWidth"]+x0/deltaStarIn)
+Cf = getCfTurb(config["Grid"]["GridInput"]["width"][0]+x0/deltaStarIn)
 TauW = Cf*(rhoInf*UInf**2)*0.5
 uTau = np.sqrt(TauW/rhoW)
 deltaNu = muW/(uTau*rhoW)
@@ -154,7 +155,7 @@ TRef = config["Flow"]["mixture"]["TRef"] = TInf
 PRef = config["Flow"]["mixture"]["PRef"] = PInf
 rhoRef = rhoInf
 uRef = np.sqrt(PRef/rhoRef)
-config["Flow"]["mixture"]["XiRef"] = [
+config["Flow"]["mixture"]["XiRef"]["Species"] = [
    {"Name" : "N2", "MolarFrac" : N2B[-1]},
    {"Name" : "O2", "MolarFrac" : O2B[-1]},
    {"Name" : "NO", "MolarFrac" : NOB[-1]},
@@ -179,9 +180,11 @@ config["Integrator"]["EulerScheme"]["vorticityScale"] = UInf/delta
 x0 /= LRef
 deltaStarIn /= LRef
 deltaNu /= LRef
-config["Grid"]["origin"][0] = x0
+config["Grid"]["GridInput"]["origin"][0] = x0
 
+yB /= LRef
 uB /= uRef
+vB /= uRef
 TB /= TRef
 rhoB /= rhoRef
 
@@ -207,7 +210,7 @@ config["BC"]["yBCLeft"]["Xmin"]  = 15*deltaStarIn + x0
 config["BC"]["yBCLeft"]["Xmax"]  = 20*deltaStarIn + x0
 config["BC"]["yBCLeft"]["X0"]    = 0.5*(config["BC"]["yBCLeft"]["Xmin"] + config["BC"]["yBCLeft"]["Xmax"])
 config["BC"]["yBCLeft"]["sigma"] = 0.3*(config["BC"]["yBCLeft"]["X0"] - config["BC"]["yBCLeft"]["Xmin"])
-config["BC"]["yBCLeft"]["Zw"]    = 0.1*config["Grid"]["zWidth"]
+config["BC"]["yBCLeft"]["Zw"]    = 0.1*config["Grid"]["GridInput"]["width"][2]
 
 config["BC"]["yBCLeft"]["A"]     = [ 0.05*UInf, 0.05*UInf]
 config["BC"]["yBCLeft"]["omega"] = [ 0.9*cInf/deltaStarIn, 0.9*cInf/deltaStarIn]
@@ -219,59 +222,25 @@ config["BC"]["yBCRight"]["P"] = PInf
 ##############################################################################
 #                              Generate Grid                                 #
 ##############################################################################
-
-def objective(yStretching):
-   yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
-                               config["Grid"]["yWidth"],
-                               config["Grid"]["yNum"], 
-                               config["Grid"]["yType"],
-                               yStretching,
-                               False,
-                               StagMinus=True)
-   return dy[1]/deltaNu - yPlus
-
-config["Grid"]["yStretching"], = fsolve(objective, 1.0)
-
-xGrid, dx = gridGen.GetGrid(config["Grid"]["origin"][0],
-                            config["Grid"]["xWidth"],
-                            config["Grid"]["xNum"], 
-                            config["Grid"]["xType"],
-                            1.0,
-                            False)
-
-yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
-                            config["Grid"]["yWidth"],
-                            config["Grid"]["yNum"], 
-                            config["Grid"]["yType"],
-                            config["Grid"]["yStretching"],
-                            False,
-                            StagMinus=True,
-                            dx=yPlus*deltaNu)
-
-zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
-                            config["Grid"]["zWidth"],
-                            config["Grid"]["zNum"], 
-                            config["Grid"]["zType"],
-                            1.0,
-                            True)
+xGrid, yGrid, zGrid, dx, dy, dz = gridGen.getCellCenters(config, dyMinus = yPlus*deltaNu)
 
 print("        L_x        x          L_y        x          L_z")
 
-print(config["Grid"]["xWidth"]/deltaNu, " x ",
-      config["Grid"]["yWidth"]/deltaNu, " x ",
-      config["Grid"]["zWidth"]/deltaNu)
+print(config["Grid"]["GridInput"]["width"][0]/deltaNu, " x ",
+      config["Grid"]["GridInput"]["width"][1]/deltaNu, " x ",
+      config["Grid"]["GridInput"]["width"][2]/deltaNu)
 
 print(dx[0]/deltaNu, " x ",
       dy[1]/deltaNu, " x ",
       dz[0]/deltaNu)
 
 # Set maxTime
-config["Integrator"]["maxTime"] = config["Grid"]["xWidth"]/UInf*FTT
+config["Integrator"]["maxTime"] = config["Grid"]["GridInput"]["width"][0]/UInf*FTT
 
 with open("NoStats.json", 'w') as fout:
    json.dump(config, fout, indent=3)
 
-config["Integrator"]["maxTime"] = config["Grid"]["xWidth"]/UInf*FTT + FTTS*2*np.pi/config["BC"]["yBCLeft"]["omega"][0]
+config["Integrator"]["maxTime"] = config["Grid"]["GridInput"]["width"][0]/UInf*FTT + FTTS*2*np.pi/config["BC"]["yBCLeft"]["omega"][0]
 
 # Setup averages
 config["IO"]["YZAverages"] = [{"fromCell" : [0, 0, 0],          "uptoCell" : [config["Grid"]["xNum"]+1, 0, config["Grid"]["zNum"]]}]
@@ -279,120 +248,64 @@ config["IO"]["YZAverages"] = [{"fromCell" : [0, 0, 0],          "uptoCell" : [co
 with open("Stats.json", 'w') as fout:
    json.dump(config, fout, indent=3)
 
-# Load mapping
-assert config["Mapping"]["tiles"][0] % config["Mapping"]["tilesPerRank"][0] == 0
-assert config["Mapping"]["tiles"][1] % config["Mapping"]["tilesPerRank"][1] == 0
-assert config["Mapping"]["tiles"][2] % config["Mapping"]["tilesPerRank"][2] == 0
-Ntiles = config["Mapping"]["tiles"]
-Ntiles[0] = int(Ntiles[0]/config["Mapping"]["tilesPerRank"][0])
-Ntiles[1] = int(Ntiles[1]/config["Mapping"]["tilesPerRank"][1])
-Ntiles[2] = int(Ntiles[2]/config["Mapping"]["tilesPerRank"][2])
-
-assert config["Grid"]["xNum"] % Ntiles[0] == 0
-assert config["Grid"]["yNum"] % Ntiles[1] == 0
-assert config["Grid"]["zNum"] % Ntiles[2] == 0
-
-NxTile = int(config["Grid"]["xNum"]/Ntiles[0])
-NyTile = int(config["Grid"]["yNum"]/Ntiles[1])
-NzTile = int(config["Grid"]["zNum"]/Ntiles[2])
-
-halo = [1, 1, 0]
-
 ##############################################################################
 #                     Produce restart and profile files                      #
 ##############################################################################
-if not os.path.exists(restartDir):
-   os.makedirs(restartDir)
+shape2D = (xGrid.size, yGrid.size)
+u = np.ndarray(shape2D)
+v = np.ndarray(shape2D)
+T = np.ndarray(shape2D)
+N2= np.ndarray(shape2D)
+O2= np.ndarray(shape2D)
+NO= np.ndarray(shape2D)
+N = np.ndarray(shape2D)
+O = np.ndarray(shape2D)
+for i,x in enumerate(xGrid):
+   Re = rhoInf*UInf*xGrid[i]/muInf
+   yB1 = yB*np.sqrt(Re/Rex0)
+   vB1 = vB*np.sqrt(Rex0/Re)
 
-def writeTile(xt, yt, zt):
-   lo_bound = [(xt  )*NxTile  +halo[0], (yt  )*NyTile  +halo[1], (zt  )*NzTile  +halo[2]]
-   hi_bound = [(xt+1)*NxTile-1+halo[0], (yt+1)*NyTile-1+halo[1], (zt+1)*NzTile-1+halo[2]]
-   if (xt == 0): lo_bound[0] -= halo[0]
-   if (yt == 0): lo_bound[1] -= halo[1]
-   if (zt == 0): lo_bound[2] -= halo[2]
-   if (xt == Ntiles[0]-1): hi_bound[0] += halo[0]
-   if (yt == Ntiles[1]-1): hi_bound[1] += halo[1]
-   if (zt == Ntiles[2]-1): hi_bound[2] += halo[2]
-   filename = ('%s,%s,%s-%s,%s,%s.hdf'
-      % (lo_bound[0],  lo_bound[1],  lo_bound[2],
-         hi_bound[0],  hi_bound[1],  hi_bound[2]))
-   print("Working on: ", filename)
+   u[i,:]  = np.interp(yGrid, yB1, uB)
+   v[i,:]  = np.interp(yGrid, yB1, vB1)
+   T[i,:]  = np.interp(yGrid, yB1, TB)
+   N2[i,:] = np.interp(yGrid, yB1, N2B)
+   O2[i,:] = np.interp(yGrid, yB1, O2B)
+   NO[i,:] = np.interp(yGrid, yB1, NOB)
+   N [i,:] = np.interp(yGrid, yB1, NB)
+   O [i,:] = np.interp(yGrid, yB1, OB)
 
-   shape = [hi_bound[2] - lo_bound[2] +1,
-            hi_bound[1] - lo_bound[1] +1,
-            hi_bound[0] - lo_bound[0] +1]
+def pressure(lo_bound, hi_bound, shape):
+   return PInf
 
-   centerCoordinates = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   cellWidth         = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   rho               = np.ndarray(shape)
-   pressure          = np.ndarray(shape)
-   temperature       = np.ndarray(shape)
-   MolarFracs        = np.ndarray(shape, dtype=np.dtype('(5,)f8'))
-   velocity          = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   dudtBoundary      = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   dTdtBoundary      = np.ndarray(shape)
-   pressure[:] = PInf
-   dudtBoundary[:] = [0.0, 0.0, 0.0]
-   dTdtBoundary[:] = 0.0
-   for (k,kc) in enumerate(centerCoordinates):
-      for (j,jc) in enumerate(kc):
-         for (i,ic) in enumerate(jc):
-            Re = rhoInf*UInf*xGrid[i+lo_bound[0]]/muInf
-            yB1 = yB*np.sqrt(Re/Rex0)
-            vB1 = vB*np.sqrt(Rex0/Re)
+def temperature(lo_bound, hi_bound, shape):
+   tt = np.transpose(T[lo_bound[0]:hi_bound[0]+1,
+                       lo_bound[1]:hi_bound[1]+1])
+   return np.reshape([tt[:,:]
+                        for k in range(lo_bound[2], hi_bound[2]+1)],
+                     (shape[0], shape[1], shape[2]))
 
-            u  = np.interp(yGrid[j+lo_bound[1]], yB1, uB)
-            v  = np.interp(yGrid[j+lo_bound[1]], yB1, vB1)
-            T  = np.interp(yGrid[j+lo_bound[1]], yB1, TB)
-            N2 = np.interp(yGrid[j+lo_bound[1]], yB1, N2B)
-            O2 = np.interp(yGrid[j+lo_bound[1]], yB1, O2B)
-            NO = np.interp(yGrid[j+lo_bound[1]], yB1, NOB)
-            N  = np.interp(yGrid[j+lo_bound[1]], yB1, NB)
-            O  = np.interp(yGrid[j+lo_bound[1]], yB1, OB)
-            rh = np.interp(yGrid[j+lo_bound[1]], yB1, rhoB)
+def MolarFracs(lo_bound, hi_bound, shape):
+   Xi = [[N2[i,j], O2[i,j], NO[i,j], N[i,j], O[i,j]]
+            for j in range(lo_bound[1], hi_bound[1]+1)
+            for i in range(lo_bound[0], hi_bound[0]+1)]
+   return np.reshape([Xi for k in range(lo_bound[2], hi_bound[2]+1)],
+                           (shape[0], shape[1], shape[2], 5))
 
-            centerCoordinates[k,j,i] = [xGrid[i+lo_bound[0]], yGrid[j+lo_bound[1]], zGrid[k+lo_bound[2]]]
-            cellWidth        [k,j,i] = [   dx[i+lo_bound[0]],    dy[j+lo_bound[1]],    dz[k+lo_bound[2]]]
-            temperature      [k,j,i] = T
-            rho              [k,j,i] = rh
-            MolarFracs       [k,j,i] = [N2, O2, NO, N, O]
-            velocity         [k,j,i] = [u, v, 0.0]
+def velocity(lo_bound, hi_bound, shape):
+   vv = [[u[i,j], v[i,j], 0.0]
+            for j in range(lo_bound[1], hi_bound[1]+1)
+            for i in range(lo_bound[0], hi_bound[0]+1)]
+   return np.reshape([vv for k in range(lo_bound[2], hi_bound[2]+1)],
+                          (shape[0], shape[1], shape[2], 3))
 
-   with h5py.File(os.path.join(restartDir, filename), 'w') as fout:
-      fout.attrs.create("SpeciesNames", ["N2".encode(),
-                                         "O2".encode(),
-                                         "NO".encode(),
-                                          "N".encode(),
-                                          "O".encode()], dtype="S20")
-      fout.attrs.create("timeStep", 0)
-      fout.attrs.create("simTime", 0.0)
-      fout.attrs.create("channelForcing", 0.0)
-
-      fout.create_dataset("centerCoordinates",     shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("cellWidth",             shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("rho",                   shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("pressure",              shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("temperature",           shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("MolarFracs",            shape=shape, dtype = np.dtype("(5,)f8"))
-      fout.create_dataset("velocity",              shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dTdtBoundary",          shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("MolarFracs_profile",    shape=shape, dtype = np.dtype("(5,)f8"))
-      fout.create_dataset("velocity_profile",      shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("temperature_profile",   shape=shape, dtype = np.dtype("f8"))
-
-      fout["centerCoordinates"][:] = centerCoordinates
-      fout["cellWidth"][:] = cellWidth
-      fout["rho"][:] = rho
-      fout["pressure"][:] = pressure
-      fout["temperature"][:] = temperature
-      fout["MolarFracs"][:] = MolarFracs
-      fout["velocity"][:] = velocity
-      fout["dudtBoundary"][:] = dudtBoundary
-      fout["dTdtBoundary"][:] = dTdtBoundary
-      fout["MolarFracs_profile"][:] = MolarFracs
-      fout["velocity_profile"][:] = velocity
-      fout["temperature_profile"][:] = temperature
-
-Parallel(n_jobs=args.np)(delayed(writeTile)(x, y, z) for x, y, z in np.ndindex((Ntiles[0], Ntiles[1], Ntiles[2])))
+restart = HTRrestart.HTRrestart(config)
+restart.write_fast(restartDir, 5,
+                  pressure,
+                  temperature,
+                  MolarFracs,
+                  velocity,
+                  T_p = temperature,
+                  Xi_p = MolarFracs,
+                  U_p = velocity,
+                  nproc = args.np)
 

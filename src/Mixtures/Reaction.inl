@@ -35,7 +35,7 @@ inline double ArrheniusCoeff::CompRateCoeff(const double T) const {
    double Kf = A;
    if ( n != 0.0 )
       Kf *= pow(T, n);
-   if ( EovR > 1e-5 )
+   if ( fabs(EovR) > 1e-5 )
       Kf *= exp(-EovR/T);
    return Kf;
 };

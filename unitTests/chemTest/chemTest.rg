@@ -8,8 +8,8 @@ local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 --local format = require("std/format")
 local SCHEMA = terralib.includec("../../src/config_schema.h")
-local REGISTRAR = terralib.includec("prometeo_chem.h")
-local UTIL = require 'util-desugared'
+local REGISTRAR = terralib.includec("registrar.h")
+local UTIL = require 'util'
 
 local Config = SCHEMA.Config
 
@@ -63,10 +63,10 @@ task InitializeCell(Fluid : region(ispace(int3d), TYPES.Fluid_columns), Mix : MI
 where
    writes(Fluid)
 do
-   var MixW = MIX.GetMolarWeightFromYi([Yi], Mix)
-   var Xi : double[nSpec]; MIX.GetMolarFractions(&Xi[0], MixW, [Yi], Mix)
-   var e = MIX.GetInternalEnergy([T]/[TRef], [Yi], Mix)
-   var rho = MIX.GetRho([P]/[PRef], [T]/[TRef], MixW, Mix)
+   var MixW = MIX.GetMolarWeightFromYi([Yi], &Mix)
+   var Xi : double[nSpec]; MIX.GetMolarFractions(Xi, MixW, [Yi], &Mix)
+   var e = MIX.GetInternalEnergy([T]/[TRef], [Yi], &Mix)
+   var rho = MIX.GetRho([P]/[PRef], [T]/[TRef], MixW, &Mix)
    fill(Fluid.pressure, [P]/[PRef])
    fill(Fluid.temperature, [T]/[TRef])
    fill(Fluid.MassFracs, [Yi])
@@ -89,6 +89,13 @@ end
 task zero() return 0.0 end
 
 task main()
+
+   -- Define the domain
+   var is_Fluid = ispace(int3d, {2, 2, 2})
+   var Fluid = region(is_Fluid, TYPES.Fluid_columns)
+   var tiles = ispace(int3d, {2, 2, 2})
+   var p_All = partition(equal, Fluid, tiles)
+
    -- Init the mixture
    var config : Config
    config.Flow.mixture.type = SCHEMA.MixtureModel_AirMix
@@ -100,20 +107,14 @@ task main()
    C.snprintf([&int8](config.Flow.mixture.u.AirMix.XiRef.Species.values[1].Name), 10, "N2")
    config.Flow.mixture.u.AirMix.XiRef.Species.values[0].MolarFrac = [MixWRef]*[YO2Ref]/(2*15.999e-3)
    config.Flow.mixture.u.AirMix.XiRef.Species.values[1].MolarFrac = [MixWRef]*[YN2Ref]/28.0134e-3
-   var Mix = MIX.InitMixtureStruct(config)
-
-   -- Define the domain
-   var is_Fluid = ispace(int3d, {2, 2, 2})
-   var Fluid = region(is_Fluid, TYPES.Fluid_columns)
-   var tiles = ispace(int3d, {2, 2, 2})
-   var p_All = partition(equal, Fluid, tiles)
+   var Mix = MIX.InitMixture(Fluid, tiles, p_All, config)
 
    InitializeCell(Fluid, Mix)
 
    -- Test explicit chem advancing
    __demand(__index_launch)
    for c in tiles do
-      CHEM.AddChemistrySources(p_All[c], p_All[c], Mix)
+      CHEM.AddChemistrySources(p_All[c], Mix)
    end
    for c in Fluid do
       for i = 0, nEq do
@@ -129,7 +130,7 @@ task main()
    -- Test implicit chem advancing
    __demand(__index_launch)
    for c in tiles do
-      CHEM.UpdateChemistry(p_All[c], p_All[c], dt, Mix)
+      CHEM.UpdateChemistry(p_All[c], dt, Mix)
    end
 
    for c in Fluid do
@@ -154,4 +155,4 @@ end
 -- COMPILATION CALL
 -------------------------------------------------------------------------------
 
-regentlib.saveobj(main, "chemTest.o", "object", REGISTRAR.register_chem_tasks)
+regentlib.saveobj(main, "chemTest.o", "object", REGISTRAR.register_tasks)

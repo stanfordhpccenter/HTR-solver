@@ -22,7 +22,7 @@ if not os.path.exists(baseDir): os.makedirs(baseDir)
 
 # Scale up
 for i in range(0,args.num_times):
-   nodes = int(config["Mapping"]["tiles"][0]/config["Mapping"]["tilesPerRank"][0])
+   nodes = int(config["Mapping"]["tiles"][1]/config["Mapping"]["tilesPerRank"][1])
 
    with open(baseDir + "/" + str(nodes) + ".json", "w") as fout:
       json.dump(config, fout, indent=3)
@@ -35,7 +35,7 @@ for i in range(0,args.num_times):
    print(command)
    subprocess.call(command, shell=True)
 
-   config["Grid"]["xNum"] *= 2
-   config["Grid"]["xWidth"] *= 2
-   config["Mapping"]["tiles"][0] *=2 
+   config["Grid"]["yNum"] *= 2
+   config["Grid"]["GridInput"]["width"][1] *= 2
+   config["Mapping"]["tiles"][1] *=2
 

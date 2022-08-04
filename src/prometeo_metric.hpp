@@ -97,9 +97,7 @@ public:
       LogicalRegion MetricGhost;
       LogicalRegion Fluid;
       Rect<3> Fluid_bounds;
-      double Grid_xWidth;
-      double Grid_yWidth;
-      double Grid_zWidth;
+      bBoxType bBox;
       FieldID MetricGhost_fields [FID_last - 101];
       FieldID Fluid_fields [FID_last - 101];
    };

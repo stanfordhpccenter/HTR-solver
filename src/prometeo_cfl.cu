@@ -39,7 +39,9 @@ extern __device__ __constant__ Mix mix;
 
 __global__
 void CalculateMaxSpectralRadius_kernel(const DeferredBuffer<double, 1> buffer,
-                                       const AccessorRO<  Vec3, 3> cellWidth,
+                                       const AccessorRO<double, 3> dcsi,
+                                       const AccessorRO<double, 3> deta,
+                                       const AccessorRO<double, 3> dzet,
                                        const AccessorRO<double, 3> temperature,
                                        const AccessorRO<VecNSp, 3> MassFracs,
                                        const AccessorRO<  Vec3, 3> velocity,
@@ -57,9 +59,6 @@ void CalculateMaxSpectralRadius_kernel(const DeferredBuffer<double, 1> buffer,
                                        const coord_t size_y,
                                        const coord_t size_z)
 {
-   // We know there is never more than 32 warps in a CTA
-   __shared__ double trampoline[32];
-
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
    int z = blockIdx.z * blockDim.z + threadIdx.z;
@@ -69,7 +68,8 @@ void CalculateMaxSpectralRadius_kernel(const DeferredBuffer<double, 1> buffer,
       const Point<3> p = Point<3>(x + my_bounds.lo.x,
                                   y + my_bounds.lo.y,
                                   z + my_bounds.lo.z);
-      my_r = CalculateMaxSpectralRadiusTask::CalculateMaxSpectralRadius(cellWidth,
+      my_r = CalculateMaxSpectralRadiusTask::CalculateMaxSpectralRadius(
+                                    dcsi, deta, dzet,
                                     temperature, MassFracs, velocity,
                                     rho, mu, lam, Di, SoS,
 #if (defined(ELECTRIC_FIELD) && (nIons > 0))
@@ -77,74 +77,7 @@ void CalculateMaxSpectralRadius_kernel(const DeferredBuffer<double, 1> buffer,
 #endif
                                     p, mix);
    }
-   // make sure that everyone is done with computing the spectral radius
-   __syncthreads();
-
-   // Perform a local reduction inside the CTA
-   // Butterfly reduction across all threads in all warps
-   for (int i = 16; i >= 1; i/=2)
-      my_r = max(my_r, __shfl_xor_sync(0xfffffff, my_r, i, 32));
-   unsigned laneid;
-   asm volatile("mov.u32 %0, %laneid;" : "=r"(laneid) : );
-   unsigned warpid = ((threadIdx.z * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x) >> 5;
-   // First thread in each warp writes out all values
-   if (laneid == 0)
-      trampoline[warpid] = my_r;
-   __syncthreads();
-
-   // Butterfly reduction across all thread in the first warp
-   if (warpid == 0) {
-      unsigned numwarps = (blockDim.x * blockDim.y * blockDim.z) >> 5;
-      my_r = (laneid < numwarps) ? trampoline[laneid] : 0;
-      for (int i = 16; i >= 1; i/=2)
-         my_r = max(my_r, __shfl_xor_sync(0xfffffff, my_r, i, 32));
-      // First thread writes to the buffer
-      if (laneid == 0) {
-         unsigned blockId = (blockIdx.z * gridDim.y + blockIdx.y) * gridDim.x + blockIdx.x;
-         buffer[blockId] = my_r;
-      }
-   }
-}
-
-__global__
-void ReduceBuffer_kernel(const DeferredBuffer<double, 1> buffer,
-                         const DeferredValue<double> result,
-                         const size_t size) {
-   // We know there is never more than 32 warps in a CTA
-   __shared__ double trampoline[32];
-
-   // Each thread reduces all the correspoinding values
-   int offset = threadIdx.x;
-   double my_r = 0.0; // Spectral radius cannot be lower than 0
-   while (offset < size) {
-      my_r = max(my_r, buffer[Point<1>(offset)]);
-      offset += blockDim.x;
-   }
-   // make sure that everyone is done with its reduction
-   __syncthreads();
-
-   // Perform a local reduction inside the CTA
-   // Butterfly reduction across all threads in all warps
-   for (int i = 16; i >= 1; i/=2)
-      my_r = max(my_r, __shfl_xor_sync(0xfffffff, my_r, i, 32));
-   unsigned laneid;
-   asm volatile("mov.u32 %0, %laneid;" : "=r"(laneid) : );
-   unsigned warpid = threadIdx.x >> 5;
-   // First thread in each warp writes out all values
-   if (laneid == 0)
-      trampoline[warpid] = my_r;
-   __syncthreads();
-
-   // Butterfly reduction across all threads in the first warp
-   if (warpid == 0) {
-      unsigned numwarps = blockDim.x >> 5;
-      my_r = (laneid < numwarps) ? trampoline[laneid] : 0;
-      for (int i = 16; i >= 1; i/=2)
-         my_r = max(my_r, __shfl_xor_sync(0xfffffff, my_r, i, 32));
-      // First thread writes to the buffer
-      if (laneid == 0)
-         result.write(my_r);
-   }
+   reduceMax(my_r, buffer);
 }
 
 __host__
@@ -154,11 +87,13 @@ DeferredValue<double> CalculateMaxSpectralRadiusTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 2);
+   assert(regions.size() == 1);
    assert(futures.size() == 0);
 
-   // Accessor for cellWidth
-   const AccessorRO<  Vec3, 3> acc_cellWidth        (regions[0], FID_cellWidth);
+   // Accessor for metrics
+   const AccessorRO<double, 3> acc_dcsi_d           (regions[0], FID_dcsi_d);
+   const AccessorRO<double, 3> acc_deta_d           (regions[0], FID_deta_d);
+   const AccessorRO<double, 3> acc_dzet_d           (regions[0], FID_dzet_d);
 
    // Accessors for primitive variables
    const AccessorRO<VecNSp, 3> acc_MassFracs        (regions[0], FID_MassFracs);
@@ -179,11 +114,12 @@ DeferredValue<double> CalculateMaxSpectralRadiusTask::gpu_base_impl(
 #endif
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
 
    // Define thread grid
    const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
+   dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
+   while (TPB_3d.x*TPB_3d.y*TPB_3d.z < 32) TPB_3d.x++;
    const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
                                    (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
                                    (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
@@ -192,8 +128,9 @@ DeferredValue<double> CalculateMaxSpectralRadiusTask::gpu_base_impl(
    const size_t total_blocks = num_blocks_3d.x*num_blocks_3d.y*num_blocks_3d.z;
    const Rect<1> bounds(Point<1>(0), Point<1>(total_blocks - 1));
    DeferredBuffer<double, 1> buffer(bounds, Memory::GPU_FB_MEM);
-   CalculateMaxSpectralRadius_kernel<<<num_blocks_3d, TPB_3d>>>(
-                           buffer, acc_cellWidth, acc_temperature, acc_MassFracs, acc_velocity,
+   CalculateMaxSpectralRadius_kernel<<<num_blocks_3d, TPB_3d>>>(buffer,
+                           acc_dcsi_d, acc_deta_d, acc_dzet_d,
+                           acc_temperature, acc_MassFracs, acc_velocity,
                            acc_rho, acc_mu, acc_lam, acc_Di, acc_SoS,
 #if (defined(ELECTRIC_FIELD) && (nIons > 0))
                            acc_Ki, acc_eField,
@@ -208,7 +145,7 @@ DeferredValue<double> CalculateMaxSpectralRadiusTask::gpu_base_impl(
    // Round up to the nearest multiple of warps
    while ((TPB.x % 32) != 0) TPB.x++;
    const dim3 num_blocks(1, 1, 1);
-   ReduceBuffer_kernel<<<num_blocks, TPB>>>(buffer, r, total_blocks);
+   ReduceBufferMax_kernel<<<num_blocks, TPB>>>(buffer, r, total_blocks);
 
    return r;
 }

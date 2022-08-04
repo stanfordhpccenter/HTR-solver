@@ -22,30 +22,27 @@ parser.add_argument("-in", "--input_file")
 args = parser.parse_args()
 
 ##############################################################################
-#                           Read Soleil Input File                           #
+#                              Read HTR Input File                           #
 ##############################################################################
-
 data = json.load(args.json_file)
 
 xNum = data["Grid"]["xNum"]
 yNum = data["Grid"]["yNum"]
 zNum = data["Grid"]["zNum"]
-xWidth  = data["Grid"]["xWidth"]
-yWidth  = data["Grid"]["yWidth"]
-zWidth  = data["Grid"]["zWidth"]
-xOrigin = data["Grid"]["origin"][0]
-yOrigin = data["Grid"]["origin"][1]
-zOrigin = data["Grid"]["origin"][2]
+xWidth  = data["Grid"]["GridInput"]["width"][0]
+yWidth  = data["Grid"]["GridInput"]["width"][1]
+zWidth  = data["Grid"]["GridInput"]["width"][2]
+xOrigin = data["Grid"]["GridInput"]["origin"][0]
+yOrigin = data["Grid"]["GridInput"]["origin"][1]
+zOrigin = data["Grid"]["GridInput"]["origin"][2]
 
 ##############################################################################
 #                               Compute Grid                                 #
 ##############################################################################
-
-yGrid, dy = gridGen.GetGrid(data["Grid"]["origin"][1],
-                            data["Grid"]["yWidth"],
+yGrid, dy = gridGen.GetGrid(data["Grid"]["GridInput"]["origin"][1],
+                            data["Grid"]["GridInput"]["width"][1],
                             data["Grid"]["yNum"],
-                            data["Grid"]["yType"],
-                            data["Grid"]["yStretching"],
+                            data["Grid"]["GridInput"]["yType"],
                             False,
                             StagMinus=True)
 
@@ -56,19 +53,16 @@ yGrid[yNum+1] -= 0.5*dy[yNum+1]
 ##############################################################################
 #                          Load reference solution                           #
 ##############################################################################
-
 sciacoEtAl = pandas.read_csv("sciacoEtAl.dat")
 
 ##############################################################################
 #                          Load average files                                #
 ##############################################################################
-
 avg = Averages.avg2D(args.input_file, True)
 
 ##############################################################################
 #                           Print quantities                                 #
 ##############################################################################
-
 rhoU_avg = avg.velocity_favg[:,0]
 
 rhoW = avg.rho_avg[0]

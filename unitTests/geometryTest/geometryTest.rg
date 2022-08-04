@@ -7,7 +7,7 @@ local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 
 local Config = SCHEMA.Config
 
@@ -29,12 +29,16 @@ if ELECTRIC_FIELD then
 end
 local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
 local Fluid_columns = TYPES.Fluid_columns
+local bBoxType = TYPES.bBoxType
 
 --External modules
 local MACRO = require "prometeo_macro"
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
-local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
-local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns, PART.zones_partitions)
+local IO = (require 'prometeo_IO')(SCHEMA)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
+local GRID = (require 'prometeo_grid')(SCHEMA, IO, Fluid_columns, bBoxType,
+                                       PART.zones_partitions, PART.output_partitions)
 
 -- Test parameters
 local Npx = 32
@@ -56,7 +60,6 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, 0)
    fill(Fluid.nType_y, 0)
    fill(Fluid.nType_z, 0)
@@ -74,45 +77,67 @@ end
 function runPeriodic()
 
    local task checkGeometry(Fluid : region(ispace(int3d), Fluid_columns),
-                      Grid_xType : SCHEMA.GridType, Grid_yType : SCHEMA.GridType, Grid_zType : SCHEMA.GridType,
-                      Grid_xStretching : double,    Grid_yStretching : double,    Grid_zStretching : double,
-                      Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                      Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                      Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
+                      config : SCHEMA.Config,
+                      Grid_xBnum : int32,
+                      Grid_yBnum : int32,
+                      Grid_zBnum : int32)
    where
-   reads(Fluid.centerCoordinates),
-   reads(Fluid.cellWidth)
+   reads(Fluid.centerCoordinates)
    do
-      regentlib.assert(Grid_xType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
-      regentlib.assert(Grid_yType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
-      regentlib.assert(Grid_zType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
+      var Cart = config.Grid.GridInput.u.Cartesian
+      regentlib.assert(config.Grid.GridInput.type == SCHEMA.GridInputStruct_Cartesian, "geometryTest: only Cartesian supported for now")
+      regentlib.assert(Cart.xType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      regentlib.assert(Cart.yType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      regentlib.assert(Cart.zType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      var Grid_xNum    = config.Grid.xNum
+      var Grid_yNum    = config.Grid.yNum
+      var Grid_zNum    = config.Grid.zNum
+      var Grid_xOrigin = Cart.origin[0]
+      var Grid_yOrigin = Cart.origin[1]
+      var Grid_zOrigin = Cart.origin[2]
+      var Grid_xWidth  = Cart.width[0]
+      var Grid_yWidth  = Cart.width[1]
+      var Grid_zWidth  = Cart.width[2]
+
       for c in Fluid do
          var  x_exp = (c.x+0.5)/Grid_xNum*Grid_xWidth + Grid_xOrigin
          var dx_exp = Grid_xWidth/Grid_xNum
          regentlib.assert(fabs((Fluid[c].centerCoordinates[0]/(x_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometry x coordinate")
-         regentlib.assert(fabs((Fluid[c].cellWidth[0]/(dx_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometry dx")
-   
+
          var  y_exp = (c.y+0.5)/Grid_yNum*Grid_yWidth + Grid_yOrigin
          var dy_exp = Grid_yWidth/Grid_yNum
          regentlib.assert(fabs((Fluid[c].centerCoordinates[1]/(y_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometry y coordinate")
-         regentlib.assert(fabs((Fluid[c].cellWidth[1]/(dy_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometry dy")
-   
+
          var  z_exp = (c.z+0.5)/Grid_zNum*Grid_zWidth + Grid_zOrigin
          var dz_exp = Grid_zWidth/Grid_zNum
          regentlib.assert(fabs((Fluid[c].centerCoordinates[2]/(z_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometry z coordinate")
-         regentlib.assert(fabs((Fluid[c].cellWidth[2]/(dz_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometry dz")
       end
    end
 
    return rquote
 
       var config : SCHEMA.Config
+
+      C.snprintf([&int8](config.Mapping.outDir), 256, "./PeriodicDir")
+      UTIL.createDir(config.Mapping.outDir)
+
       config.BC.xBCLeft.type  = SCHEMA.FlowBC_Periodic
       config.BC.xBCRight.type = SCHEMA.FlowBC_Periodic
       config.BC.yBCLeft.type  = SCHEMA.FlowBC_Periodic
       config.BC.yBCRight.type = SCHEMA.FlowBC_Periodic
       config.BC.zBCLeft.type  = SCHEMA.FlowBC_Periodic
       config.BC.zBCRight.type = SCHEMA.FlowBC_Periodic
+
+      config.Grid.xNum = Npx
+      config.Grid.yNum = Npy
+      config.Grid.zNum = Npz
+
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+      config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+      config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+      config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Uniform
 
       -- No ghost cells
       var xBnum = 0
@@ -133,41 +158,55 @@ function runPeriodic()
       var {p_All} = Fluid_Zones
 
       InitializeCell(Fluid)
+      var boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
+      checkGeometry(Fluid, config, xBnum, yBnum, zBnum)
 
-      __demand(__index_launch)
-      for c in tiles do
-         GRID.InitializeGeometry(p_All[c],
-                                 SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                                 1.0, 1.0, 1.0,
-                                 xBnum, Npx, xO, xW,
-                                 yBnum, Npy, yO, yW,
-                                 zBnum, Npz, zO, zW)
-      end
+      -- Check FromFile capabilities
+      __fence(__execution, __block)
+      C.printf("geometryTest: Periodic reading from file ...\n")
 
-      checkGeometry(Fluid,
-                    SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                    1.0, 1.0, 1.0,
-                    xBnum, Npx, xO, xW,
-                    yBnum, Npy, yO, yW,
-                    zBnum, Npz, zO, zW)
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_FromFile
+      C.snprintf([&int8](config.Grid.GridInput.u.FromFile.gridDir), 256, "./PeriodicDir/nodes_grid")
+      C.snprintf([&int8](config.Mapping.outDir), 256, "./PeriodicDir2")
+      UTIL.createDir(config.Mapping.outDir)
+
+      InitializeCell(Fluid)
+      boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+      config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+      config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+      config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Uniform
+      checkGeometry(Fluid, config, xBnum, yBnum, zBnum)
    end
 end
 
 function runStaggeredBC()
 
    local task checkGeometry(Fluid : region(ispace(int3d), Fluid_columns),
-                      Grid_xType : SCHEMA.GridType, Grid_yType : SCHEMA.GridType, Grid_zType : SCHEMA.GridType,
-                      Grid_xStretching : double,    Grid_yStretching : double,    Grid_zStretching : double,
-                      Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                      Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                      Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
+                      config : SCHEMA.Config,
+                      Grid_xBnum : int32,
+                      Grid_yBnum : int32,
+                      Grid_zBnum : int32)
    where
-   reads(Fluid.centerCoordinates),
-   reads(Fluid.cellWidth)
+   reads(Fluid.centerCoordinates)
    do
-      regentlib.assert(Grid_xType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
-      regentlib.assert(Grid_yType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
-      regentlib.assert(Grid_zType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
+      var Cart = config.Grid.GridInput.u.Cartesian
+      regentlib.assert(config.Grid.GridInput.type == SCHEMA.GridInputStruct_Cartesian, "geometryTest: only Cartesian supported for now")
+      regentlib.assert(Cart.xType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      regentlib.assert(Cart.yType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      regentlib.assert(Cart.zType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      var Grid_xNum    = config.Grid.xNum
+      var Grid_yNum    = config.Grid.yNum
+      var Grid_zNum    = config.Grid.zNum
+      var Grid_xOrigin = Cart.origin[0]
+      var Grid_yOrigin = Cart.origin[1]
+      var Grid_zOrigin = Cart.origin[2]
+      var Grid_xWidth  = Cart.width[0]
+      var Grid_yWidth  = Cart.width[1]
+      var Grid_zWidth  = Cart.width[2]
+
       for c in Fluid do
 
          var xNegGhost = MACRO.is_xNegGhost(c, Grid_xBnum)
@@ -219,13 +258,10 @@ function runStaggeredBC()
          end
 
          regentlib.assert(fabs((Fluid[c].centerCoordinates[0]/(x_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryStaggeredBC x coordinate")
-         regentlib.assert(Fluid[c].cellWidth[0] == dx_exp, "geometryTest: ERROR in checkGeometryStaggeredBC dx")
 
          regentlib.assert(fabs((Fluid[c].centerCoordinates[1]/(y_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryStaggeredBC y coordinate")
-         regentlib.assert(Fluid[c].cellWidth[1] == dy_exp, "geometryTest: ERROR in checkGeometryStaggeredBC dy")
 
          regentlib.assert(fabs((Fluid[c].centerCoordinates[2]/(z_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryStaggeredBC z coordinate")
-         regentlib.assert(Fluid[c].cellWidth[2] == dz_exp, "geometryTest: ERROR in checkGeometryStaggeredBC dz")
 
       end
    end
@@ -233,12 +269,27 @@ function runStaggeredBC()
    return rquote
 
       var config : SCHEMA.Config
+
+      C.snprintf([&int8](config.Mapping.outDir), 256, "./StaggeredDir")
+      UTIL.createDir(config.Mapping.outDir)
+
       config.BC.xBCLeft.type  = SCHEMA.FlowBC_Dirichlet
       config.BC.xBCRight.type = SCHEMA.FlowBC_Dirichlet
       config.BC.yBCLeft.type  = SCHEMA.FlowBC_Dirichlet
       config.BC.yBCRight.type = SCHEMA.FlowBC_Dirichlet
       config.BC.zBCLeft.type  = SCHEMA.FlowBC_Dirichlet
       config.BC.zBCRight.type = SCHEMA.FlowBC_Dirichlet
+
+      config.Grid.xNum = Npx
+      config.Grid.yNum = Npy
+      config.Grid.zNum = Npz
+
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+      config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+      config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+      config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Uniform
 
       -- No ghost cells
       var xBnum = 1
@@ -259,26 +310,27 @@ function runStaggeredBC()
       var {p_All} = Fluid_Zones
 
       InitializeCell(Fluid)
+      var boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
+      checkGeometry(Fluid, config, xBnum, yBnum, zBnum)
 
-      __demand(__index_launch)
-      for c in tiles do
-         GRID.InitializeGeometry(p_All[c],
-                                 SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                                 1.0, 1.0, 1.0,
-                                 xBnum, Npx, xO, xW,
-                                 yBnum, Npy, yO, yW,
-                                 zBnum, Npz, zO, zW)
-      end
+      -- Check FromFile capabilities
+      __fence(__execution, __block)
+      C.printf("geometryTest: Staggered reading from file ...\n")
 
-      -- Enforce BCs
-      GRID.InitializeGhostGeometry(Fluid, tiles, Fluid_Zones, config)
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_FromFile
+      C.snprintf([&int8](config.Grid.GridInput.u.FromFile.gridDir), 256, "./StaggeredDir/nodes_grid")
+      C.snprintf([&int8](config.Mapping.outDir), 256, "./StaggeredDir2")
+      UTIL.createDir(config.Mapping.outDir)
 
-      checkGeometry(Fluid,
-                    SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                    1.0, 1.0, 1.0,
-                    xBnum, Npx, xO, xW,
-                    yBnum, Npy, yO, yW,
-                    zBnum, Npz, zO, zW)
+      InitializeCell(Fluid)
+      boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+      config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+      config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+      config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Uniform
+      checkGeometry(Fluid, config, xBnum, yBnum, zBnum)
 
    end
 end
@@ -286,18 +338,28 @@ end
 function runCollocatedBC()
 
    local task checkGeometry(Fluid : region(ispace(int3d), Fluid_columns),
-                      Grid_xType : SCHEMA.GridType, Grid_yType : SCHEMA.GridType, Grid_zType : SCHEMA.GridType,
-                      Grid_xStretching : double,    Grid_yStretching : double,    Grid_zStretching : double,
-                      Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                      Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                      Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
+                      config : SCHEMA.Config,
+                      Grid_xBnum : int32,
+                      Grid_yBnum : int32,
+                      Grid_zBnum : int32)
    where
-   reads(Fluid.centerCoordinates),
-   reads(Fluid.cellWidth)
+   reads(Fluid.centerCoordinates)
    do
-      regentlib.assert(Grid_xType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
-      regentlib.assert(Grid_yType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
-      regentlib.assert(Grid_zType == SCHEMA.GridType_Uniform, "geometryTest: only Uniform supported for now")
+      var Cart = config.Grid.GridInput.u.Cartesian
+      regentlib.assert(config.Grid.GridInput.type == SCHEMA.GridInputStruct_Cartesian, "geometryTest: only Cartesian supported for now")
+      regentlib.assert(Cart.xType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      regentlib.assert(Cart.yType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      regentlib.assert(Cart.zType.type == SCHEMA.GridTypes_Uniform, "geometryTest: only Uniform supported for now")
+      var Grid_xNum    = config.Grid.xNum
+      var Grid_yNum    = config.Grid.yNum
+      var Grid_zNum    = config.Grid.zNum
+      var Grid_xOrigin = Cart.origin[0]
+      var Grid_yOrigin = Cart.origin[1]
+      var Grid_zOrigin = Cart.origin[2]
+      var Grid_xWidth  = Cart.width[0]
+      var Grid_yWidth  = Cart.width[1]
+      var Grid_zWidth  = Cart.width[2]
+
       for c in Fluid do
 
          var xNegGhost = MACRO.is_xNegGhost(c, Grid_xBnum)
@@ -349,14 +411,10 @@ function runCollocatedBC()
          end
 
          regentlib.assert(fabs((Fluid[c].centerCoordinates[0]/(x_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryCollocatedBC x coordinate")
-         regentlib.assert(fabs((Fluid[c].cellWidth[0]/(dx_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryCollocatedBC dx")
 
          regentlib.assert(fabs((Fluid[c].centerCoordinates[1]/(y_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryCollocatedBC y coordinate")
-         regentlib.assert(fabs((Fluid[c].cellWidth[1]/(dy_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryCollocatedBC dy")
-
 
          regentlib.assert(fabs((Fluid[c].centerCoordinates[2]/(z_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryCollocatedBC z coordinate")
-         regentlib.assert(fabs((Fluid[c].cellWidth[2]/(dz_exp)) - 1.0) < 1e-3, "geometryTest: ERROR in checkGeometryCollocatedBC dz")
 
       end
    end
@@ -364,12 +422,27 @@ function runCollocatedBC()
    return rquote
 
       var config : SCHEMA.Config
+
+      C.snprintf([&int8](config.Mapping.outDir), 256, "./CollocatedDir")
+      UTIL.createDir(config.Mapping.outDir)
+
       config.BC.xBCLeft.type  = SCHEMA.FlowBC_NSCBC_Inflow
       config.BC.xBCRight.type = SCHEMA.FlowBC_NSCBC_Inflow
       config.BC.yBCLeft.type  = SCHEMA.FlowBC_NSCBC_Inflow
       config.BC.yBCRight.type = SCHEMA.FlowBC_NSCBC_Inflow
       config.BC.zBCLeft.type  = SCHEMA.FlowBC_NSCBC_Inflow
       config.BC.zBCRight.type = SCHEMA.FlowBC_NSCBC_Inflow
+
+      config.Grid.xNum = Npx
+      config.Grid.yNum = Npy
+      config.Grid.zNum = Npz
+
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+      config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+      config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+      config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Uniform
 
       -- No ghost cells
       var xBnum = 1
@@ -390,27 +463,27 @@ function runCollocatedBC()
       var {p_All} = Fluid_Zones
 
       InitializeCell(Fluid)
+      var boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
+      checkGeometry(Fluid, config, xBnum, yBnum, zBnum)
 
-      __demand(__index_launch)
-      for c in tiles do
-         GRID.InitializeGeometry(p_All[c],
-                                 SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                                 1.0, 1.0, 1.0,
-                                 xBnum, Npx, xO, xW,
-                                 yBnum, Npy, yO, yW,
-                                 zBnum, Npz, zO, zW)
-      end
+      -- Check FromFile capabilities
+      __fence(__execution, __block)
+      C.printf("geometryTest: Collocated reading from file ...\n")
 
-      -- Enforce BCs
-      GRID.InitializeGhostGeometry(Fluid, tiles, Fluid_Zones, config)
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_FromFile
+      C.snprintf([&int8](config.Grid.GridInput.u.FromFile.gridDir), 256, "./CollocatedDir/nodes_grid")
+      C.snprintf([&int8](config.Mapping.outDir), 256, "./CollocatedDir2")
+      UTIL.createDir(config.Mapping.outDir)
 
-      checkGeometry(Fluid,
-                    SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform, SCHEMA.GridType_Uniform,
-                    1.0, 1.0, 1.0,
-                    xBnum, Npx, xO, xW,
-                    yBnum, Npy, yO, yW,
-                    zBnum, Npz, zO, zW)
-
+      InitializeCell(Fluid)
+      boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
+      config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+      config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+      config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+      config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Uniform
+      config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Uniform
+      checkGeometry(Fluid, config, xBnum, yBnum, zBnum)
    end
 end
 

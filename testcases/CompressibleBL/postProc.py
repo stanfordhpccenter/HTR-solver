@@ -10,10 +10,11 @@ import pandas
 from scipy.integrate import odeint
 from scipy.optimize import fsolve
 
-# load local modules
+# load HTR modules
 sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
 import gridGen
 import ConstPropMix
+import HTRrestart
 
 dir_name = os.path.join(os.environ['HTR_DIR'], 'testcases/CompressibleBL')
 prometeo_input_file = os.path.join(dir_name, 'CBL.json')
@@ -28,10 +29,10 @@ with open(prometeo_input_file) as f:
 
 xNum = data["Grid"]["xNum"]
 yNum = data["Grid"]["yNum"]
-xWidth  = data["Grid"]["xWidth"]
-yWidth  = data["Grid"]["yWidth"]
-xOrigin = data["Grid"]["origin"][0]
-yOrigin = data["Grid"]["origin"][1]
+xWidth  = data["Grid"]["GridInput"]["width"][0]
+yWidth  = data["Grid"]["GridInput"]["width"][1]
+xOrigin = data["Grid"]["GridInput"]["origin"][0]
+yOrigin = data["Grid"]["GridInput"]["origin"][1]
 
 gamma = data["Flow"]["mixture"]["gamma"]
 R     = data["Flow"]["mixture"]["gasConstant"]
@@ -54,45 +55,21 @@ def process(frac):
    muInf = ConstPropMix.GetViscosity(TInf, data)
    nuInf = muInf/RhoInf
 
-   dt    = data["Integrator"]["fixedDeltaTime"]
    nstep = int(data["Integrator"]["maxIter"])
-   time = dt*nstep
-
-   filename = os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/0,0,0-'+str(xNum+1)+','+str(yNum+1)+',0.hdf')
-   exists = os.path.isfile(filename)
-
-   if (not exists):
-      # merge files from different tiles 
-      merge_command = 'python {} {}'.format(os.path.expandvars('$HTR_DIR/scripts/merge.py'),
-                                            os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/*.hdf'))
-      mv_command = 'mv {} {}'.format('./0,0,0-'+str(xNum+1)+','+str(yNum+1)+',0.hdf',
-                                     os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/'))
-
-      try:
-         subprocess.call(merge_command, shell=True)
-      except OSError:
-         print("Failed command: {}".format(merge_command))
-         sys.exit()
-
-      try:
-         subprocess.call(   mv_command, shell=True)
-      except OSError:
-         print("Failed command: {}".format(mv_command))
-         sys.exit()
 
 ##############################################################################
 #                        Read Prometeo Output Data                           #
 ##############################################################################
-
-   f = h5py.File(filename, 'r')
+   restart = HTRrestart.HTRrestart(data)
+   restart.attach(sampleDir=os.path.join(dir_name, 'sample0'), step=nstep)
 
    # Get the data
-   centerCoordinates = f['centerCoordinates']
-   cellWidth   = f['cellWidth']
-   pressure    = f['pressure']
-   temperature = f['temperature']
-   density     = f['rho']
-   velocity    = f['velocity']
+   centerCoordinates = restart.load("centerCoordinates")
+   velocity          = restart.load("velocity")
+   pressure          = restart.load("pressure")
+   temperature       = restart.load("temperature")
+   density           = restart.load("rho")
+   velocity          = restart.load("velocity")
 
    # Get simulation data along a line (ignore ghost cells)
    x_slice_idx = int(frac*xNum)

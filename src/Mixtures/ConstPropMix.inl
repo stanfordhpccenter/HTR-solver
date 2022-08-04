@@ -51,7 +51,7 @@ inline Mix::Mix(const Config &config) :
 };
 #endif
 
-inline char* Mix::GetSpeciesName(const int i) const {
+inline const char* Mix::GetSpeciesName(const int i) const {
    return (char*)"MIX";
 };
 

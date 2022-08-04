@@ -35,7 +35,7 @@ return function(SCHEMA, MIX, TYPES, ATOMIC) local Exports = {}
 -- IMPORTS
 -------------------------------------------------------------------------------
 local C = regentlib.c
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local MATH = require 'math_utils'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
@@ -70,19 +70,17 @@ end
 -- Reset mixture
 __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.ResetMixture(Fluid    : region(ispace(int3d), TYPES.Fluid_columns),
-                          ModCells : region(ispace(int3d), TYPES.Fluid_columns),
                           initMolarFracs : double[nSpec])
 where
    writes(Fluid.MolarFracs)
 do
    __demand(__openmp)
-   for c in ModCells do
+   for c in Fluid do
       Fluid[c].MolarFracs = initMolarFracs
    end
 end
 
 extern task Exports.UpdateChemistry(Fluid    : region(ispace(int3d), TYPES.Fluid_columns),
-                                    ModCells : region(ispace(int3d), TYPES.Fluid_columns),
                                     Integrator_deltaTime : double,
                                     mix : MIX.Mixture)
 where
@@ -92,7 +90,6 @@ end
 Exports.UpdateChemistry:set_task_id(TYPES.TID_UpdateChemistry)
 
 extern task Exports.AddChemistrySources([Fluid],
-                                        ModCells : region(ispace(int3d), TYPES.Fluid_columns),
                                         mix : MIX.Mixture)
 where
    reads(Fluid.{rho, MassFracs, pressure, temperature}),

@@ -65,7 +65,7 @@
 // CH4
 #define iN2 0
 #define N2 { \
-   /*      Name = */       (char*)("N2"), \
+   /*      Name = */       ("N2"), \
    /*         W = */       2*14.0067e-3, \
    /*       inx = */       iN2, \
    /*   cpCoeff = */       { \
@@ -90,7 +90,7 @@
 // O2
 #define iO2 1
 #define O2 { \
-   /*      Name = */       (char*)("O2"), \
+   /*      Name = */       ("O2"), \
    /*         W = */       2*15.9994e-3, \
    /*       inx = */       iO2, \
    /*   cpCoeff = */       { \
@@ -115,7 +115,7 @@
 // NO
 #define iNO 2
 #define NO { \
-   /*      Name = */       (char*)("NO"), \
+   /*      Name = */       ("NO"), \
    /*         W = */       14.0067e-3+15.9994e-3, \
    /*       inx = */       iNO, \
    /*   cpCoeff = */       { \
@@ -140,7 +140,7 @@
 // N
 #define iN 3
 #define N { \
-   /*      Name = */       (char*)("N"), \
+   /*      Name = */       ("N"), \
    /*         W = */       14.0067e-3, \
    /*       inx = */       iN, \
    /*   cpCoeff = */       { \
@@ -165,7 +165,7 @@
 // O
 #define iO 4
 #define O { \
-   /*      Name = */       (char*)("O"), \
+   /*      Name = */       ("O"), \
    /*         W = */       15.9994e-3, \
    /*       inx = */       iO, \
    /*   cpCoeff = */       { \
@@ -317,9 +317,9 @@
 
 #ifndef __CUDACC__
 inline Mix::Mix(const Config &config) :
-   species({N2, O2, NO, N, O}),
-   reactions({R4, R5}),
-   ThirdbodyReactions({R1, R2, R3})
+   species{N2, O2, NO, N, O},
+   reactions{R4, R5},
+   ThirdbodyReactions{R1, R2, R3}
 {
    // This executable is expecting AirMix in the input file
    assert(config.Flow.mixture.type == MixtureModel_AirMix);

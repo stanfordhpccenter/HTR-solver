@@ -44,6 +44,53 @@ using namespace Legion;
 #include "prometeo_sensor.h"
 
 //-----------------------------------------------------------------------------
+// TASK THAT UPDATES THE DUCROS SENSOR
+//-----------------------------------------------------------------------------
+
+class UpdateDucrosSensorTask {
+public:
+   struct Args {
+      uint64_t arg_mask[1];
+      LogicalRegion Ghost;
+      LogicalRegion Fluid;
+      Rect<3> Fluid_bounds;
+      double vorticityScale;
+      FieldID Ghost_fields      [FID_last - 101];
+      FieldID Fluid_fields      [FID_last - 101];
+   };
+public:
+   static const char * const TASK_NAME;
+   static const int TASK_ID;
+   static const bool CPU_BASE_LEAF = true;
+   static const bool GPU_BASE_LEAF = true;
+   static const int MAPPER_ID = 0;
+
+   __CUDA_H__
+   static inline double DucrosSensor(const AccessorRO<  Vec3, 3> &velocity,
+                                     const AccessorRO<   int, 3> &nType_csi,
+                                     const AccessorRO<   int, 3> &nType_eta,
+                                     const AccessorRO<   int, 3> &nType_zet,
+                                     const AccessorRO<double, 3> &dcsi_d,
+                                     const AccessorRO<double, 3> &deta_d,
+                                     const AccessorRO<double, 3> &dzet_d,
+                                     const Point<3> &p,
+                                     const Rect<3> &bounds,
+                                     const double eps);
+
+public:
+   static void cpu_base_impl(const Args &args,
+                             const std::vector<PhysicalRegion> &regions,
+                             const std::vector<Future>         &futures,
+                             Context ctx, Runtime *runtime);
+#ifdef LEGION_USE_CUDA
+   static void gpu_base_impl(const Args &args,
+                             const std::vector<PhysicalRegion> &regions,
+                             const std::vector<Future>         &futures,
+                             Context ctx, Runtime *runtime);
+#endif
+};
+
+//-----------------------------------------------------------------------------
 // TASK THAT UPDATES THE SHOCK SENSOR
 //-----------------------------------------------------------------------------
 
@@ -54,12 +101,9 @@ public:
       uint64_t arg_mask[1];
       LogicalRegion Ghost;
       LogicalRegion Fluid;
-      LogicalRegion ModCells;
       Rect<3> Fluid_bounds;
-      double vorticityScale;
       FieldID Ghost_fields      [FID_last - 101];
       FieldID Fluid_fields      [FID_last - 101];
-      FieldID ModCells_fields   [FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;

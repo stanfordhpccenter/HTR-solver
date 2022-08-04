@@ -34,7 +34,7 @@ return function(nEq, Fluid_columns) local Exports = {}
 -------------------------------------------------------------------------------
 -- IMPORTS
 -------------------------------------------------------------------------------
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 
 -- Runge-Kutta coeffients 
@@ -67,7 +67,7 @@ Exports.mkInitializeTimeDerivatives = terralib.memoize(function(Integrator_impli
       do
          __demand(__openmp)
          for c in Fluid do
-            Fluid[c].Conserved_t    = (-Fluid[c].Conserved_t_old)
+            Fluid[c].Conserved_t = (-Fluid[c].Conserved_t_old)
          end
       end
    else
@@ -78,45 +78,14 @@ Exports.mkInitializeTimeDerivatives = terralib.memoize(function(Integrator_impli
       do
          __demand(__openmp)
          for c in Fluid do
-            Fluid[c].Conserved_t    = [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)]
+            Fluid[c].Conserved_t = [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)]
          end
       end
    end
    return InitializeTimeDerivatives
 end)
 
---Exports.mkUpdateVarsPred = terralib.memoize(function(STAGE)
---   local UpdateVars
---   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
---   task UpdateVars(Fluid : region(ispace(int3d), Fluid_columns),
---                   Integrator_deltaTime : double,
---                   Integrator_implicitChemistry : bool)
---   where
---      reads(Fluid.Conserved_old),
---      reads(Fluid.Conserved_t),
---      reads(Fluid.Conserved),
---      writes(Fluid.Conserved_hat)
---   do
---      var dt = Integrator_deltaTime
---      if Integrator_implicitChemistry then
---         dt *= 0.5
---      end
---      __demand(__openmp)
---      for c in Fluid do
---         -- Set provvisional values for next substep
---         var Conserved_hat : double[nEq]
---         for i=0, nEq do
---            Conserved_hat[i] =  [RK_C[STAGE][1]] * Fluid[c].Conserved_old[i]
---                              + [RK_C[STAGE][2]] * Fluid[c].Conserved[i]
---                              + [RK_C[STAGE][3]] * Fluid[c].Conserved_t[i] * dt
---         end
---         Fluid[c].Conserved_hat = Conserved_hat
---      end
---   end
---   return UpdateVars
---end)
-
-Exports.mkUpdateVarsCorr = terralib.memoize(function(STAGE)
+Exports.mkUpdateVars = terralib.memoize(function(STAGE)
    local UpdateVars
    __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
    task UpdateVars(Fluid : region(ispace(int3d), Fluid_columns),

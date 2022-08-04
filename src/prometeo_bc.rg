@@ -38,7 +38,7 @@ return function(SCHEMA, MIX, TYPES, zones_partitions,
 local C = regentlib.c
 local MAPPER = terralib.includec("prometeo_mapper.h")
 local BC_TYPES = terralib.includec("prometeo_bc_types.h", {"-DEOS="..os.getenv("EOS")})
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local MATH = require 'math_utils'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
@@ -55,6 +55,7 @@ local sqrt = regentlib.sqrt(double)
 local atan = regentlib.atan(double)
 
 local Fluid_columns = TYPES.Fluid_columns
+local bBoxType      = TYPES.bBoxType
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -104,17 +105,20 @@ local fspace BCParamsStruct(Fluid : region(ispace(int3d), Fluid_columns), tiles 
    RecycleRescaling : RecycleRescalingParams(Fluid, tiles)
 }
 
+Exports.IncomingShockParams = IncomingShockParams
 Exports.RecycleAverageType = RecycleAverageType
 Exports.RecycleAverageFIType = FIType
 Exports.BCParamsStruct = BCParamsStruct
 
-Exports.BCDataList = {
-   readProfiles = regentlib.newsymbol(bool),
-   ProfilesDir = regentlib.newsymbol(&int8),
-   BCParams = regentlib.newsymbol(),
-   RecycleAverage = regentlib.newsymbol(),
-   RecycleAverageFI = regentlib.newsymbol()
-}
+function Exports.mkBCDataList()
+   return {
+      readProfiles = regentlib.newsymbol(bool),
+      ProfilesDir = regentlib.newsymbol(&int8),
+      BCParams = regentlib.newsymbol(),
+      RecycleAverage = regentlib.newsymbol(),
+      RecycleAverageFI = regentlib.newsymbol()
+   }
+end
 
 -------------------------------------------------------------------------------
 -- RANKINE-HUGONIOT FOR OBLIQUE SHOCKS
@@ -175,8 +179,8 @@ task RHresidual(nu : double,
    var un1 = RHgetUn1(nu, un0)
    var rho1 = RHgetrho1(nu, rho0)
    var P1 = RHgetP1(nu, P0, un0, rho0)
-   var T1 = MIX.GetTFromRhoAndP(rho1, MixW, P1, Mix)
-   return RHgetH1(nu, h0, un0) - MIX.GetEnthalpy(T1, Yi, Mix)
+   var T1 = MIX.GetTFromRhoAndP(rho1, MixW, P1, &Mix)
+   return RHgetH1(nu, h0, un0) - MIX.GetEnthalpy(T1, Yi, &Mix)
 end
 
 local __demand(__inline)
@@ -197,10 +201,10 @@ task InitIncomingShockParams(config : SCHEMA.Config, Mix : MIX.Mixture)
    params.temperature0 = input.temperature0
    params.velocity0    = input.velocity0
 
-   var MixW = MIX.GetMolarWeightFromXi(params.MolarFracs, Mix)
-   var Yi : double[nSpec]; MIX.GetMassFractions(Yi, MixW, params.MolarFracs, Mix)
-   var h0 = MIX.GetEnthalpy(params.temperature0, Yi, Mix)
-   var rho0 = MIX.GetRho(params.pressure0, params.temperature0, MixW, Mix)
+   var MixW = MIX.GetMolarWeightFromXi(params.MolarFracs, &Mix)
+   var Yi : double[nSpec]; MIX.GetMassFractions(Yi, MixW, params.MolarFracs, &Mix)
+   var h0 = MIX.GetEnthalpy(params.temperature0, Yi, &Mix)
+   var rho0 = MIX.GetRho(params.pressure0, params.temperature0, MixW, &Mix)
    var theta0 = getThetaFromU(params.velocity0)
    var un0 = getUnFromU(params.velocity0, input.beta, theta0)
 
@@ -222,7 +226,7 @@ task InitIncomingShockParams(config : SCHEMA.Config, Mix : MIX.Mixture)
    var rho1 = RHgetrho1(nu, rho0)
    var un1 = RHgetUn1(nu, un0)
    params.pressure1 = RHgetP1(nu, params.pressure0, un0, rho0)
-   params.temperature1 = MIX.GetTFromRhoAndP(rho1, MixW, params.pressure1, Mix)
+   params.temperature1 = MIX.GetTFromRhoAndP(rho1, MixW, params.pressure1, &Mix)
    var theta1 = RHgetTheta1(nu, input.beta, theta0)
    var u1 = getUFromUn(un1, input.beta, theta1)
    params.velocity1 = array(u1[0], u1[1], params.velocity0[2])
@@ -236,9 +240,9 @@ end
 local __demand(__inline)
 task initRecycleRescalingParams(Fluid : region(ispace(int3d), Fluid_columns),
                                 tiles : ispace(int3d),
-                                p_All : partition(disjoint, Fluid, tiles),
                                 BC    : partition(disjoint, Fluid, ispace(int1d)),
-                                p_BC  : cross_product(p_All, BC),
+                                p_All : partition(disjoint, Fluid, tiles),
+                                p_BC  : cross_product(BC, p_All),
                                 BCinput : SCHEMA.FlowBC,
                                 Grid_xBnum : int32, Grid_yBnum : int32, Grid_zBnum : int32)
 
@@ -249,7 +253,7 @@ task initRecycleRescalingParams(Fluid : region(ispace(int3d), Fluid_columns),
    var BCcoloring = regentlib.c.legion_domain_point_coloring_create()
    var PLcoloring = regentlib.c.legion_domain_point_coloring_create()
    for c in tiles do
-      var rect = p_BC[c][0].bounds
+      var rect = p_BC[0][c].bounds
       -- Include ghost
       if c.y == 0                 then rect.lo.y = Fluid.bounds.lo.y end
       if c.z == 0                 then rect.lo.z = Fluid.bounds.lo.z end
@@ -272,7 +276,7 @@ task initRecycleRescalingParams(Fluid : region(ispace(int3d), Fluid_columns),
    var InterpColoring = regentlib.c.legion_multi_domain_point_coloring_create()
    for c in tiles do
       var c_interp = int1d{c.z}
-      var rect = p_BC[c][0].bounds
+      var rect = p_BC[0][c].bounds
       -- Include ghost
       if c.y == 0                 then rect.lo.y = Fluid.bounds.lo.y end
       if c.y == tiles.bounds.hi.y then rect.hi.y = Fluid.bounds.hi.y end
@@ -353,13 +357,13 @@ do
    var rhoinf = avg[cinf].rho/avg[cinf].w
    var MolarFracsinf = avg[cinf].MolarFracs
    for i=0, nSpec do MolarFracsinf[i] /= avg[cinf].rho end
-   var MixWinf = MIX.GetMolarWeightFromXi(MolarFracsinf, mix)
-   var Yiinf : double[nSpec]; MIX.GetMassFractions(Yiinf, MixWinf, MolarFracsinf, mix)
-   var gammainf = MIX.GetGamma(Tinf, MixWinf, Yiinf, mix)
-   var Mainf = Uinf/MIX.GetSpeedOfSound(Tinf, gammainf, MixWinf, mix)
-   var muinf  = MIX.GetViscosity(       Tinf, MolarFracsinf, mix)
-   var laminf = MIX.GetHeatConductivity(Tinf, MolarFracsinf, mix)
-   var cpinf  = MIX.GetHeatCapacity(Tinf, Yiinf, mix)
+   var MixWinf = MIX.GetMolarWeightFromXi(MolarFracsinf, &mix)
+   var Yiinf : double[nSpec]; MIX.GetMassFractions(Yiinf, MixWinf, MolarFracsinf, &mix)
+   var gammainf = MIX.GetGamma(Tinf, MixWinf, Yiinf, &mix)
+   var Mainf = Uinf/MIX.GetSpeedOfSound(Tinf, gammainf, MixWinf, &mix)
+   var muinf  = MIX.GetViscosity(       Tinf, MolarFracsinf, &mix)
+   var laminf = MIX.GetHeatConductivity(Tinf, MolarFracsinf, &mix)
+   var cpinf  = MIX.GetHeatCapacity(Tinf, Yiinf, &mix)
 
    -- Conditions at the wall
    var cw = avg.bounds.lo
@@ -367,7 +371,7 @@ do
    var rhow = avg[cw].rho/avg[cw].w
    var MolarFracsw = avg[cw].MolarFracs
    for i=0, nSpec do MolarFracsinf[i] /= avg[cw].rho end
-   var muw  = MIX.GetViscosity(Tw, MolarFracsw, mix)
+   var muw  = MIX.GetViscosity(Tw, MolarFracsw, &mix)
 
    -- Useful numbers
    var Pr = cpinf*muinf/laminf
@@ -423,7 +427,7 @@ do
    var rho = avg[c].rho/avg[c].w
    var MolarFracs = avg[c].MolarFracs
    for i=0, nSpec do MolarFracs[i] /= avg[c].rho end
-   var mu = MIX.GetViscosity(T, MolarFracs, mix)
+   var mu = MIX.GetViscosity(T, MolarFracs, &mix)
 
    -- Data for outer scaling
    data.delta99VD = getdelta99VD(avg, BLdata)
@@ -447,15 +451,13 @@ local mkAddRecycleAverage = terralib.memoize(function(op)
                              avg   : region(ispace(int1d), RecycleAverageType))
       where
          reads(plane.centerCoordinates),
-         reads(plane.cellWidth),
+         reads(plane.{dcsi_d, deta_d, dzet_d}),
          reduces+(avg.{w, y})
       do
          __demand(__openmp)
          for c in plane do
             var c_avg = int1d(c.y)
-            var vol = plane[c].cellWidth[0]*
-                      plane[c].cellWidth[1]*
-                      plane[c].cellWidth[2]
+            var vol = 1.0/(plane[c].dcsi_d*plane[c].deta_d*plane[c].dzet_d)
             avg[c_avg].w += vol
             avg[c_avg].y += plane[c].centerCoordinates[1]*vol
          end
@@ -465,7 +467,7 @@ local mkAddRecycleAverage = terralib.memoize(function(op)
       task AddRecycleAverage(plane : region(ispace(int3d), Fluid_columns),
                              avg   : region(ispace(int1d), RecycleAverageType))
       where
-         reads(plane.cellWidth),
+         reads(plane.{dcsi_d, deta_d, dzet_d}),
          reads(plane.rho),
          reads(plane.{temperature, velocity, MolarFracs}),
          reduces+(avg.rho),
@@ -474,9 +476,7 @@ local mkAddRecycleAverage = terralib.memoize(function(op)
          __demand(__openmp)
          for c in plane do
             var c_avg = int1d(c.y)
-            var vol = (plane[c].cellWidth[0]*
-                       plane[c].cellWidth[1]*
-                       plane[c].cellWidth[2])
+            var vol = 1.0/(plane[c].dcsi_d*plane[c].deta_d*plane[c].dzet_d)
             var rvol = vol*plane[c].rho
             avg[c_avg].rho         += plane[c].rho*vol
             avg[c_avg].temperature += plane[c].temperature*rvol
@@ -490,7 +490,7 @@ local mkAddRecycleAverage = terralib.memoize(function(op)
                                     mix : MIX.Mixture,
                                     Pbc : double)
       where
-         reads(plane.cellWidth),
+         reads(plane.{dcsi_d, deta_d, dzet_d}),
          reads(plane.[ProfilesVars]),
          reduces+(avg.rho),
          reduces+(avg.{temperature, velocity, MolarFracs})
@@ -524,17 +524,15 @@ local mkUpdateRecycleVariables = terralib.memoize(function(dir)
    else assert(false) end
 
    __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task UpdateRecycleVariables(Fluid    : region(ispace(int3d), Fluid_columns),
-                               Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+   task UpdateRecycleVariables(BC       : region(ispace(int3d), Fluid_columns),
                                avg      : region(ispace(int1d), RecycleAverageType),
                                plane    : region(ispace(int3d), Fluid_columns),
                                iRecycle : int)
    where
       reads(plane.{temperature, MolarFracs, velocity}),
       reads(avg.{rho, temperature, MolarFracs, velocity}),
-      writes(Fluid.[RecycleVars])
+      writes(BC.[RecycleVars])
    do
-      var BC   = Fluid_BC[0]
       __demand(__openmp)
       for c in BC do
          var cPlane = int3d({iRecycle, c.y, c.z})
@@ -569,8 +567,12 @@ local function CheckNSCBC_Inflow(BC, NSCBC_Inflow)
       if NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
          -- Do nothing
       elseif NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_File then
-         BC.readProfiles = true
-         BC.ProfilesDir = NSCBC_Inflow.VelocityProfile.u.File.FileDir
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, NSCBC_Inflow.VelocityProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = NSCBC_Inflow.VelocityProfile.u.File.FileDir
+         end
       elseif NSCBC_Inflow.VelocityProfile.type == SCHEMA.InflowProfile_Incoming then
          -- Do nothing
          regentlib.assert(false, 'Incoming InflowProfile not supported')
@@ -609,14 +611,90 @@ local function CheckNSCBC_Inflow(BC, NSCBC_Inflow)
    end
 end
 
+local function CheckNSCBC_Outflow(BC, NSCBC_Outflow, Ldefault)
+   return rquote
+      -- Check reference pressure
+      regentlib.assert(NSCBC_Outflow.P > 0, 'NSCBC_Outflow requires a positive reference pressure')
+      -- Check length scale
+      if (NSCBC_Outflow.LengthScale == 0) then
+         -- Use the default value
+         NSCBC_Outflow.LengthScale = Ldefault
+      end
+      regentlib.assert(NSCBC_Outflow.LengthScale > 0, 'NSCBC_Outflow requires a positive length scale')
+   end
+end
+
+local function CheckNSCBC_FarField(BC, NSCBC_FarField, Ldefault)
+   return rquote
+      -- Check velocity profile
+      if NSCBC_FarField.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
+         -- Do nothing
+      elseif NSCBC_FarField.VelocityProfile.type == SCHEMA.InflowProfile_File then
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, NSCBC_FarField.VelocityProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = NSCBC_FarField.VelocityProfile.u.File.FileDir
+         end
+      elseif NSCBC_FarField.VelocityProfile.type == SCHEMA.InflowProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming InflowProfile not supported')
+      else regentlib.assert(false, 'Unhandled case in InflowProfile switch') end
+
+      -- Check temperature profile
+      if NSCBC_FarField.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+         -- Do nothing
+      elseif NSCBC_FarField.TemperatureProfile.type == SCHEMA.TempProfile_File then
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, NSCBC_FarField.TemperatureProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = NSCBC_FarField.TemperatureProfile.u.File.FileDir
+         end
+      elseif NSCBC_FarField.TemperatureProfile.type == SCHEMA.TempProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming heat model not supported')
+      else regentlib.assert(false, 'Unhandled case in TempProfile switch') end
+
+      -- Check mixture profile
+      if NSCBC_FarField.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
+         -- Do nothing
+      elseif NSCBC_FarField.MixtureProfile.type == SCHEMA.MixtureProfile_File then
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, NSCBC_FarField.MixtureProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = NSCBC_FarField.MixtureProfile.u.File.FileDir
+         end
+      elseif NSCBC_FarField.MixtureProfile.type == SCHEMA.MixtureProfile_Incoming then
+         -- Do nothing
+         regentlib.assert(false, 'Incoming mixture model not supported')
+
+      else regentlib.assert(false, 'Unhandled case in MixtureProfile switch') end
+
+      -- Check reference pressure
+      regentlib.assert(NSCBC_FarField.P > 0, 'NSCBC_FarField requires a positive reference pressure')
+      -- Check length scale
+      if (NSCBC_FarField.LengthScale == 0) then
+         -- Use the default value
+         NSCBC_FarField.LengthScale = Ldefault
+      end
+      regentlib.assert(NSCBC_FarField.LengthScale > 0, 'NSCBC_FarField requires a positive length scale')
+   end
+end
+
 local function CheckDirichlet(BC, Dirichlet)
    return rquote
       -- Check velocity profile
       if Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
          -- Do nothing
       elseif Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_File then
-         BC.readProfiles = true
-         BC.ProfilesDir = Dirichlet.VelocityProfile.u.File.FileDir
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, Dirichlet.VelocityProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = Dirichlet.VelocityProfile.u.File.FileDir
+         end
       elseif Dirichlet.VelocityProfile.type == SCHEMA.InflowProfile_Incoming then
          -- Do nothing
          regentlib.assert(false, 'Incoming InflowProfile not supported')
@@ -695,8 +773,12 @@ local function CheckRecycleRescaling(BC, RecycleRescaling, config, initialized)
       if RecycleRescaling.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
          -- Do nothing
       elseif RecycleRescaling.VelocityProfile.type == SCHEMA.InflowProfile_File then
-         BC.readProfiles = true
-         BC.ProfilesDir = RecycleRescaling.VelocityProfile.u.File.FileDir
+         if (BC.readProfiles) then
+            regentlib.assert(C.strcmp(BC.ProfilesDir, RecycleRescaling.VelocityProfile.u.File.FileDir) == 0, 'Only one file is allowed for profiles')
+         else
+            BC.readProfiles = true
+            BC.ProfilesDir = RecycleRescaling.VelocityProfile.u.File.FileDir
+         end
       elseif RecycleRescaling.VelocityProfile.type == SCHEMA.InflowProfile_Incoming then
          -- Do nothing
          regentlib.assert(false, 'Incoming InflowProfile not supported')
@@ -735,18 +817,34 @@ local function CheckRecycleRescaling(BC, RecycleRescaling, config, initialized)
    end
 end
 
-function Exports.CheckInput(BC, config) return rquote
+function Exports.CheckInput(BC, config, bBox) return rquote
 
    var [BC.readProfiles] = false
    var [BC.ProfilesDir] = ''
 
    var RecycleRescalingInitialized = false
 
+   -- Compute widths for default outflow lenght scales
+   var xWidth = 0.25*( (bBox.v1[0] + bBox.v2[0] + bBox.v5[0] + bBox.v6[0])
+                     - (bBox.v0[0] + bBox.v3[0] + bBox.v4[0] + bBox.v7[0]))
+
+   var yWidth = 0.25*( (bBox.v3[1] + bBox.v2[1] + bBox.v6[1] + bBox.v7[1])
+                     - (bBox.v0[1] + bBox.v1[1] + bBox.v4[1] + bBox.v5[1]))
+
+   var zWidth = 0.25*( (bBox.v4[2] + bBox.v5[2] + bBox.v6[2] + bBox.v7[2])
+                     - (bBox.v0[2] + bBox.v1[2] + bBox.v2[2] + bBox.v3[2]))
+
    -- Set up flow BC's in x direction
    if (not((config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.xBCRight.type == SCHEMA.FlowBC_Periodic))) then
 
       if (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) then
          [CheckNSCBC_Inflow(BC, rexpr config.BC.xBCLeft.u.NSCBC_Inflow end)];
+
+      elseif (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         [CheckNSCBC_Outflow(BC, rexpr config.BC.xBCLeft.u.NSCBC_Outflow end, rexpr xWidth end)];
+
+      elseif (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         [CheckNSCBC_FarField(BC, rexpr config.BC.xBCLeft.u.NSCBC_FarField end, rexpr xWidth end)];
 
       elseif (config.BC.xBCLeft.type == SCHEMA.FlowBC_Dirichlet) then
          [CheckDirichlet(BC, rexpr config.BC.xBCLeft.u.Dirichlet end)];
@@ -761,8 +859,14 @@ function Exports.CheckInput(BC, config) return rquote
          regentlib.assert(false, "Boundary conditions in xBCLeft not implemented")
       end
 
-      if (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
-         -- Do nothing
+      if (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+         [CheckNSCBC_Inflow(BC, rexpr config.BC.xBCRight.u.NSCBC_Inflow end)];
+
+      elseif (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         [CheckNSCBC_Outflow(BC, rexpr config.BC.xBCRight.u.NSCBC_Outflow end, rexpr xWidth end)];
+
+      elseif (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         [CheckNSCBC_FarField(BC, rexpr config.BC.xBCRight.u.NSCBC_FarField end, rexpr xWidth end)];
 
       elseif (config.BC.xBCRight.type == SCHEMA.FlowBC_Dirichlet) then
          [CheckDirichlet(BC, rexpr config.BC.xBCRight.u.Dirichlet end)];
@@ -782,7 +886,10 @@ function Exports.CheckInput(BC, config) return rquote
          [CheckNSCBC_Inflow(BC, rexpr config.BC.yBCLeft.u.NSCBC_Inflow end)];
 
       elseif (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
-         -- Do nothing
+         [CheckNSCBC_Outflow(BC, rexpr config.BC.yBCLeft.u.NSCBC_Outflow end, rexpr yWidth end)];
+
+      elseif (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         [CheckNSCBC_FarField(BC, rexpr config.BC.yBCLeft.u.NSCBC_FarField end, rexpr yWidth end)];
 
       elseif (config.BC.yBCLeft.type == SCHEMA.FlowBC_Dirichlet) then
          [CheckDirichlet(BC, rexpr config.BC.yBCLeft.u.Dirichlet end)];
@@ -801,8 +908,14 @@ function Exports.CheckInput(BC, config) return rquote
          regentlib.assert(false, "Boundary conditions in yBCLeft not implemented")
       end
 
-      if (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
-         -- Do nothing
+      if (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+         [CheckNSCBC_Inflow(BC, rexpr config.BC.yBCRight.u.NSCBC_Inflow end)];
+
+      elseif (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         [CheckNSCBC_Outflow(BC, rexpr config.BC.yBCRight.u.NSCBC_Outflow end, rexpr yWidth end)];
+
+      elseif (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         [CheckNSCBC_FarField(BC, rexpr config.BC.yBCRight.u.NSCBC_FarField end, rexpr yWidth end)];
 
       elseif (config.BC.yBCRight.type == SCHEMA.FlowBC_Dirichlet) then
          [CheckDirichlet(BC, rexpr config.BC.yBCRight.u.Dirichlet end)];
@@ -818,7 +931,12 @@ function Exports.CheckInput(BC, config) return rquote
          var vaidIShock = ((config.BC.yBCRight.u.IncomingShock.iShock >= 0) and
                            (config.BC.yBCRight.u.IncomingShock.iShock <= config.Grid.xNum))
          regentlib.assert(vaidIShock, 'iShock does not fall within the domain bounds')
-
+         -- Check length scale
+         if (config.BC.yBCRight.u.IncomingShock.LengthScale == 0) then
+            -- Use the default value
+            config.BC.yBCRight.u.IncomingShock.LengthScale = yWidth
+         end
+         regentlib.assert(config.BC.yBCRight.u.IncomingShock.LengthScale > 0, 'IncomingShock requires a positive length scale')
       else
          regentlib.assert(false, "Boundary conditions in yBCRight not implemented")
       end
@@ -827,15 +945,45 @@ function Exports.CheckInput(BC, config) return rquote
    -- Set up flow BC's in z direction
    if (not((config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic) and (config.BC.zBCRight.type == SCHEMA.FlowBC_Periodic))) then
 
-      if (config.BC.zBCLeft.type == SCHEMA.FlowBC_Dirichlet) then
+      if (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+         [CheckNSCBC_Inflow(BC, rexpr config.BC.zBCLeft.u.NSCBC_Inflow end)];
+
+      elseif (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         [CheckNSCBC_Outflow(BC, rexpr config.BC.zBCLeft.u.NSCBC_Outflow end, rexpr zWidth end)];
+
+      elseif (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         [CheckNSCBC_FarField(BC, rexpr config.BC.zBCLeft.u.NSCBC_FarField end, rexpr zWidth end)];
+
+      elseif (config.BC.zBCLeft.type == SCHEMA.FlowBC_Dirichlet) then
          [CheckDirichlet(BC, rexpr config.BC.zBCLeft.u.Dirichlet end)];
+
+      elseif (config.BC.zBCLeft.type == SCHEMA.FlowBC_AdiabaticWall) then
+         -- Do nothing
+
+      elseif (config.BC.zBCLeft.type == SCHEMA.FlowBC_IsothermalWall) then
+         [CheckIsothermalWall(rexpr config.BC.zBCLeft.u.IsothermalWall end)];
 
       else
          regentlib.assert(false, "Boundary conditions in zBCLeft not implemented")
       end
 
-      if (config.BC.zBCRight.type == SCHEMA.FlowBC_Dirichlet) then
-         [CheckDirichlet(BC, rexpr config.BC.yBCRight.u.Dirichlet end)];
+      if (config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+         [CheckNSCBC_Inflow(BC, rexpr config.BC.zBCRight.u.NSCBC_Inflow end)];
+
+      elseif (config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         [CheckNSCBC_Outflow(BC, rexpr config.BC.zBCRight.u.NSCBC_Outflow end, rexpr zWidth end)];
+
+      elseif (config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         [CheckNSCBC_FarField(BC, rexpr config.BC.zBCRight.u.NSCBC_FarField end, rexpr zWidth end)];
+
+      elseif (config.BC.zBCRight.type == SCHEMA.FlowBC_Dirichlet) then
+         [CheckDirichlet(BC, rexpr config.BC.zBCRight.u.Dirichlet end)];
+
+      elseif (config.BC.zBCRight.type == SCHEMA.FlowBC_AdiabaticWall) then
+          -- Do nothing
+
+      elseif (config.BC.zBCRight.type == SCHEMA.FlowBC_IsothermalWall) then
+         [CheckIsothermalWall(rexpr config.BC.zBCRight.u.IsothermalWall end)];
 
       else
          regentlib.assert(false, "Boundary conditions in zBCRight not implemented")
@@ -862,44 +1010,11 @@ end end
 -- DECLARE SYMBOLS
 -------------------------------------------------------------------------------
 
-function Exports.DeclSymbols(BC, Fluid, tiles, Fluid_Zones, Grid, config, Mix) return rquote
-
-   -- Unpack the partitions that we are going to need
-   var {p_All,
-          xNeg,   xPos,   yNeg,   yPos,   zNeg,   zPos,
-        p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
-        xNeg_ispace, xPos_ispace,
-        yNeg_ispace, yPos_ispace,
-        zNeg_ispace, zPos_ispace} = Fluid_Zones
-
+function Exports.DeclSymbols(BC, Fluid, Grid, config) return rquote
    var sampleId = config.Mapping.sampleId
-
-   -- IncomingShock params
-   var IncomingShock : IncomingShockParams
-
-   -- RecycleRescaling params
-   var RecycleRescaling : RecycleRescalingParams(Fluid, tiles)
+   -- RecycleRescaling average region
    var [BC.RecycleAverage] = region(ispace(int1d, config.Grid.yNum + 2*Grid.yBnum), RecycleAverageType);
    [UTIL.emitRegionTagAttach(BC.RecycleAverage, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
-
-   -- IncomingShock parameters
-   if (config.BC.yBCRight.type == SCHEMA.FlowBC_IncomingShock) then
-      IncomingShock = InitIncomingShockParams(config, Mix)
-   end
-
-   -- RecycleRescaling parameters
-   if (config.BC.xBCLeft.type == SCHEMA.FlowBC_RecycleRescaling) then
-      RecycleRescaling = initRecycleRescalingParams(Fluid, tiles, p_All,
-                                                    xNeg, p_xNeg,
-                                                    config.BC.xBCLeft,
-                                                    Grid.xBnum, Grid.yBnum, Grid.zBnum);
-   end
-
-   -- Initialize BC params
-   var [BC.BCParams] = [BCParamsStruct(Fluid, tiles)] {
-      IncomingShock = IncomingShock,
-      RecycleRescaling = RecycleRescaling
-   };
 end end
 
 -------------------------------------------------------------------------------
@@ -910,14 +1025,11 @@ end end
 -------------------------------------------------------------------------------
 -- Set up stuff for RHS of NSCBC inflow
 local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task InitializeGhostNSCBC(Fluid : region(ispace(int3d), Fluid_columns),
-                          Fluid_BC : partition(disjoint, Fluid, ispace(int1d)))
+task InitializeGhostNSCBC(BC : region(ispace(int3d), Fluid_columns))
 where
-   reads(Fluid.[Primitives]),
-   writes(Fluid.{velocity_old_NSCBC, temperature_old_NSCBC})
+   reads(BC.[Primitives]),
+   writes(BC.{velocity_old_NSCBC, temperature_old_NSCBC})
 do
-   var BC   = Fluid_BC[0]
-
    __demand(__openmp)
    for c in BC do
       BC[c].velocity_old_NSCBC = BC[c].velocity
@@ -925,27 +1037,76 @@ do
    end
 end
 
-function Exports.InitBCs(BC, Fluid_Zones, config, Mix) return rquote
+function Exports.InitBCs(BC, Fluid, tiles, Fluid_Zones, Grid, config, Mix) return rquote
    -- Unpack the partitions that we are going to need
    var {p_All,
+          xNeg,   xPos,   yNeg,   yPos,   zNeg,   zPos,
         p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
         xNeg_ispace, xPos_ispace,
         yNeg_ispace, yPos_ispace,
         zNeg_ispace, zPos_ispace} = Fluid_Zones
 
-   -- initialize ghost cells values for NSCBC
+   -- Initialize BC paramters for...
+   -- ... IncomingShock
+   var IncomingShock : IncomingShockParams
+   if (config.BC.yBCRight.type == SCHEMA.FlowBC_IncomingShock) then
+      IncomingShock = InitIncomingShockParams(config, Mix)
+   end
+
+   -- ... RecycleRescaling params
+   var RecycleRescaling : RecycleRescalingParams(Fluid, tiles)
+   if (config.BC.xBCLeft.type == SCHEMA.FlowBC_RecycleRescaling) then
+      RecycleRescaling = initRecycleRescalingParams(Fluid, tiles, xNeg, p_All, p_xNeg,
+                                                    config.BC.xBCLeft,
+                                                    Grid.xBnum, Grid.yBnum, Grid.zBnum);
+   end
+
+   var [BC.BCParams] = [BCParamsStruct(Fluid, tiles)] {
+      IncomingShock = IncomingShock,
+      RecycleRescaling = RecycleRescaling
+   };
+
+   -- Initialize ghost cells values for NSCBC
    if ((config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) or
        (config.BC.xBCLeft.type == SCHEMA.FlowBC_RecycleRescaling))then
       __demand(__index_launch)
       for c in xNeg_ispace do
-         InitializeGhostNSCBC(p_All[c], p_xNeg[c])
+         InitializeGhostNSCBC(p_xNeg[0][c])
       end
    end
 
-   if config.BC.yBCRight.type == SCHEMA.FlowBC_IncomingShock then
+   if ((config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in xPos_ispace do
+         InitializeGhostNSCBC(p_xPos[0][c])
+      end
+   end
+
+   if ((config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in yNeg_ispace do
+         InitializeGhostNSCBC(p_yNeg[0][c])
+      end
+   end
+
+   if ((config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow)) then
       __demand(__index_launch)
       for c in yPos_ispace do
-         InitializeGhostNSCBC(p_All[c], p_yPos[c])
+         InitializeGhostNSCBC(p_yPos[0][c])
+      end
+   end
+
+   if ((config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         InitializeGhostNSCBC(p_zNeg[0][c])
+      end
+   end
+
+   if ((config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         InitializeGhostNSCBC(p_zPos[0][c])
       end
    end
 
@@ -962,7 +1123,7 @@ function Exports.InitBCs(BC, Fluid_Zones, config, Mix) return rquote
       end
       ComputeRecycleAveragePosition(BC.RecycleAverage)
 
-      -- Initialize parameters for rescaling parameters
+      -- Initialize parameters for rescaling
       __demand(__index_launch)
       for c in xNeg_ispace do
          [mkAddRecycleAverage("BC")](BCPlane[c], BC.RecycleAverage,
@@ -996,14 +1157,12 @@ end end
 -- BC utils
 ------------------------------------------------------------------------
 local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task SetDirichletBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                    Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+task SetDirichletBC(BC  : region(ispace(int3d), Fluid_columns),
                     Pbc : double)
 where
-   reads(Fluid.[ProfilesVars]),
-   writes(Fluid.[Primitives])
+   reads(BC.[ProfilesVars]),
+   writes(BC.[Primitives])
 do
-   var BC   = Fluid_BC[0]
    __demand(__openmp)
    for c in BC do
       BC[c].MolarFracs  = BC[c].MolarFracs_profile
@@ -1015,15 +1174,14 @@ end
 
 local mkSetNSCBC_InflowBC = terralib.memoize(function(dir)
    local SetNSCBC_InflowBC
-   extern task SetNSCBC_InflowBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                                Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                mix : MIX.Mixture,
-                                Pbc : double)
+   extern task SetNSCBC_InflowBC(BC    : region(ispace(int3d), Fluid_columns),
+                                 mix : MIX.Mixture,
+                                 Pbc : double)
    where
-      reads(Fluid.SoS),
-      reads(Fluid.Conserved),
-      reads(Fluid.[ProfilesVars]),
-      writes(Fluid.[Primitives])
+      reads(BC.SoS),
+      reads(BC.Conserved),
+      reads(BC.[ProfilesVars]),
+      writes(BC.[Primitives])
    end
    if dir == "x" then
       SetNSCBC_InflowBC:set_task_id(TYPES.TID_SetNSCBC_InflowBC_X)
@@ -1031,17 +1189,16 @@ local mkSetNSCBC_InflowBC = terralib.memoize(function(dir)
       SetNSCBC_InflowBC:set_task_id(TYPES.TID_SetNSCBC_InflowBC_Y)
    elseif dir == "z" then
       SetNSCBC_InflowBC:set_task_id(TYPES.TID_SetNSCBC_InflowBC_Z)
-   end
+   else assert(false) end
    return SetNSCBC_InflowBC
 end)
 
-local extern task SetNSCBC_OutflowBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                                     Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+local extern task SetNSCBC_OutflowBC(BC    : region(ispace(int3d), Fluid_columns),
                                      mix : MIX.Mixture)
 where
-   reads(Fluid.Conserved),
-   reads(Fluid.temperature),
-   writes(Fluid.[Primitives])
+   reads(BC.Conserved),
+   reads(BC.temperature),
+   writes(BC.[Primitives])
 end
 SetNSCBC_OutflowBC:set_task_id(TYPES.TID_SetNSCBC_OutflowBC)
 
@@ -1064,15 +1221,13 @@ local mkSetAdiabaticWallBC = terralib.memoize(function(dir)
    else assert(false) end
 
    local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task SetAdiabaticWallBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                           Fluid_BC : partition(disjoint, Fluid, ispace(int1d)))
+   task SetAdiabaticWallBC(BC   : region(ispace(int3d), Fluid_columns),
+                           BCst : region(ispace(int3d), Fluid_columns))
    where
-      reads(Fluid.{MolarFracs, pressure, temperature}),
-      writes(Fluid.[Primitives])
+      BC * BCst,
+      reads(BCst.{MolarFracs, pressure, temperature}),
+      writes(BC.[Primitives])
    do
-      var BC   = Fluid_BC[0]
-      var BCst = Fluid_BC[1]
-
       __demand(__openmp)
       for c in BC do
          var c_int = [mk_cint(rexpr c end)];
@@ -1104,16 +1259,14 @@ local mkSetIsothermalWallBC = terralib.memoize(function(dir)
    else assert(false) end
 
    local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task SetIsothermalWallBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                            Fluid_BC : partition(disjoint, Fluid, ispace(int1d)))
+   task SetIsothermalWallBC(BC   : region(ispace(int3d), Fluid_columns),
+                            BCst : region(ispace(int3d), Fluid_columns))
    where
-      reads(Fluid.{MolarFracs, pressure}),
-      reads(Fluid.temperature_profile),
-      writes(Fluid.[Primitives])
+      BC * BCst,
+      reads(BCst.{MolarFracs, pressure}),
+      reads(BC.temperature_profile),
+      writes(BC.[Primitives])
    do
-      var BC   = Fluid_BC[0]
-      var BCst = Fluid_BC[1]
-
       __demand(__openmp)
       for c in BC do
          var c_int = [mk_cint(rexpr c end)];
@@ -1154,8 +1307,8 @@ local mkSetSuctionAndBlowingWallBC = terralib.memoize(function(dir)
    else assert(false) end
 
    local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task SetSuctionAndBlowingWallBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                                   Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+   task SetSuctionAndBlowingWallBC(BC     : region(ispace(int3d), Fluid_columns),
+                                   BCst   : region(ispace(int3d), Fluid_columns),
                                    Xmin   : double,
                                    Xmax   : double,
                                    X0     : double,
@@ -1169,14 +1322,12 @@ local mkSetSuctionAndBlowingWallBC = terralib.memoize(function(dir)
                                    Origin : double,
                                    time   : double)
    where
-      reads(Fluid.{MolarFracs, pressure}),
-      reads(Fluid.centerCoordinates),
-      reads(Fluid.temperature_profile),
-      writes(Fluid.[Primitives])
+      BC * BCst,
+      reads(BCst.{MolarFracs, pressure}),
+      reads(BC.centerCoordinates),
+      reads(BC.temperature_profile),
+      writes(BC.[Primitives])
    do
-      var BC   = Fluid_BC[0]
-      var BCst = Fluid_BC[1]
-
       __demand(__openmp)
       for c in BC do
          var c_int = [mk_cint(rexpr c end)];
@@ -1209,14 +1360,13 @@ end)
 
 local mkSetIncomingShockBC = terralib.memoize(function(dir)
    local SetIncomingShockBC
-   extern task SetIncomingShockBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                                  Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+   extern task SetIncomingShockBC(BC     : region(ispace(int3d), Fluid_columns),
                                   params : IncomingShockParams,
-                                  mix : MIX.Mixture)
+                                  mix    : MIX.Mixture)
    where
-      reads(Fluid.SoS),
-      reads(Fluid.Conserved),
-      writes(Fluid.[Primitives])
+      reads(BC.Conserved),
+      reads(BC.temperature),
+      writes(BC.[Primitives])
    end
    --if dir == "x" then
    --elseif dir == "y" then
@@ -1230,8 +1380,7 @@ end)
 
 local mkSetRecycleRescalingBC = terralib.memoize(function(dir)
    local SetRecycleRescalingBC
-   extern task SetRecycleRescalingBC(Fluid     : region(ispace(int3d), Fluid_columns),
-                                     Fluid_BC  : partition(disjoint, Fluid, ispace(int1d)),
+   extern task SetRecycleRescalingBC(BC        : region(ispace(int3d), Fluid_columns),
                                      avg       : region(ispace(int1d), RecycleAverageType),
                                      BC_interp : region(ispace(int3d), Fluid_columns),
                                      FIregion  : region(ispace(int1d), FIType),
@@ -1241,14 +1390,14 @@ local mkSetRecycleRescalingBC = terralib.memoize(function(dir)
                                      mix       : MIX.Mixture,
                                      Pbc       : double)
    where
-      reads(Fluid.centerCoordinates),
-      reads(Fluid.SoS),
-      reads(Fluid.Conserved),
-      reads(Fluid.[ProfilesVars]),
+      reads(BC.centerCoordinates),
+      reads(BC.SoS),
+      reads(BC.Conserved),
+      reads(BC.[ProfilesVars]),
       reads(avg.y),
       reads(BC_interp.[RecycleVars]),
       reads(FIregion),
-      writes(Fluid.[Primitives])
+      writes(BC.[Primitives])
    end
    if dir == "x" then
       SetRecycleRescalingBC:set_task_id(TYPES.TID_SetRecycleRescalingBC)
@@ -1265,12 +1414,14 @@ if (ELECTRIC_FIELD and (MIX.nIons > 0)) then
    -- Correct ions bcs
    mkCorrectIonsBC = terralib.memoize(function(dir)
       local CorrectIonsBC
-      extern task CorrectIonsBC(Fluid    : region(ispace(int3d), Fluid_columns),
-                                Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+      extern task CorrectIonsBC(BC   : region(ispace(int3d), Fluid_columns),
+                                BCst : region(ispace(int3d), Fluid_columns),
                                 mix : MIX.Mixture)
       where
-         reads(Fluid.electricPotential),
-         reads writes(Fluid.MolarFracs)
+         BC * BCst,
+         reads(BC.electricPotential),
+         reads(BCst.{electricPotential, MolarFracs}),
+         writes(BC.MolarFracs)
       end
       if     dir == "xNeg" then
          CorrectIonsBC:set_task_id(TYPES.TID_CorrectIonsBCXNeg)
@@ -1299,6 +1450,7 @@ task Exports.UpdateGhostPrimitives(Fluid : region(ispace(int3d), Fluid_columns),
                                    BCRecycleAverageFI : region(ispace(int1d), FIType),
                                    config : SCHEMA.Config,
                                    Mix : MIX.Mixture,
+                                   bBox : bBoxType,
                                    Integrator_simTime : double)
 where
    reads writes(Fluid),
@@ -1322,12 +1474,22 @@ do
    if (BC_xBCLeft == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in xNeg_ispace do
-         SetDirichletBC(p_All[c], p_xNeg[c], config.BC.xBCLeft.u.Dirichlet.P)
+         SetDirichletBC(p_xNeg[0][c], config.BC.xBCLeft.u.Dirichlet.P)
       end
    elseif (BC_xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) then
       __demand(__index_launch)
       for c in xNeg_ispace do
-         [mkSetNSCBC_InflowBC("x")](p_All[c], p_xNeg[c], Mix, config.BC.xBCLeft.u.NSCBC_Inflow.P)
+         [mkSetNSCBC_InflowBC("x")](p_xNeg[0][c], Mix, config.BC.xBCLeft.u.NSCBC_Inflow.P)
+      end
+   elseif (BC_xBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      __demand(__index_launch)
+      for c in xNeg_ispace do
+         SetNSCBC_OutflowBC(p_xNeg[0][c], Mix)
+      end
+   elseif (BC_xBCLeft == SCHEMA.FlowBC_NSCBC_FarField) then
+      __demand(__index_launch)
+      for c in xNeg_ispace do
+         SetNSCBC_OutflowBC(p_xNeg[0][c], Mix)
       end
    elseif (BC_xBCLeft == SCHEMA.FlowBC_RecycleRescaling) then
       var {RecyclePlane, BC_interp} = BCParams.RecycleRescaling;
@@ -1340,7 +1502,7 @@ do
       -- complete spatial averages and put fluctuations *_recycle vars
       __demand(__index_launch)
       for c in xNeg_ispace do
-         [mkUpdateRecycleVariables("x")](p_All[c], p_xNeg[c],
+         [mkUpdateRecycleVariables("x")](p_xNeg[0][c],
                                          BCRecycleAverage,
                                          RecyclePlane[c],
                                          config.BC.xBCLeft.u.RecycleRescaling.iRecycle)
@@ -1352,7 +1514,7 @@ do
       -- update boundary condition
       __demand(__index_launch)
       for c in xNeg_ispace do
-         [mkSetRecycleRescalingBC("x")](p_All[c], p_xNeg[c],
+         [mkSetRecycleRescalingBC("x")](p_xNeg[0][c],
                                         BCRecycleAverage,
                                         BC_interp[int1d{c.z}],
                                         BCRecycleAverageFI,
@@ -1368,12 +1530,22 @@ do
    if (BC_xBCRight == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in xPos_ispace do
-         SetDirichletBC(p_All[c], p_xPos[c], config.BC.xBCRight.u.Dirichlet.P)
+         SetDirichletBC(p_xPos[0][c], config.BC.xBCRight.u.Dirichlet.P)
+      end
+   elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in xPos_ispace do
+         [mkSetNSCBC_InflowBC("x")](p_xPos[0][c], Mix, config.BC.xBCRight.u.NSCBC_Inflow.P)
       end
    elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       __demand(__index_launch)
       for c in xPos_ispace do
-         SetNSCBC_OutflowBC(p_All[c], p_xPos[c], Mix)
+         SetNSCBC_OutflowBC(p_xPos[0][c], Mix)
+      end
+   elseif (BC_xBCRight == SCHEMA.FlowBC_NSCBC_FarField) then
+      __demand(__index_launch)
+      for c in xPos_ispace do
+         SetNSCBC_OutflowBC(p_xPos[0][c], Mix)
       end
    end
 
@@ -1381,17 +1553,22 @@ do
    if (BC_yBCLeft == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in yNeg_ispace do
-         SetDirichletBC(p_All[c], p_yNeg[c], config.BC.yBCLeft.u.Dirichlet.P)
+         SetDirichletBC(p_yNeg[0][c], config.BC.yBCLeft.u.Dirichlet.P)
       end
    elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) then
       __demand(__index_launch)
       for c in yNeg_ispace do
-         [mkSetNSCBC_InflowBC("y")](p_All[c], p_yNeg[c], Mix, config.BC.yBCLeft.u.NSCBC_Inflow.P)
+         [mkSetNSCBC_InflowBC("y")](p_yNeg[0][c], Mix, config.BC.yBCLeft.u.NSCBC_Inflow.P)
       end
    elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
       __demand(__index_launch)
       for c in yNeg_ispace do
-         SetNSCBC_OutflowBC(p_All[c], p_yNeg[c], Mix)
+         SetNSCBC_OutflowBC(p_yNeg[0][c], Mix)
+      end
+   elseif (BC_yBCLeft == SCHEMA.FlowBC_NSCBC_FarField) then
+      __demand(__index_launch)
+      for c in yNeg_ispace do
+         SetNSCBC_OutflowBC(p_yNeg[0][c], Mix)
       end
    end
 
@@ -1399,17 +1576,27 @@ do
    if (BC_yBCRight == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in yPos_ispace do
-         SetDirichletBC(p_All[c], p_yPos[c], config.BC.yBCRight.u.Dirichlet.P)
+         SetDirichletBC(p_yPos[0][c], config.BC.yBCRight.u.Dirichlet.P)
       end
    elseif (BC_yBCRight == SCHEMA.FlowBC_IncomingShock) then
       __demand(__index_launch)
       for c in yPos_ispace do
-         [mkSetIncomingShockBC("yPos")](p_All[c], p_yPos[c], BCParams.IncomingShock, Mix)
+         [mkSetIncomingShockBC("yPos")](p_yPos[0][c], BCParams.IncomingShock, Mix)
+      end
+   elseif (BC_yBCRight == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in yPos_ispace do
+         [mkSetNSCBC_InflowBC("y")](p_yPos[0][c], Mix, config.BC.yBCRight.u.NSCBC_Inflow.P)
       end
    elseif (BC_yBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
       __demand(__index_launch)
       for c in yPos_ispace do
-         SetNSCBC_OutflowBC(p_All[c], p_yPos[c], Mix)
+         SetNSCBC_OutflowBC(p_yPos[0][c], Mix)
+      end
+   elseif (BC_yBCRight == SCHEMA.FlowBC_NSCBC_FarField) then
+      __demand(__index_launch)
+      for c in yPos_ispace do
+         SetNSCBC_OutflowBC(p_yPos[0][c], Mix)
       end
    end
 
@@ -1417,7 +1604,22 @@ do
    if (BC_zBCLeft == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in zNeg_ispace do
-         SetDirichletBC(p_All[c], p_zNeg[c], config.BC.zBCLeft.u.Dirichlet.P)
+         SetDirichletBC(p_zNeg[0][c], config.BC.zBCLeft.u.Dirichlet.P)
+      end
+   elseif (BC_zBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         [mkSetNSCBC_InflowBC("z")](p_zNeg[0][c], Mix, config.BC.zBCLeft.u.NSCBC_Inflow.P)
+      end
+   elseif (BC_zBCLeft == SCHEMA.FlowBC_NSCBC_Outflow) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         SetNSCBC_OutflowBC(p_zNeg[0][c], Mix)
+      end
+   elseif (BC_zBCLeft == SCHEMA.FlowBC_NSCBC_FarField) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         SetNSCBC_OutflowBC(p_zNeg[0][c], Mix)
       end
    end
 
@@ -1425,26 +1627,69 @@ do
    if (BC_zBCRight == SCHEMA.FlowBC_Dirichlet) then
       __demand(__index_launch)
       for c in zPos_ispace do
-         SetDirichletBC(p_All[c], p_zPos[c], config.BC.zBCRight.u.Dirichlet.P)
+         SetDirichletBC(p_zPos[0][c], config.BC.zBCRight.u.Dirichlet.P)
+      end
+   elseif (BC_zBCRight == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         [mkSetNSCBC_InflowBC("z")](p_zPos[0][c], Mix, config.BC.zBCRight.u.NSCBC_Inflow.P)
+      end
+   elseif (BC_zBCRight == SCHEMA.FlowBC_NSCBC_Outflow) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         SetNSCBC_OutflowBC(p_zPos[0][c], Mix)
+      end
+   elseif (BC_zBCRight == SCHEMA.FlowBC_NSCBC_FarField) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         SetNSCBC_OutflowBC(p_zPos[0][c], Mix)
       end
    end
 
    -- BCs that depend on other cells need to be set at the end in the order Z, Y, X
+   -- zNeg BC
+   if (BC_zBCLeft == SCHEMA.FlowBC_AdiabaticWall) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         [mkSetAdiabaticWallBC("zNeg")](p_zNeg[0][c], p_zNeg[1][c])
+      end
+   elseif (BC_zBCLeft == SCHEMA.FlowBC_IsothermalWall) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         [mkSetIsothermalWallBC("zNeg")](p_zNeg[0][c], p_zNeg[1][c])
+      end
+   end
+
+   -- zPos BC
+   if (BC_zBCRight == SCHEMA.FlowBC_AdiabaticWall) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         [mkSetAdiabaticWallBC("zPos")](p_zPos[0][c], p_zPos[1][c])
+      end
+   elseif (BC_zBCRight == SCHEMA.FlowBC_IsothermalWall) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         [mkSetIsothermalWallBC("zPos")](p_zPos[0][c], p_zPos[1][c])
+      end
+   end
+
    -- yNeg BC
    if (BC_yBCLeft == SCHEMA.FlowBC_AdiabaticWall) then
       __demand(__index_launch)
       for c in yNeg_ispace do
-         [mkSetAdiabaticWallBC("yNeg")](p_All[c], p_yNeg[c])
+         [mkSetAdiabaticWallBC("yNeg")](p_yNeg[0][c], p_yNeg[1][c])
       end
    elseif (BC_yBCLeft == SCHEMA.FlowBC_IsothermalWall) then
       __demand(__index_launch)
       for c in yNeg_ispace do
-         [mkSetIsothermalWallBC("yNeg")](p_All[c], p_yNeg[c])
+         [mkSetIsothermalWallBC("yNeg")](p_yNeg[0][c], p_yNeg[1][c])
       end
    elseif (BC_yBCLeft == SCHEMA.FlowBC_SuctionAndBlowingWall) then
+      var zWidth = 0.25*( (bBox.v4[2] + bBox.v5[2] + bBox.v6[2] + bBox.v7[2])
+                        - (bBox.v0[2] + bBox.v1[2] + bBox.v2[2] + bBox.v3[2]))
       __demand(__index_launch)
       for c in yNeg_ispace do
-         [mkSetSuctionAndBlowingWallBC("yNeg")](p_All[c], p_yNeg[c],
+         [mkSetSuctionAndBlowingWallBC("yNeg")](p_yNeg[0][c], p_yNeg[1][c],
                                                 config.BC.yBCLeft.u.SuctionAndBlowingWall.Xmin,
                                                 config.BC.yBCLeft.u.SuctionAndBlowingWall.Xmax,
                                                 config.BC.yBCLeft.u.SuctionAndBlowingWall.X0,
@@ -1454,8 +1699,8 @@ do
                                                 config.BC.yBCLeft.u.SuctionAndBlowingWall.A.values,
                                                 config.BC.yBCLeft.u.SuctionAndBlowingWall.omega.values,
                                                 config.BC.yBCLeft.u.SuctionAndBlowingWall.beta.values,
-                                                config.Grid.zWidth,
-                                                config.Grid.origin[2],
+                                                zWidth,
+                                                bBox.v0[2],
                                                 Integrator_simTime)
       end
    end
@@ -1464,12 +1709,12 @@ do
    if (BC_yBCRight == SCHEMA.FlowBC_AdiabaticWall) then
       __demand(__index_launch)
       for c in yPos_ispace do
-         [mkSetAdiabaticWallBC("yPos")](p_All[c], p_yPos[c])
+         [mkSetAdiabaticWallBC("yPos")](p_yPos[0][c], p_yPos[1][c])
       end
    elseif (BC_yBCRight == SCHEMA.FlowBC_IsothermalWall) then
       __demand(__index_launch)
       for c in yPos_ispace do
-         [mkSetIsothermalWallBC("yPos")](p_All[c], p_yPos[c])
+         [mkSetIsothermalWallBC("yPos")](p_yPos[0][c], p_yPos[1][c])
       end
    end
 
@@ -1477,7 +1722,7 @@ do
    if (BC_xBCLeft == SCHEMA.FlowBC_AdiabaticWall) then
       __demand(__index_launch)
       for c in xNeg_ispace do
-         [mkSetAdiabaticWallBC("xNeg")](p_All[c], p_xNeg[c])
+         [mkSetAdiabaticWallBC("xNeg")](p_xNeg[0][c], p_xNeg[1][c])
       end
    end
 
@@ -1485,60 +1730,58 @@ do
    if (BC_xBCRight == SCHEMA.FlowBC_AdiabaticWall) then
       __demand(__index_launch)
       for c in xPos_ispace do
-         [mkSetAdiabaticWallBC("xPos")](p_All[c], p_xPos[c])
+         [mkSetAdiabaticWallBC("xPos")](p_xPos[0][c], p_xPos[1][c])
       end
    end
 
    -- Correct charged species boundary conditions
-[(function() local __quotes = terralib.newlist()
-if (ELECTRIC_FIELD and (MIX.nIons > 0)) then __quotes:insert(rquote
+   -- TODO: to be moved in the electricField module
+rescape if (ELECTRIC_FIELD and (MIX.nIons > 0)) then remit rquote
    if (config.Efield.type ~= SCHEMA.EFieldStruct_Off) then
       -- zNeg BC
       if (BC_zBCLeft ~= SCHEMA.FlowBC_Periodic) then
          __demand(__index_launch)
          for c in zNeg_ispace do
-            [mkCorrectIonsBC("zNeg")](p_All[c], p_zNeg[c], Mix)
+            [mkCorrectIonsBC("zNeg")](p_zNeg[0][c], p_zNeg[1][c], Mix)
          end
       end
       -- zPos BC
       if (BC_zBCRight ~= SCHEMA.FlowBC_Periodic) then
          __demand(__index_launch)
          for c in zPos_ispace do
-            [mkCorrectIonsBC("zPos")](p_All[c], p_zPos[c], Mix)
+            [mkCorrectIonsBC("zPos")](p_zPos[0][c], p_zPos[1][c], Mix)
          end
       end
       -- yNeg BC
       if (BC_yBCLeft ~= SCHEMA.FlowBC_Periodic) then
          __demand(__index_launch)
          for c in yNeg_ispace do
-            [mkCorrectIonsBC("yNeg")](p_All[c], p_yNeg[c], Mix)
+            [mkCorrectIonsBC("yNeg")](p_yNeg[0][c], p_yNeg[1][c], Mix)
          end
       end
       -- yPos BC
       if (BC_yBCRight ~= SCHEMA.FlowBC_Periodic) then
          __demand(__index_launch)
          for c in yPos_ispace do
-            [mkCorrectIonsBC("yPos")](p_All[c], p_yPos[c], Mix)
+            [mkCorrectIonsBC("yPos")](p_yPos[0][c], p_yPos[1][c], Mix)
          end
       end
       -- xNeg BC
       if (BC_xBCLeft ~= SCHEMA.FlowBC_Periodic) then
          __demand(__index_launch)
          for c in xNeg_ispace do
-            [mkCorrectIonsBC("xNeg")](p_All[c], p_xNeg[c], Mix)
+            [mkCorrectIonsBC("xNeg")](p_xNeg[0][c], p_xNeg[1][c], Mix)
          end
       end
       -- xPos BC
       if (BC_xBCRight ~= SCHEMA.FlowBC_Periodic) then
          __demand(__index_launch)
          for c in xPos_ispace do
-            [mkCorrectIonsBC("xPos")](p_All[c], p_xPos[c], Mix)
+            [mkCorrectIonsBC("xPos")](p_xPos[0][c], p_xPos[1][c], Mix)
          end
       end
    end
-end)
-end
-return __quotes end)()];
+end end end
 
 end
 
@@ -1548,15 +1791,13 @@ end
 
 -- Update the time derivative values needed for the inflow
 local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task UpdateNSCBCGhostCellTimeDerivatives(Fluid : region(ispace(int3d), Fluid_columns),
-                                         Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+task UpdateNSCBCGhostCellTimeDerivatives(BC : region(ispace(int3d), Fluid_columns),
                                          Integrator_deltaTime : double)
 where
-  reads(Fluid.{velocity, temperature}),
-  reads writes(Fluid.{dudtBoundary, dTdtBoundary}),
-  reads writes(Fluid.{velocity_old_NSCBC, temperature_old_NSCBC})
+  reads(BC.{velocity, temperature}),
+  reads writes(BC.{dudtBoundary, dTdtBoundary}),
+  reads writes(BC.{velocity_old_NSCBC, temperature_old_NSCBC})
 do
-   var BC   = Fluid_BC[0]
    __demand(__openmp)
    for c in BC do
       for i=1, 3 do
@@ -1585,7 +1826,7 @@ do
    var BC_zBCLeft  = config.BC.zBCLeft.type
    var BC_zBCRight = config.BC.zBCRight.type
 
-   var {p_All, p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
+   var {p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
         xNeg_ispace, xPos_ispace,
         yNeg_ispace, yPos_ispace,
         zNeg_ispace, zPos_ispace} = Fluid_zones
@@ -1595,22 +1836,42 @@ do
        (BC_xBCLeft == SCHEMA.FlowBC_RecycleRescaling)) then
       __demand(__index_launch)
       for c in xNeg_ispace do
-         UpdateNSCBCGhostCellTimeDerivatives(p_All[c], p_xNeg[c], Integrator_deltaTime)
+         UpdateNSCBCGhostCellTimeDerivatives(p_xNeg[0][c], Integrator_deltaTime)
       end
    end
 
-   if (BC_xBCLeft == SCHEMA.FlowBC_NSCBC_Inflow) then
+   if ((BC_xBCRight == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in xPos_ispace do
+         UpdateNSCBCGhostCellTimeDerivatives(p_xPos[0][c], Integrator_deltaTime)
+      end
+   end
+
+   if ((BC_yBCLeft == SCHEMA.FlowBC_NSCBC_Inflow)) then
       __demand(__index_launch)
       for c in yNeg_ispace do
-         UpdateNSCBCGhostCellTimeDerivatives(p_All[c], p_yNeg[c], Integrator_deltaTime)
+         UpdateNSCBCGhostCellTimeDerivatives(p_yNeg[0][c], Integrator_deltaTime)
       end
    end
 
-   -- Update time derivatives at boundary for IncomingShock
-   if (BC_yBCRight == SCHEMA.FlowBC_IncomingShock) then
+   if ((BC_yBCRight == SCHEMA.FlowBC_NSCBC_Inflow)) then
       __demand(__index_launch)
       for c in yPos_ispace do
-         UpdateNSCBCGhostCellTimeDerivatives(p_All[c], p_yPos[c], Integrator_deltaTime)
+         UpdateNSCBCGhostCellTimeDerivatives(p_yPos[0][c], Integrator_deltaTime)
+      end
+   end
+
+   if ((BC_zBCLeft == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         UpdateNSCBCGhostCellTimeDerivatives(p_zNeg[0][c], Integrator_deltaTime)
+      end
+   end
+
+   if ((BC_yBCRight == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         UpdateNSCBCGhostCellTimeDerivatives(p_zPos[0][c], Integrator_deltaTime)
       end
    end
 end

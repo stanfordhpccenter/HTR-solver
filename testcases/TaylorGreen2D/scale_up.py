@@ -21,5 +21,5 @@ for i in range(0,args.num_times):
     config['Grid']['xNum'] *= 2
     config['Grid']['yNum'] *= 2
     config['Integrator']['maxIter'] *=2
-    config['Integrator']['fixedDeltaTime'] /=2
+    config['Integrator']['TimeStep']['DeltaTime'] /=2
 

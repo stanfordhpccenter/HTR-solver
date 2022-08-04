@@ -70,6 +70,19 @@ enum side {
 };
 
 //-----------------------------------------------------------------------------
+// Utility that outputs the tangential directions given the normal
+//-----------------------------------------------------------------------------
+__CUDA_HD__
+constexpr direction getT1(direction dir) {return (dir == Xdir) ? Ydir :
+                                                 (dir == Ydir) ? Xdir :
+                                               /*(dir == Zdir)*/ Xdir ;};
+
+__CUDA_HD__
+constexpr direction getT2(direction dir) {return (dir == Xdir) ? Zdir :
+                                                 (dir == Ydir) ? Zdir :
+                                               /*(dir == Zdir)*/ Ydir ;};
+
+//-----------------------------------------------------------------------------
 // Utility that outputs the index of the normal and tangetial components of
 // a Vec3 given a direction
 //-----------------------------------------------------------------------------
@@ -99,25 +112,25 @@ constexpr int tangential2Index(direction dir) {
 //-----------------------------------------------------------------------------
 template<direction dir, side s>
 __CUDA_HD__
-inline Point<3> getPIntBC(const Legion::Point<3> &p);
+inline Legion::Point<3> getPIntBC(const Legion::Point<3> &p);
 template<>
 __CUDA_HD__
-inline Point<3> getPIntBC<Xdir, Minus>(const Legion::Point<3> &p) { return Point<3>(p.x+1, p.y  , p.z  ); };
+inline Legion::Point<3> getPIntBC<Xdir, Minus>(const Legion::Point<3> &p) { return Legion::Point<3>(p.x+1, p.y  , p.z  ); };
 template<>
 __CUDA_HD__
-inline Point<3> getPIntBC<Xdir, Plus >(const Legion::Point<3> &p) { return Point<3>(p.x-1, p.y  , p.z  ); };
+inline Legion::Point<3> getPIntBC<Xdir, Plus >(const Legion::Point<3> &p) { return Legion::Point<3>(p.x-1, p.y  , p.z  ); };
 template<>
 __CUDA_HD__
-inline Point<3> getPIntBC<Ydir, Minus>(const Legion::Point<3> &p) { return Point<3>(p.x  , p.y+1, p.z  ); };
+inline Legion::Point<3> getPIntBC<Ydir, Minus>(const Legion::Point<3> &p) { return Legion::Point<3>(p.x  , p.y+1, p.z  ); };
 template<>
 __CUDA_HD__
-inline Point<3> getPIntBC<Ydir, Plus >(const Legion::Point<3> &p) { return Point<3>(p.x  , p.y-1, p.z  ); };
+inline Legion::Point<3> getPIntBC<Ydir, Plus >(const Legion::Point<3> &p) { return Legion::Point<3>(p.x  , p.y-1, p.z  ); };
 template<>
 __CUDA_HD__
-inline Point<3> getPIntBC<Zdir, Minus>(const Legion::Point<3> &p) { return Point<3>(p.x  , p.y  , p.z+1); };
+inline Legion::Point<3> getPIntBC<Zdir, Minus>(const Legion::Point<3> &p) { return Legion::Point<3>(p.x  , p.y  , p.z+1); };
 template<>
 __CUDA_HD__
-inline Point<3> getPIntBC<Zdir, Plus >(const Legion::Point<3> &p) { return Point<3>(p.x  , p.y  , p.z-1); };
+inline Legion::Point<3> getPIntBC<Zdir, Plus >(const Legion::Point<3> &p) { return Legion::Point<3>(p.x  , p.y  , p.z-1); };
 
 
 //-----------------------------------------------------------------------------
@@ -125,16 +138,16 @@ inline Point<3> getPIntBC<Zdir, Plus >(const Legion::Point<3> &p) { return Point
 //-----------------------------------------------------------------------------
 template<direction dir>
 __CUDA_HD__
-inline coord_t getSize(const Legion::Rect<3> bounds);
+inline Legion::coord_t getSize(const Legion::Rect<3> bounds);
 template<>
 __CUDA_HD__
-inline coord_t getSize<Xdir>(const Legion::Rect<3> bounds) { return bounds.hi.x - bounds.lo.x + 1; };
+inline Legion::coord_t getSize<Xdir>(const Legion::Rect<3> bounds) { return bounds.hi.x - bounds.lo.x + 1; };
 template<>
 __CUDA_HD__
-inline coord_t getSize<Ydir>(const Legion::Rect<3> bounds) { return bounds.hi.y - bounds.lo.y + 1; };
+inline Legion::coord_t getSize<Ydir>(const Legion::Rect<3> bounds) { return bounds.hi.y - bounds.lo.y + 1; };
 template<>
 __CUDA_HD__
-inline coord_t getSize<Zdir>(const Legion::Rect<3> bounds) { return bounds.hi.z - bounds.lo.z + 1; };
+inline Legion::coord_t getSize<Zdir>(const Legion::Rect<3> bounds) { return bounds.hi.z - bounds.lo.z + 1; };
 
 //-----------------------------------------------------------------------------
 // Utility that computes the stencil point warping the point around periodic boundaries
@@ -160,12 +173,12 @@ inline Legion::Point<3> warpPeriodic<Ydir, Minus>(const Legion::Rect<3> bounds, 
 template<>
 __CUDA_HD__
 inline Legion::Point<3> warpPeriodic<Ydir, Plus>(const Legion::Rect<3> bounds, Legion::Point<3> p, const Legion::coord_t size, const int8_t off) {
-   return Point<3>(p.x, (p.y + off - bounds.lo.y) % size + bounds.lo.y, p.z);
+   return Legion::Point<3>(p.x, (p.y + off - bounds.lo.y) % size + bounds.lo.y, p.z);
 };
 template<>
 __CUDA_HD__
 inline Legion::Point<3> warpPeriodic<Zdir, Minus>(const Legion::Rect<3> bounds, Legion::Point<3> p, const Legion::coord_t size, const int8_t off) {
-   return Point<3>(p.x, p.y, ((p.z + off - bounds.lo.z) % size + size) % size + bounds.lo.z);
+   return Legion::Point<3>(p.x, p.y, ((p.z + off - bounds.lo.z) % size + size) % size + bounds.lo.z);
 };
 template<>
 __CUDA_HD__
@@ -182,17 +195,17 @@ static inline Legion::Rect<3> crossPlane(const Legion::Rect<3> bounds);
 template<>
 __CUDA_HD__
 inline Legion::Rect<3> crossPlane<Xdir>(const Legion::Rect<3> bounds) {
-   return Legion::Rect<3>(Point<3>(bounds.lo.x, bounds.lo.y, bounds.lo.z), Point<3>(bounds.lo.x, bounds.hi.y, bounds.hi.z));
+   return Legion::Rect<3>(Legion::Point<3>(bounds.lo.x, bounds.lo.y, bounds.lo.z), Legion::Point<3>(bounds.lo.x, bounds.hi.y, bounds.hi.z));
 };
 template<>
 __CUDA_HD__
 inline Legion::Rect<3> crossPlane<Ydir>(const Legion::Rect<3> bounds) {
-   return Legion::Rect<3>(Point<3>(bounds.lo.x, bounds.lo.y, bounds.lo.z), Point<3>(bounds.hi.x, bounds.lo.y, bounds.hi.z));
+   return Legion::Rect<3>(Legion::Point<3>(bounds.lo.x, bounds.lo.y, bounds.lo.z), Legion::Point<3>(bounds.hi.x, bounds.lo.y, bounds.hi.z));
 };
 template<>
 __CUDA_HD__
 inline Legion::Rect<3> crossPlane<Zdir>(const Legion::Rect<3> bounds) {
-   return Legion::Rect<3>(Point<3>(bounds.lo.x, bounds.lo.y, bounds.lo.z), Point<3>(bounds.hi.x, bounds.hi.y, bounds.lo.z));
+   return Legion::Rect<3>(Legion::Point<3>(bounds.lo.x, bounds.lo.y, bounds.lo.z), Legion::Point<3>(bounds.hi.x, bounds.hi.y, bounds.lo.z));
 };
 
 //-----------------------------------------------------------------------------
@@ -200,21 +213,21 @@ inline Legion::Rect<3> crossPlane<Zdir>(const Legion::Rect<3> bounds) {
 //-----------------------------------------------------------------------------
 template<direction dir>
 __CUDA_HD__
-static inline Legion::Point<3> GetPointInSpan(const Legion::Rect<3> b, const coord_t idx , const int x, const int y, const int z);
+static inline Legion::Point<3> GetPointInSpan(const Legion::Rect<3> b, const Legion::coord_t idx , const int x, const int y, const int z);
 template<>
 __CUDA_HD__
-inline Legion::Point<3> GetPointInSpan<Xdir>(const Legion::Rect<3> b, const coord_t idx, const int x, const int y, const int z) {
-   return Point<3>(b.lo.x + idx, y + b.lo.y, z + b.lo.z);
+inline Legion::Point<3> GetPointInSpan<Xdir>(const Legion::Rect<3> b, const Legion::coord_t idx, const int x, const int y, const int z) {
+   return Legion::Point<3>(b.lo.x + idx, y + b.lo.y, z + b.lo.z);
 };
 template<>
 __CUDA_HD__
-inline Legion::Point<3> GetPointInSpan<Ydir>(const Legion::Rect<3> b, const coord_t idx, const int x, const int y, const int z) {
-   return Point<3>(x + b.lo.x, b.lo.y + idx, z + b.lo.z);
+inline Legion::Point<3> GetPointInSpan<Ydir>(const Legion::Rect<3> b, const Legion::coord_t idx, const int x, const int y, const int z) {
+   return Legion::Point<3>(x + b.lo.x, b.lo.y + idx, z + b.lo.z);
 };
 template<>
 __CUDA_HD__
-inline Legion::Point<3> GetPointInSpan<Zdir>(const Legion::Rect<3> b, const coord_t idx, const int x, const int y, const int z) {
-   return Point<3>(x + b.lo.x, y + b.lo.y, b.lo.z + idx);
+inline Legion::Point<3> GetPointInSpan<Zdir>(const Legion::Rect<3> b, const Legion::coord_t idx, const int x, const int y, const int z) {
+   return Legion::Point<3>(x + b.lo.x, y + b.lo.y, b.lo.z + idx);
 };
 
 #endif // __POINTDOMAIN_HELPER_HPP__

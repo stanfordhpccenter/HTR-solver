@@ -49,7 +49,6 @@ extern "C" {
 struct Fluid_columns {
    // Grid point
    double centerCoordinates[3];
-   double cellWidth[3];
    // Node types
    int nType_x;
    int nType_y;
@@ -86,25 +85,16 @@ struct Fluid_columns {
    double electricPotential;
    double electricField[3];
 #endif
-   // Gradients
-   double velocityGradientX[  3];
-   double velocityGradientY[  3];
-   double velocityGradientZ[  3];
-//   double temperatureGradient[3];
    // Conserved variables
    double Conserved[      nEq];
    double Conserved_old[  nEq];
-//   double Conserved_hat[  nEq];
    double Conserved_t[    nEq];
    double Conserved_t_old[nEq];
-//   // Fluxes
-//   double FluxXCorr[nEq];
-//   double FluxYCorr[nEq];
-//   double FluxZCorr[nEq];
    // Shock sensors
    bool shockSensorX;
    bool shockSensorY;
    bool shockSensorZ;
+   double DucrosSensor;
    // NSCBC variables
    double dudtBoundary[3];
    double dTdtBoundary;
@@ -118,13 +108,14 @@ struct Fluid_columns {
    double temperature_recycle;
    double MolarFracs_recycle[nSpec];
    double velocity_recycle[3];
+   // Laser variables
+   double kernelProfile;
 };
 
 // The order of this enum must match the declaration of Fluid_columns
 enum FieldIDs {
    // Grid point
    FID_centerCoordinates = 101,
-   FID_cellWidth,
    // Node types
    FID_nType_x,
    FID_nType_y,
@@ -161,25 +152,16 @@ enum FieldIDs {
    FID_electricPotential,
    FID_electricField,
 #endif
-   // Gradients
-   FID_velocityGradientX,
-   FID_velocityGradientY,
-   FID_velocityGradientZ,
-//   FID_temperatureGradient,
    // Conserved variables
    FID_Conserved,
    FID_Conserved_old,
-//   FID_Conserved_hat,
    FID_Conserved_t,
    FID_Conserved_t_old,
-   // Fluxes
-//   FID_FluxXCorr,
-//   FID_FluxYCorr,
-//   FID_FluxZCorr,
    // Shock sensors
    FID_shockSensorX,
    FID_shockSensorY,
    FID_shockSensorZ,
+   FID_DucrosSensor,
    // NSCBC variables
    FID_dudtBoundary,
    FID_dTdtBoundary,
@@ -193,6 +175,8 @@ enum FieldIDs {
    FID_temperature_recycle,
    FID_MolarFracs_recycle,
    FID_velocity_recycle,
+   // Laser variables
+   FID_kernelProfile,
    // keep last for counting
    FID_last
 };
@@ -208,9 +192,8 @@ enum {
    TID_UpdatePropertiesFromPrimitive,
    TID_UpdateConservedFromPrimitive,
    TID_UpdatePrimitiveFromConserved,
-   TID_GetVelocityGradients,
-//   TID_GetTemperatureGradient,
    // Sensor tasks
+   TID_UpdateDucrosSensor,
    TID_UpdateShockSensorX,
    TID_UpdateShockSensorY,
    TID_UpdateShockSensorZ,
@@ -218,6 +201,9 @@ enum {
    TID_UpdateUsingHybridEulerFluxX,
    TID_UpdateUsingHybridEulerFluxY,
    TID_UpdateUsingHybridEulerFluxZ,
+   TID_UpdateUsingTENOEulerFluxX,
+   TID_UpdateUsingTENOEulerFluxY,
+   TID_UpdateUsingTENOEulerFluxZ,
    TID_UpdateUsingTENOAEulerFluxX,
    TID_UpdateUsingTENOAEulerFluxY,
    TID_UpdateUsingTENOAEulerFluxZ,
@@ -231,11 +217,29 @@ enum {
    TID_UpdateUsingDiffusionFluxY,
    TID_UpdateUsingDiffusionFluxZ,
    TID_UpdateUsingFluxNSCBCInflowXNeg,
+   TID_UpdateUsingFluxNSCBCInflowXPos,
    TID_UpdateUsingFluxNSCBCInflowYNeg,
    TID_UpdateUsingFluxNSCBCInflowYPos,
+   TID_UpdateUsingFluxNSCBCInflowZNeg,
+   TID_UpdateUsingFluxNSCBCInflowZPos,
+   TID_UpdateUsingFluxNSCBCOutflowXNeg,
    TID_UpdateUsingFluxNSCBCOutflowXPos,
    TID_UpdateUsingFluxNSCBCOutflowYNeg,
    TID_UpdateUsingFluxNSCBCOutflowYPos,
+   TID_UpdateUsingFluxNSCBCOutflowZNeg,
+   TID_UpdateUsingFluxNSCBCOutflowZPos,
+   TID_UpdateUsingFluxNSCBCFarFieldXNeg,
+   TID_UpdateUsingFluxNSCBCFarFieldXPos,
+   TID_UpdateUsingFluxNSCBCFarFieldYNeg,
+   TID_UpdateUsingFluxNSCBCFarFieldYPos,
+   TID_UpdateUsingFluxNSCBCFarFieldZNeg,
+   TID_UpdateUsingFluxNSCBCFarFieldZPos,
+   TID_UpdateUsingFluxIncomingShockYPos,
+   // Forcing tasks
+   TID_CalculateAveragePD,
+   TID_AddDissipationX,
+   TID_AddDissipationY,
+   TID_AddDissipationZ,
    // BC tasks
    TID_AddRecycleAverageBC,
    TID_SetNSCBC_InflowBC_X,
@@ -282,6 +286,28 @@ enum REDOP_ID{
    REGENT_REDOP_SUM_VEC3 = 101,
    REGENT_REDOP_SUM_VECNSP,
    REGENT_REDOP_SUM_VEC6,
+};
+
+// Data type for bounding box
+/* vertices order:
+//
+//	   7+--------+6
+//	    |\         \
+//	    | 4+--------+5
+//	    |  |        |
+//	   3+  |   2+   |
+//	     \ |        |
+//	      0+--------+1
+*/
+struct bBoxType {
+   double v0[3];
+   double v1[3];
+   double v2[3];
+   double v3[3];
+   double v4[3];
+   double v5[3];
+   double v6[3];
+   double v7[3];
 };
 
 #ifdef __cplusplus

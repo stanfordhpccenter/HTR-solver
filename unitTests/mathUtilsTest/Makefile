@@ -20,7 +20,7 @@ mathUtilsTest.exec: mathUtilsTest.o
 	$(CXX) -o $@ $^ $(LINK_FLAGS)
 
 mathUtilsTest.o: mathUtilsTest.rg $(HTR_DIR)/src/Utils/math_utils.rg $(HTR_DIR)/src/Utils/math_utils.h
-	$(REGENT) mathUtilsTest.rg $(REGENT_FLAGS)
+	$(REGENT) $(REGENT_OPTS) mathUtilsTest.rg $(REGENT_FLAGS)
 
 CPPmathUtilsTest.exec: CPPmathUtilsTest.cc $(HTR_DIR)/src/Utils/math_utils.hpp $(HTR_DIR)/src/Utils/math_utils.h
 	$(CXX) $(CXX_FLAGS) -o $@ $<

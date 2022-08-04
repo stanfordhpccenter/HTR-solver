@@ -29,7 +29,10 @@ export DEBUG="${DEBUG:-0}"
 export RANKS_PER_NODE="${RANKS_PER_NODE:-1}"
 
 # How many cores per rank to reserve for the runtime
-export RESERVED_CORES="${RESERVED_CORES:-6}"
+export RESERVED_CORES="${RESERVED_CORES:-4}"
+
+# Whether this is a job issued by the CD/CI system
+export CI_RUN="${CI_RUN:-0}"
 
 ###############################################################################
 # Helper functions
@@ -59,8 +62,10 @@ def mixture(sample):
          sample['Flow']['mixture']['type'] == 'CH41StMix'       or \
          sample['Flow']['mixture']['type'] == 'CH4_30SpMix'     or \
          sample['Flow']['mixture']['type'] == 'CH4_43SpIonsMix' or \
+         sample['Flow']['mixture']['type'] == 'CH4_26SpIonsMix' or \
          sample['Flow']['mixture']['type'] == 'FFCM-1Mix'       or \
-         sample['Flow']['mixture']['type'] == 'BoivinMix'
+         sample['Flow']['mixture']['type'] == 'BoivinMix'       or \
+         sample['Flow']['mixture']['type'] == 'H2_UCSDMix'
   return sample['Flow']['mixture']['type']
 f = json.load(open('$1'))
 if '$2' == 'single':

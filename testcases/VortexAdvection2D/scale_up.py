@@ -22,6 +22,6 @@ for i in range(1,args.num_times):
     config['Grid']['xNum'] *= 2
     config['Grid']['yNum'] *= 2
     config['Integrator']['maxIter'] *=2
-    config['Integrator']['fixedDeltaTime'] /=2
+    config['Integrator']['TimeStep']['DeltaTime'] /=2
     with open('VortexAdvection2D_' + str(config['Grid']['xNum']) + '.json', 'w') as fout:
         json.dump(config, fout, indent=3)

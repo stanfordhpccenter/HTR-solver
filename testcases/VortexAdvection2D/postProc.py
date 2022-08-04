@@ -7,6 +7,10 @@ import sys
 import os
 import h5py
 
+# load HTR modules
+sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
+import HTRrestart
+
 beta = 5.0
 xc = 0.0
 yc = 0.0
@@ -15,20 +19,18 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-n', '--num_times', type=int, default=4)
 args = parser.parse_args()
 
-def L2(err,dx):
-   tot = sum(map(sum, err**2*dx[:,:,0]*dx[:,:,1]*dx[:,:,2]))
-   vol = sum(map(sum,        dx[:,:,0]*dx[:,:,1]*dx[:,:,2]))
-   return np.sqrt(tot/vol)
+def L2(err):
+   tot = sum(map(sum, err**2))
+   return np.sqrt(tot/err.size)
 
-def L1(err,dx):
-   tot = sum(map(sum, err*dx[:,:,0]*dx[:,:,1]*dx[:,:,2]))
-   vol = sum(map(sum,     dx[:,:,0]*dx[:,:,1]*dx[:,:,2]))
-   return abs(tot)/vol
+def L1(err):
+   tot = sum(map(sum, err))
+   vol = sum(map(sum,    ))
+   return abs(tot)/err.size
 
-def Linf(err,dx):
+def Linf(err):
    tot = max(map(max, abs(err)))
    return tot
-
 
 def process(case):
    dir_name = os.path.join(os.environ['HTR_DIR'], 'testcases/VortexAdvection2D')
@@ -43,10 +45,10 @@ def process(case):
 
    xNum = data["Grid"]["xNum"]
    yNum = data["Grid"]["yNum"]
-   xWidth  = data["Grid"]["xWidth"]
-   yWidth  = data["Grid"]["yWidth"]
-   xOrigin = data["Grid"]["origin"][0]
-   yOrigin = data["Grid"]["origin"][1]
+   xWidth  = data["Grid"]["GridInput"]["width"][0]
+   yWidth  = data["Grid"]["GridInput"]["width"][1]
+   xOrigin = data["Grid"]["GridInput"]["origin"][0]
+   yOrigin = data["Grid"]["GridInput"]["origin"][1]
    Tinf = data["Flow"]["initCase"]["temperature"]
    Uinf = data["Flow"]["initCase"]["velocity"][0]
    Vinf = data["Flow"]["initCase"]["velocity"][1]
@@ -56,7 +58,7 @@ def process(case):
    dy = yWidth/yNum
    Area = xWidth*yWidth
 
-   dt    = data["Integrator"]["fixedDeltaTime"]
+   dt    = data["Integrator"]["TimeStep"]["DeltaTime"]
    nstep = data["Integrator"]["maxIter"]
    time = dt*nstep
 
@@ -80,26 +82,26 @@ def process(case):
       ry = y - yc
       r2 = rx**2 + ry**2
       return Uinf - beta/(2*np.pi)*np.exp(0.5*(1-r2))*(ry)
-   
+
    def v(xy,time):
-      x = unroll(xy[:,:,0], Uinf*time,xWidth, xOrigin)
-      y = unroll(xy[:,:,1], Vinf*time,yWidth, yOrigin)
+      x = unroll(xy[:,:,0], Uinf*time, xWidth, xOrigin)
+      y = unroll(xy[:,:,1], Vinf*time, yWidth, yOrigin)
       rx = x - xc
       ry = y - yc
       r2 = rx**2 + ry**2
       return Vinf + beta/(2*np.pi)*np.exp(0.5*(1-r2))*(rx)
-   
+
    def T(xy,time):
-      x = unroll(xy[:,:,0], Uinf*time,xWidth, xOrigin)
-      y = unroll(xy[:,:,1], Vinf*time,yWidth, yOrigin)
+      x = unroll(xy[:,:,0], Uinf*time, xWidth, xOrigin)
+      y = unroll(xy[:,:,1], Vinf*time, yWidth, yOrigin)
       rx = x - xc
       ry = y - yc
       r2 = rx**2 + ry**2
       return Tinf*(1.0 - (gamma-1)*beta**2/(8*gamma*np.pi**2)*np.exp(1-r2))
-   
+
    def rho(xy,time):
       return T(xy,time)**(1.0/(gamma-1.0))
-   
+
    def p(xy,time):
       return T(xy,time)**(gamma/(gamma-1.0))
 
@@ -110,15 +112,15 @@ def process(case):
 #                        Read Prometeo Output Data                           #
 ##############################################################################
 
-   f = h5py.File(hdf_filename, 'r')
+   restart = HTRrestart.HTRrestart(data)
+   restart.attach(sampleDir=os.path.join(dir_name, str(case)+'/sample0'), step=nstep)
 
    # Get the data
-   centerCoordinates = f['centerCoordinates']
-   cellWidth   = f['cellWidth']
-   pressure    = f['pressure']
-   temperature = f['temperature']
-   density     = f['rho']
-   velocity    = f['velocity']
+   centerCoordinates = restart.load('centerCoordinates')
+   pressure          = restart.load('pressure')
+   temperature       = restart.load('temperature')
+   density           = restart.load('rho')
+   velocity          = restart.load('velocity')
 
    # Get dimension of data
    Nx = density.shape[2]
@@ -127,12 +129,11 @@ def process(case):
 
    # Get simulation data along a line (ignore ghost cells)
    z_slice_idx = 0
-   # Avoid the error due to periodic boundaries 
+   # Avoid the error due to periodic boundaries
    lo = int(0.10*Nx)
    hi = int(0.90*Nx)
 
    xy_slice   = centerCoordinates[z_slice_idx,lo:hi,lo:hi][:,:]
-   dx_slice   =         cellWidth[z_slice_idx,lo:hi,lo:hi][:,:]
    u_slice    =          velocity[z_slice_idx,lo:hi,lo:hi][:,:]
    T_slice    =       temperature[z_slice_idx,lo:hi,lo:hi]
    p_slice    =          pressure[z_slice_idx,lo:hi,lo:hi]
@@ -158,11 +159,11 @@ def process(case):
    perr = (  p_slice       -   p_slice_analytical)[:,:]
    rhoerr = (rho_slice       - rho_slice_analytical)[:,:]
 
-   U_L2_error   = L2(  uerr, dx_slice)
-   V_L2_error   = L2(  verr, dx_slice)
-   T_L2_error   = L2(  Terr, dx_slice)
-   P_L2_error   = L2(  perr, dx_slice)
-   Rho_L2_error = L2(rhoerr, dx_slice)
+   U_L2_error   = L2(  uerr)
+   V_L2_error   = L2(  verr)
+   T_L2_error   = L2(  Terr)
+   P_L2_error   = L2(  perr)
+   Rho_L2_error = L2(rhoerr)
    print('U_L2 Error = {}'.format(U_L2_error))
    print('V_L2 Error = {}'.format(V_L2_error))
    print('T_L2 Error = {}'.format(T_L2_error))

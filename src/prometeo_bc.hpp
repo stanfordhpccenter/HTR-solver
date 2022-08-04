@@ -46,6 +46,7 @@ using namespace Legion;
 #include "prometeo_bc.h"
 #include "prometeo_bc_types.h"
 #include "prometeo_redop.inl"
+#include "prometeo_variables.hpp"
 
 //-----------------------------------------------------------------------------
 // TASK THAT COLLECTS THE SPATIAL AVERAGES FOR RECYCLE/RESCALING BC
@@ -64,7 +65,9 @@ public:
    };
 public:
    __CUDA_H__
-   static inline void collectAverages(const AccessorRO<  Vec3, 3> &cellWidth,
+   static inline void collectAverages(const AccessorRO<double, 3> &dcsi_d,
+                                      const AccessorRO<double, 3> &deta_d,
+                                      const AccessorRO<double, 3> &dzet_d,
                                       const AccessorRO<VecNSp, 3> &MolarFracs_profile,
                                       const AccessorRO<double, 3> &temperature_profile,
                                       const AccessorRO<  Vec3, 3> &velocity_profile,
@@ -75,7 +78,7 @@ public:
                                       const double Pbc,
                                       const Point<3> &p,
                                       const Mix &mix) {
-      const double vol = cellWidth[p][0]*cellWidth[p][1]*cellWidth[p][2];
+      const double vol = 1.0/(dcsi_d[p]*deta_d[p]*dzet_d[p]);
       const double MixW = mix.GetMolarWeightFromXi(MolarFracs_profile[p]);
       const double rho = mix.GetRho(Pbc, temperature_profile[p], MixW);
       double rvol = vol*rho;
@@ -111,11 +114,10 @@ class SetNSCBC_InflowBCTask {
 public:
    struct Args {
       uint64_t arg_mask[1];
-      LogicalRegion    Fluid;
-      LogicalPartition Fluid_BC;
+      LogicalRegion BC;
       Mix mix;
       double Pbc;
-      FieldID Fluid_fields [FID_last - 101];
+      FieldID       BC_fields[FID_last - 101];
    };
 public:
    __CUDA_H__
@@ -159,10 +161,9 @@ class SetNSCBC_OutflowBCTask {
 public:
    struct Args {
       uint64_t arg_mask[1];
-      LogicalRegion    Fluid;
-      LogicalPartition Fluid_BC;
+      LogicalRegion BC;
       Mix mix;
-      FieldID Fluid_fields [FID_last - 101];
+      FieldID       BC_fields[FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;
@@ -190,11 +191,10 @@ class SetIncomingShockBCTask {
 public:
    struct Args {
       uint64_t arg_mask[1];
-      LogicalRegion    Fluid;
-      LogicalPartition Fluid_BC;
+      LogicalRegion       BC;
       IncomingShockParams params;
-      Mix mix;
-      FieldID Fluid_fields [FID_last - 101];
+      Mix                 mix;
+      FieldID             BC_fields[FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;
@@ -202,19 +202,6 @@ public:
    static const bool CPU_BASE_LEAF = true;
    static const bool GPU_BASE_LEAF = true;
    static const int MAPPER_ID = 0;
-public:
-   __CUDA_H__
-   static inline double setPressure(const AccessorRO<VecNEq, 3> &Conserved,
-                                    const double temperature,
-                                    const double MixW,
-                                    const Point<3> &p,
-                                    const Mix &mix) {
-      VecNSp rhoYi;
-      __UNROLL__
-      for (int i=0; i<nSpec; i++) rhoYi[i] = Conserved[p][i];
-      const double rho = mix.GetRhoFromRhoYi(rhoYi);
-      return mix.GetPFromRhoAndT(rho, MixW, temperature);
-   }
 public:
    static void cpu_base_impl(const Args &args,
                              const std::vector<PhysicalRegion> &regions,
@@ -236,8 +223,7 @@ class SetRecycleRescalingBCTask {
 public:
    struct Args {
       uint64_t arg_mask[1];
-      LogicalRegion     Fluid;
-      LogicalPartition  Fluid_BC;
+      LogicalRegion     BC;
       LogicalRegion     avg;
       LogicalRegion     BC_interp;
       LogicalRegion     FIregion;
@@ -246,10 +232,10 @@ public:
       RescalingDataType RdataRe;
       Mix mix;
       double Pbc;
-      FieldID Fluid_fields        [FID_last    - 101];
-      RA_FieldIDs avg_fields      [RA_FID_last - 101];
-      FieldID BC_interp_fields    [FID_last    - 101];
-      FI_FieldIDs FIregion_fields [FI_FID_last - 101];
+      FieldID            BC_fields [   FID_last - 101];
+      RA_FieldIDs       avg_fields [RA_FID_last - 101];
+      FieldID     BC_interp_fields [   FID_last - 101];
+      FI_FieldIDs  FIregion_fields [FI_FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;
@@ -398,10 +384,11 @@ class CorrectIonsBCTask {
 public:
    struct Args {
       uint64_t arg_mask[1];
-      LogicalRegion    Fluid;
-      LogicalPartition Fluid_BC;
+      LogicalRegion    BC;
+      LogicalRegion    BCst;
       Mix mix;
-      FieldID Fluid_fields [FID_last - 101];
+      FieldID   BC_fields [FID_last - 101];
+      FieldID BCst_fields [FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;

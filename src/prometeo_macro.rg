@@ -38,6 +38,21 @@ local Exports = {}
 local C = regentlib.c
 
 -------------------------------------------------------------------------------
+-- CHECK IF WE ARE ON MACOS
+-------------------------------------------------------------------------------
+function os.capture(cmd, raw)
+  local f = assert(io.popen(cmd, 'r'))
+  local s = assert(f:read('*a'))
+  f:close()
+  if raw then return s end
+  s = string.gsub(s, '^%s+', '')
+  s = string.gsub(s, '%s+$', '')
+  s = string.gsub(s, '[\n\r]+', ' ')
+  return s
+end
+Exports.DARWIN = (os.capture("uname") == "Darwin")
+
+-------------------------------------------------------------------------------
 -- MACROS
 -------------------------------------------------------------------------------
 
@@ -80,13 +95,6 @@ task Exports.in_interior(c : int3d,
     Grid_xBnum <= c.x and c.x < Grid_xNum + Grid_xBnum and
     Grid_yBnum <= c.y and c.y < Grid_yNum + Grid_yBnum and
     Grid_zBnum <= c.z and c.z < Grid_zNum + Grid_zBnum
-end
-
-__demand(__inline)
-task Exports.drand48_r(rngState : &C.drand48_data)
-  var res : double
-  C.drand48_r(rngState, &res)
-  return res
 end
 
 __demand(__inline)

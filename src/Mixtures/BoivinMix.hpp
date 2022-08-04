@@ -63,7 +63,7 @@
 // H2
 #define iH2 0
 #define H2 { \
-   /*       Name = */      (char*)("H2"), \
+   /*       Name = */      ("H2"), \
    /*          W = */      0.001008*2.0, \
    /*        inx = */      iH2, \
    /*    cpCoeff = */      {  \
@@ -88,7 +88,7 @@
 // H
 #define iH 1
 #define H { \
-   /*       Name = */      (char*)("H"), \
+   /*       Name = */      ("H"), \
    /*          W = */      0.001008*1.0, \
    /*        inx = */      iH, \
    /*    cpCoeff = */      {  \
@@ -113,7 +113,7 @@
 // O2
 #define iO2 2
 #define O2 { \
-   /*       Name = */      (char*)("O2"), \
+   /*       Name = */      ("O2"), \
    /*          W = */      0.015999*2.0, \
    /*        inx = */      iO2, \
    /*    cpCoeff = */      {  \
@@ -138,7 +138,7 @@
 // OH
 #define iOH 3
 #define OH { \
-   /*       Name = */      (char*)("OH"), \
+   /*       Name = */      ("OH"), \
    /*          W = */      0.001008*1.0+0.015999*1.0, \
    /*        inx = */      iOH, \
    /*    cpCoeff = */      {  \
@@ -163,7 +163,7 @@
 // O
 #define iO 4
 #define O { \
-   /*       Name = */      (char*)("O"), \
+   /*       Name = */      ("O"), \
    /*          W = */      0.015999*1.0, \
    /*        inx = */      iO, \
    /*    cpCoeff = */      {  \
@@ -188,7 +188,7 @@
 // H2O
 #define iH2O 5
 #define H2O { \
-   /*       Name = */      (char*)("H2O"), \
+   /*       Name = */      ("H2O"), \
    /*          W = */      0.001008*2.0+0.015999*1.0, \
    /*        inx = */      iH2O, \
    /*    cpCoeff = */      {  \
@@ -213,7 +213,7 @@
 // HO2
 #define iHO2 6
 #define HO2 { \
-   /*       Name = */      (char*)("HO2"), \
+   /*       Name = */      ("HO2"), \
    /*          W = */      0.001008*1.0+0.015999*2.0, \
    /*        inx = */      iHO2, \
    /*    cpCoeff = */      {  \
@@ -238,7 +238,7 @@
 // H2O2
 #define iH2O2 7
 #define H2O2 { \
-   /*       Name = */      (char*)("H2O2"), \
+   /*       Name = */      ("H2O2"), \
    /*          W = */      0.001008*2.0+0.015999*2.0, \
    /*        inx = */      iH2O2, \
    /*    cpCoeff = */      {  \
@@ -263,7 +263,7 @@
 // N2
 #define iN2 8
 #define N2 { \
-   /*       Name = */      (char*)("N2"), \
+   /*       Name = */      ("N2"), \
    /*          W = */      0.014007*2.0, \
    /*        inx = */      iN2, \
    /*    cpCoeff = */      {  \
@@ -584,12 +584,11 @@
 
 #ifndef __CUDACC__
 inline Mix::Mix(const Config &config) :
-species({H2, H, O2, OH, O, H2O, HO2, H2O2,
-         N2 }),
-reactions({R0, R1, R2, R4, R5, R6, R9, R10
-         }),
-ThirdbodyReactions({R7, R8 }),
-FalloffReactions({R3, R11 })
+species{H2, H, O2, OH, O, H2O, HO2, H2O2,
+         N2 },
+reactions{R0, R1, R2, R4, R5, R6, R9, R10},
+ThirdbodyReactions{R7, R8 },
+FalloffReactions{R3, R11 }
 {
 // This executable is expecting BoivinMix in the input file
 assert(config.Flow.mixture.type == MixtureModel_BoivinMix);

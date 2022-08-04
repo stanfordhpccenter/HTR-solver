@@ -6,6 +6,7 @@ import unittest
 import subprocess
 
 nThreads = 2
+csize = int(0.2*(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 1048576)) # 20% of the available memory in MB
 
 class TestBase(object):
    def test(self):
@@ -18,7 +19,12 @@ class TestBase(object):
          self.fail(self.name+" failed its setup")
 
       try:
-         subprocess.check_output(["./"+self.name+".exec", "-ll:ocpu", "1", "-ll:othr", str(nThreads)])
+         cmd = ["./"+self.name+".exec", "-ll:cpu", "1", "-ll:csize", str(csize)]
+         if (os.path.expandvars("$USE_OPENMP") == "1"):
+            cmd.extend(["-ll:ocpu", "1", "-ll:othr", str(nThreads)])
+         if (os.path.expandvars("$USE_CUDA") == "1"):
+            cmd.extend(["-ll:gpu", "1"])
+         subprocess.check_output(cmd)
       except:
          self.fail("Failed " + self.name)
 
@@ -41,7 +47,12 @@ class MultiTestBase(object):
       for i,t in enumerate(self.tests):
          with self.subTest(t):
             try:
-               subprocess.check_output(["./"+t+".exec", "-ll:ocpu", "1", "-ll:othr", str(nThreads)])
+               cmd = ["./"+t+".exec", "-ll:cpu", "1", "-ll:csize", str(csize)]
+               if (os.path.expandvars("$USE_OPENMP") == "1"):
+                  cmd.extend(["-ll:ocpu", "1", "-ll:othr", str(nThreads)])
+               if (os.path.expandvars("$USE_CUDA") == "1"):
+                  cmd.extend(["-ll:gpu", "1"])
+               subprocess.check_output(cmd)
             except:
                self.fail("Failed " + t)
 

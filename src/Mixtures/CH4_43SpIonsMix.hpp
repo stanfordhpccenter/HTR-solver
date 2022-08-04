@@ -65,7 +65,7 @@
 // N2
 #define iN2 0
 #define N2 { \
-   /*       Name = */      (char*)("N2"), \
+   /*       Name = */      ("N2"), \
    /*          W = */      0.014007*2.0, \
    /*        inx = */      iN2, \
    /* isElectron = */      false, \
@@ -91,7 +91,7 @@
 // H2
 #define iH2 1
 #define H2 { \
-   /*       Name = */      (char*)("H2"), \
+   /*       Name = */      ("H2"), \
    /*          W = */      0.001008*2.0, \
    /*        inx = */      iH2, \
    /* isElectron = */      false, \
@@ -117,7 +117,7 @@
 // H
 #define iH 2
 #define H { \
-   /*       Name = */      (char*)("H"), \
+   /*       Name = */      ("H"), \
    /*          W = */      0.001008*1.0, \
    /*        inx = */      iH, \
    /* isElectron = */      false, \
@@ -143,7 +143,7 @@
 // O2
 #define iO2 3
 #define O2 { \
-   /*       Name = */      (char*)("O2"), \
+   /*       Name = */      ("O2"), \
    /*          W = */      0.015999*2.0, \
    /*        inx = */      iO2, \
    /* isElectron = */      false, \
@@ -169,7 +169,7 @@
 // O
 #define iO 4
 #define O { \
-   /*       Name = */      (char*)("O"), \
+   /*       Name = */      ("O"), \
    /*          W = */      0.015999*1.0, \
    /*        inx = */      iO, \
    /* isElectron = */      false, \
@@ -195,7 +195,7 @@
 // H2O
 #define iH2O 5
 #define H2O { \
-   /*       Name = */      (char*)("H2O"), \
+   /*       Name = */      ("H2O"), \
    /*          W = */      0.001008*2.0+0.015999*1.0, \
    /*        inx = */      iH2O, \
    /* isElectron = */      false, \
@@ -221,7 +221,7 @@
 // OH
 #define iOH 6
 #define OH { \
-   /*       Name = */      (char*)("OH"), \
+   /*       Name = */      ("OH"), \
    /*          W = */      0.001008*1.0+0.015999*1.0, \
    /*        inx = */      iOH, \
    /* isElectron = */      false, \
@@ -247,7 +247,7 @@
 // H2O2
 #define iH2O2 7
 #define H2O2 { \
-   /*       Name = */      (char*)("H2O2"), \
+   /*       Name = */      ("H2O2"), \
    /*          W = */      0.001008*2.0+0.015999*2.0, \
    /*        inx = */      iH2O2, \
    /* isElectron = */      false, \
@@ -273,7 +273,7 @@
 // HO2
 #define iHO2 8
 #define HO2 { \
-   /*       Name = */      (char*)("HO2"), \
+   /*       Name = */      ("HO2"), \
    /*          W = */      0.001008*1.0+0.015999*2.0, \
    /*        inx = */      iHO2, \
    /* isElectron = */      false, \
@@ -299,7 +299,7 @@
 // CO
 #define iCO 9
 #define CO { \
-   /*       Name = */      (char*)("CO"), \
+   /*       Name = */      ("CO"), \
    /*          W = */      0.012010999999999999*1.0+0.015999*1.0, \
    /*        inx = */      iCO, \
    /* isElectron = */      false, \
@@ -325,7 +325,7 @@
 // CO2
 #define iCO2 10
 #define CO2 { \
-   /*       Name = */      (char*)("CO2"), \
+   /*       Name = */      ("CO2"), \
    /*          W = */      0.012010999999999999*1.0+0.015999*2.0, \
    /*        inx = */      iCO2, \
    /* isElectron = */      false, \
@@ -351,7 +351,7 @@
 // CH4
 #define iCH4 11
 #define CH4 { \
-   /*       Name = */      (char*)("CH4"), \
+   /*       Name = */      ("CH4"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*4.0, \
    /*        inx = */      iCH4, \
    /* isElectron = */      false, \
@@ -377,7 +377,7 @@
 // CH3
 #define iCH3 12
 #define CH3 { \
-   /*       Name = */      (char*)("CH3"), \
+   /*       Name = */      ("CH3"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*3.0, \
    /*        inx = */      iCH3, \
    /* isElectron = */      false, \
@@ -403,7 +403,7 @@
 // CH2
 #define iCH2 13
 #define CH2 { \
-   /*       Name = */      (char*)("CH2"), \
+   /*       Name = */      ("CH2"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*2.0, \
    /*        inx = */      iCH2, \
    /* isElectron = */      false, \
@@ -429,7 +429,7 @@
 // CH2(S)
 #define iCH2_S 14
 #define CH2_S { \
-   /*       Name = */      (char*)("CH2(S)"), \
+   /*       Name = */      ("CH2(S)"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*2.0, \
    /*        inx = */      iCH2_S, \
    /* isElectron = */      false, \
@@ -455,7 +455,7 @@
 // C
 #define iC 15
 #define C { \
-   /*       Name = */      (char*)("C"), \
+   /*       Name = */      ("C"), \
    /*          W = */      0.012010999999999999*1.0, \
    /*        inx = */      iC, \
    /* isElectron = */      false, \
@@ -481,7 +481,7 @@
 // CH
 #define iCH 16
 #define CH { \
-   /*       Name = */      (char*)("CH"), \
+   /*       Name = */      ("CH"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*1.0, \
    /*        inx = */      iCH, \
    /* isElectron = */      false, \
@@ -507,7 +507,7 @@
 // CH3O2
 #define iCH3O2 17
 #define CH3O2 { \
-   /*       Name = */      (char*)("CH3O2"), \
+   /*       Name = */      ("CH3O2"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*3.0+0.015999*2.0, \
    /*        inx = */      iCH3O2, \
    /* isElectron = */      false, \
@@ -533,7 +533,7 @@
 // CH3OH
 #define iCH3OH 18
 #define CH3OH { \
-   /*       Name = */      (char*)("CH3OH"), \
+   /*       Name = */      ("CH3OH"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*4.0+0.015999*1.0, \
    /*        inx = */      iCH3OH, \
    /* isElectron = */      false, \
@@ -559,7 +559,7 @@
 // CH3O
 #define iCH3O 19
 #define CH3O { \
-   /*       Name = */      (char*)("CH3O"), \
+   /*       Name = */      ("CH3O"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*3.0+0.015999*1.0, \
    /*        inx = */      iCH3O, \
    /* isElectron = */      false, \
@@ -585,7 +585,7 @@
 // CH2OH
 #define iCH2OH 20
 #define CH2OH { \
-   /*       Name = */      (char*)("CH2OH"), \
+   /*       Name = */      ("CH2OH"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*3.0+0.015999*1.0, \
    /*        inx = */      iCH2OH, \
    /* isElectron = */      false, \
@@ -611,7 +611,7 @@
 // CH2O
 #define iCH2O 21
 #define CH2O { \
-   /*       Name = */      (char*)("CH2O"), \
+   /*       Name = */      ("CH2O"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*2.0+0.015999*1.0, \
    /*        inx = */      iCH2O, \
    /* isElectron = */      false, \
@@ -637,7 +637,7 @@
 // HCO
 #define iHCO 22
 #define HCO { \
-   /*       Name = */      (char*)("HCO"), \
+   /*       Name = */      ("HCO"), \
    /*          W = */      0.012010999999999999*1.0+0.001008*1.0+0.015999*1.0, \
    /*        inx = */      iHCO, \
    /* isElectron = */      false, \
@@ -663,7 +663,7 @@
 // C2H6
 #define iC2H6 23
 #define C2H6 { \
-   /*       Name = */      (char*)("C2H6"), \
+   /*       Name = */      ("C2H6"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*6.0, \
    /*        inx = */      iC2H6, \
    /* isElectron = */      false, \
@@ -689,7 +689,7 @@
 // C2H5
 #define iC2H5 24
 #define C2H5 { \
-   /*       Name = */      (char*)("C2H5"), \
+   /*       Name = */      ("C2H5"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*5.0, \
    /*        inx = */      iC2H5, \
    /* isElectron = */      false, \
@@ -715,7 +715,7 @@
 // C2H4
 #define iC2H4 25
 #define C2H4 { \
-   /*       Name = */      (char*)("C2H4"), \
+   /*       Name = */      ("C2H4"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*4.0, \
    /*        inx = */      iC2H4, \
    /* isElectron = */      false, \
@@ -741,7 +741,7 @@
 // C2H3
 #define iC2H3 26
 #define C2H3 { \
-   /*       Name = */      (char*)("C2H3"), \
+   /*       Name = */      ("C2H3"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*3.0, \
    /*        inx = */      iC2H3, \
    /* isElectron = */      false, \
@@ -767,7 +767,7 @@
 // C2H2
 #define iC2H2 27
 #define C2H2 { \
-   /*       Name = */      (char*)("C2H2"), \
+   /*       Name = */      ("C2H2"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*2.0, \
    /*        inx = */      iC2H2, \
    /* isElectron = */      false, \
@@ -793,7 +793,7 @@
 // C2H
 #define iC2H 28
 #define C2H { \
-   /*       Name = */      (char*)("C2H"), \
+   /*       Name = */      ("C2H"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*1.0, \
    /*        inx = */      iC2H, \
    /* isElectron = */      false, \
@@ -819,7 +819,7 @@
 // CH3CHO
 #define iCH3CHO 29
 #define CH3CHO { \
-   /*       Name = */      (char*)("CH3CHO"), \
+   /*       Name = */      ("CH3CHO"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*4.0+0.015999*1.0, \
    /*        inx = */      iCH3CHO, \
    /* isElectron = */      false, \
@@ -845,7 +845,7 @@
 // CH3CO
 #define iCH3CO 30
 #define CH3CO { \
-   /*       Name = */      (char*)("CH3CO"), \
+   /*       Name = */      ("CH3CO"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*3.0+0.015999*1.0, \
    /*        inx = */      iCH3CO, \
    /* isElectron = */      false, \
@@ -871,7 +871,7 @@
 // CH2CHO
 #define iCH2CHO 31
 #define CH2CHO { \
-   /*       Name = */      (char*)("CH2CHO"), \
+   /*       Name = */      ("CH2CHO"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*3.0+0.015999*1.0, \
    /*        inx = */      iCH2CHO, \
    /* isElectron = */      false, \
@@ -897,7 +897,7 @@
 // CH2CO
 #define iCH2CO 32
 #define CH2CO { \
-   /*       Name = */      (char*)("CH2CO"), \
+   /*       Name = */      ("CH2CO"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*2.0+0.015999*1.0, \
    /*        inx = */      iCH2CO, \
    /* isElectron = */      false, \
@@ -923,7 +923,7 @@
 // HCCO
 #define iHCCO 33
 #define HCCO { \
-   /*       Name = */      (char*)("HCCO"), \
+   /*       Name = */      ("HCCO"), \
    /*          W = */      0.012010999999999999*2.0+0.001008*1.0+0.015999*1.0, \
    /*        inx = */      iHCCO, \
    /* isElectron = */      false, \
@@ -949,7 +949,7 @@
 // C3H6
 #define iC3H6 34
 #define C3H6 { \
-   /*       Name = */      (char*)("C3H6"), \
+   /*       Name = */      ("C3H6"), \
    /*          W = */      0.012010999999999999*3.0+0.001008*6.0, \
    /*        inx = */      iC3H6, \
    /* isElectron = */      false, \
@@ -975,7 +975,7 @@
 // C3H5-A
 #define iC3H5MA 35
 #define C3H5MA { \
-   /*       Name = */      (char*)("C3H5-A"), \
+   /*       Name = */      ("C3H5-A"), \
    /*          W = */      0.012010999999999999*3.0+0.001008*5.0, \
    /*        inx = */      iC3H5MA, \
    /* isElectron = */      false, \
@@ -1001,7 +1001,7 @@
 // CHO+
 #define iCHOP 36
 #define CHOP { \
-   /*       Name = */      (char*)("CHO+"), \
+   /*       Name = */      ("CHO+"), \
    /*          W = */      0.012010999999999999*1.0+5.485799088728284e-07*-1.0+0.001008*1.0+0.015999*1.0, \
    /*        inx = */      iCHOP, \
    /* isElectron = */      false, \
@@ -1027,7 +1027,7 @@
 // C2H3O+
 #define iC2H3OP 37
 #define C2H3OP { \
-   /*       Name = */      (char*)("C2H3O+"), \
+   /*       Name = */      ("C2H3O+"), \
    /*          W = */      0.012010999999999999*2.0+5.485799088728284e-07*-1.0+0.001008*3.0+0.015999*1.0, \
    /*        inx = */      iC2H3OP, \
    /* isElectron = */      false, \
@@ -1053,7 +1053,7 @@
 // CH5O+
 #define iCH5OP 38
 #define CH5OP { \
-   /*       Name = */      (char*)("CH5O+"), \
+   /*       Name = */      ("CH5O+"), \
    /*          W = */      0.012010999999999999*1.0+5.485799088728284e-07*-1.0+0.001008*5.0+0.015999*1.0, \
    /*        inx = */      iCH5OP, \
    /* isElectron = */      false, \
@@ -1079,7 +1079,7 @@
 // H3O+
 #define iH3OP 39
 #define H3OP { \
-   /*       Name = */      (char*)("H3O+"), \
+   /*       Name = */      ("H3O+"), \
    /*          W = */      5.485799088728284e-07*-1.0+0.001008*3.0+0.015999*1.0, \
    /*        inx = */      iH3OP, \
    /* isElectron = */      false, \
@@ -1105,7 +1105,7 @@
 // OH-
 #define iOHM 40
 #define OHM { \
-   /*       Name = */      (char*)("OH-"), \
+   /*       Name = */      ("OH-"), \
    /*          W = */      5.485799088728284e-07*1.0+0.001008*1.0+0.015999*1.0, \
    /*        inx = */      iOHM, \
    /* isElectron = */      false, \
@@ -1131,7 +1131,7 @@
 // O2-
 #define iO2M 41
 #define O2M { \
-   /*       Name = */      (char*)("O2-"), \
+   /*       Name = */      ("O2-"), \
    /*          W = */      5.485799088728284e-07*1.0+0.015999*2.0, \
    /*        inx = */      iO2M, \
    /* isElectron = */      false, \
@@ -1157,7 +1157,7 @@
 // E
 #define iE 42
 #define E { \
-   /*       Name = */      (char*)("E"), \
+   /*       Name = */      ("E"), \
    /*          W = */      5.485799088728284e-07*1.0, \
    /*        inx = */      iE, \
    /* isElectron = */      true, \
@@ -13478,14 +13478,14 @@
 
 #ifndef __CUDACC__
 inline Mix::Mix(const Config &config) :
-species({N2, H2, H, O2, O, H2O, OH, H2O2,
+species{N2, H2, H, O2, O, H2O, OH, H2O2,
          HO2, CO, CO2, CH4, CH3, CH2, CH2_S, C,
          CH, CH3O2, CH3OH, CH3O, CH2OH, CH2O, HCO, C2H6,
          C2H5, C2H4, C2H3, C2H2, C2H, CH3CHO, CH3CO, CH2CHO,
          CH2CO, HCCO, C3H6, C3H5MA, CHOP, C2H3OP, CH5OP, H3OP,
-         OHM, O2M, E }),
+         OHM, O2M, E },
 ions{iCHOP, iC2H3OP, iCH5OP, iH3OP, iOHM, iO2M, iE },
-reactions({R1, R2, R4, R6, R9, R10, R11, R12,
+reactions{R1, R2, R4, R6, R9, R10, R11, R12,
          R13, R14, R15, R16, R17, R18, R19, R20,
          R23, R24, R25, R26, R28, R29, R30, R31,
          R32, R33, R34, R35, R36, R37, R38, R39,
@@ -13538,13 +13538,13 @@ reactions({R1, R2, R4, R6, R9, R10, R11, R12,
          R436, R437, R438, R439, R440, R441, R442, R443,
          R444, R445, R446, R447, R448, R449, R450, R451,
          R452, R453, R454, R455, R456, R457, R458, R459,
-         R460, R461, R462 }),
-ThirdbodyReactions({R0, R3, R5, R7, R117, R149, R220, R278,
-         R327, R463 }),
-FalloffReactions({R8, R21, R22, R27, R46, R60, R76, R77,
+         R460, R461, R462 },
+ThirdbodyReactions{R0, R3, R5, R7, R117, R149, R220, R278,
+         R327, R463 },
+FalloffReactions{R8, R21, R22, R27, R46, R60, R76, R77,
          R78, R108, R109, R127, R128, R129, R130, R140,
          R148, R162, R181, R193, R194, R203, R207, R208,
-         R209, R225, R343 })
+         R209, R225, R343 }
 {
 // This executable is expecting CH4_43SpIonsMix in the input file
 assert(config.Flow.mixture.type == MixtureModel_CH4_43SpIonsMix);

@@ -29,7 +29,8 @@
 
 import "regent"
 
-return function(SCHEMA, TYPES, Fluid_columns) local Exports = {}
+return function(SCHEMA, TYPES,
+                zones_partitions, ghost_partitions) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -44,6 +45,10 @@ local pow  = regentlib.pow(double)
 local fabs = regentlib.fabs(double)
 
 local COEFFS = terralib.includec("prometeo_metric_coeffs.h")
+
+-- Types
+local Fluid_columns = TYPES.Fluid_columns
+local bBoxType      = TYPES.bBoxType
 
 -- Node types
 local Std_node   = CONST.Std_node
@@ -124,8 +129,8 @@ function Exports.GetKennedyCoeff(t, n) return rexpr KennedyCoeff[t][n] end end
 -- OPERATORS ROUTINES
 -------------------------------------------------------------------------------
 
-__demand(__inline)
-task Exports.InitializeOperators(Fluid : region(ispace(int3d), Fluid_columns),
+local __demand(__inline)
+task InitializeOperators(Fluid : region(ispace(int3d), Fluid_columns),
                                  tiles : ispace(int3d),
                                  p_All : partition(disjoint, Fluid, tiles))
 where
@@ -143,7 +148,7 @@ do
    for c in tiles do fill((p_All[c]).nType_z, Std_node) end
 end
 
-Exports.mkCorrectGhostOperators = terralib.memoize(function(sdir)
+local mkCorrectGhostOperators = terralib.memoize(function(sdir)
    local CorrectGhostOperators
 
    local dir
@@ -202,6 +207,7 @@ Exports.mkCorrectGhostOperators = terralib.memoize(function(sdir)
 
       var isLeftCollocated = (BCLeft == SCHEMA.FlowBC_NSCBC_Inflow or
                               BCLeft == SCHEMA.FlowBC_NSCBC_Outflow or
+                              BCLeft == SCHEMA.FlowBC_NSCBC_FarField or
                               BCLeft == SCHEMA.FlowBC_IncomingShock or
                               BCLeft == SCHEMA.FlowBC_RecycleRescaling)
 
@@ -212,6 +218,7 @@ Exports.mkCorrectGhostOperators = terralib.memoize(function(sdir)
 
       var isRightCollocated = (BCRight == SCHEMA.FlowBC_NSCBC_Inflow or
                                BCRight == SCHEMA.FlowBC_NSCBC_Outflow or
+                               BCRight == SCHEMA.FlowBC_NSCBC_FarField or
                                BCRight == SCHEMA.FlowBC_IncomingShock or
                                BCRight == SCHEMA.FlowBC_RecycleRescaling)
 
@@ -258,14 +265,39 @@ Exports.mkCorrectGhostOperators = terralib.memoize(function(sdir)
    return CorrectGhostOperators
 end)
 
+__demand(__inline)
+task Exports.InitializeOperators(Fluid : region(ispace(int3d), Fluid_columns),
+                                 tiles : ispace(int3d),
+                                 Fluid_Zones : zones_partitions(Fluid, tiles),
+                                 config    : SCHEMA.Config,
+                                 xBnum : int32, yBnum : int32, zBnum : int32)
+where
+   reads writes(Fluid)
+do
+   -- Unpack the partitions that we are going to need
+   var {p_All} = Fluid_Zones
+
+   -- Initialize the internal operators
+   InitializeOperators(Fluid, tiles, p_All)
+
+   -- Enforce BCs on the operators
+   __demand(__index_launch)
+   for c in tiles do [mkCorrectGhostOperators("x")](p_All[c], Fluid.bounds, config.BC.xBCLeft.type, config.BC.xBCRight.type, xBnum, config.Grid.xNum) end
+   __demand(__index_launch)
+   for c in tiles do [mkCorrectGhostOperators("y")](p_All[c], Fluid.bounds, config.BC.yBCLeft.type, config.BC.yBCRight.type, yBnum, config.Grid.yNum) end
+   __demand(__index_launch)
+   for c in tiles do [mkCorrectGhostOperators("z")](p_All[c], Fluid.bounds, config.BC.zBCLeft.type, config.BC.zBCRight.type, zBnum, config.Grid.zNum) end
+
+end
+
 -------------------------------------------------------------------------------
 -- METRIC ROUTINES
 -------------------------------------------------------------------------------
 
-extern task Exports.InitializeMetric(MetricGhosts : region(ispace(int3d), Fluid_columns),
-                                     Fluid : region(ispace(int3d), Fluid_columns),
-                                     Fluid_bounds : rect3d,
-                                     Grid_xWidth : double, Grid_yWidth : double, Grid_zWidth : double)
+local extern task InitializeMetric(MetricGhosts : region(ispace(int3d), Fluid_columns),
+                                   Fluid : region(ispace(int3d), Fluid_columns),
+                                   Fluid_bounds : rect3d,
+                                   bBox : bBoxType)
 where
    reads(MetricGhosts.centerCoordinates),
    reads(MetricGhosts.{nType_x, nType_y, nType_z}),
@@ -273,13 +305,13 @@ where
    writes(Fluid.{dcsi_d, deta_d, dzet_d}),
    writes(Fluid.{dcsi_s, deta_s, dzet_s})
 end
-Exports.InitializeMetric:set_task_id(TYPES.TID_InitializeMetric)
---for k, v in pairs(Exports.InitializeMetric:get_params_struct():getentries()) do
+InitializeMetric:set_task_id(TYPES.TID_InitializeMetric)
+--for k, v in pairs(InitializeMetric:get_params_struct():getentries()) do
 --   print(k, v)
 --   for k2, v2 in pairs(v) do print(k2, v2) end
 --end
 
-Exports.mkCorrectGhostMetric = terralib.memoize(function(sdir)
+local mkCorrectGhostMetric = terralib.memoize(function(sdir)
    local CorrectGhostMetric
 
    local nType
@@ -308,11 +340,39 @@ Exports.mkCorrectGhostMetric = terralib.memoize(function(sdir)
    elseif sdir == "z" then
       CorrectGhostMetric:set_task_id(TYPES.TID_CorrectGhostMetricZ)
    end
-   --for k, v in pairs(Exports.InitializeMetric:get_params_struct():getentries()) do
-   --   print(k, v)
-   --   for k2, v2 in pairs(v) do print(k2, v2) end
-   --end
    return CorrectGhostMetric
 end)
+
+__demand(__inline)
+task Exports.InitializeMetric(Fluid : region(ispace(int3d), Fluid_columns),
+                                  tiles : ispace(int3d),
+                                  Fluid_Zones : zones_partitions(Fluid, tiles),
+                                  Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                  bBox   : bBoxType,
+                                  config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   -- Unpack the partitions that we are going to need
+   var {p_All} = Fluid_Zones
+   var {p_MetricGhosts} = Fluid_Ghost
+
+   -- Initialize internal metrics
+   __demand(__index_launch)
+   for c in tiles do
+      InitializeMetric(p_MetricGhosts[c],
+                       p_All[c],
+                       Fluid.bounds,
+                       bBox)
+   end
+
+   -- Enforce BCs on the metrics
+   __demand(__index_launch)
+   for c in tiles do [mkCorrectGhostMetric("x")](p_All[c]) end
+   __demand(__index_launch)
+   for c in tiles do [mkCorrectGhostMetric("y")](p_All[c]) end
+   __demand(__index_launch)
+   for c in tiles do [mkCorrectGhostMetric("z")](p_All[c]) end
+end
 
 return Exports end

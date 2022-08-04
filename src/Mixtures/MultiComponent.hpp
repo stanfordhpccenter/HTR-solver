@@ -147,7 +147,7 @@ struct Mix {
    inline Mix(const Config &config);
 #endif
 
-   inline char* GetSpeciesName(const int i) const;
+   inline const char* GetSpeciesName(const int i) const;
 
    inline int FindSpecies(const char *Name) const;
 

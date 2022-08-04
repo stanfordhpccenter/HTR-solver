@@ -10,9 +10,10 @@ import subprocess
 import h5py
 import pandas
 
-# load local modules
+# load HTR modules
 sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
 import MulticomponentMix
+import HTRrestart
 
 dir_name = os.path.join(os.environ['HTR_DIR'], 'testcases/Speelman_DV250')
 input_file = os.path.join(dir_name, 'Speelman.json')
@@ -40,40 +41,21 @@ Ref = pandas.read_csv(ref_file, delim_whitespace=True, encoding= "unicode_escape
 # Process result file                                                        #
 ##############################################################################
 def process(nstep):
-   filename = os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/0,0,0-0,'+str(yNum+1)+',0.hdf')
-#   filename = os.path.join(dir_name, 'data_old/fluid_iter'+str(nstep).zfill(10)+'/0,0,0-0,'+str(yNum+1)+',0.hdf')
-   exists = os.path.isfile(filename)
-   if (not exists):
-      # merge files from different tiles
-      merge_command = 'python {} {}'.format(os.path.expandvars('$HTR_DIR/scripts/merge.py'),
-                                            os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/*.hdf'))
-      mv_command = 'mv {} {}'.format('./0,0,0-'+str(xNum+1)+','+str(yNum+1)+',0.hdf',
-                                    os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/'))
-      try:
-         subprocess.call(merge_command, shell=True)
-      except OSError:
-         print("Failed command: {}".format(merge_command))
-         sys.exit()
-      try:
-         subprocess.call(   mv_command, shell=True)
-      except OSError:
-         print("Failed command: {}".format(mv_command))
-         sys.exit()
 
 ##############################################################################
 # Read HTR output data                                                       #
 ##############################################################################
-
-   f = h5py.File(filename, 'r')
+   restart = HTRrestart.HTRrestart(data)
+   restart.attach(sampleDir=os.path.join(dir_name, 'sample0'), step=nstep)
 
    # Get the data
-   x           = f["centerCoordinates"][:][0,:,0,1]
-   pressure    = f["pressure"][:][0,:,0]
-   temperature = f["temperature"][:][0,:,0]
-   density     = f["rho"][:][0,:,0]
-   velocity    = f["velocity"][:][0,:,0,:]
-   molarFracs  = f["MolarFracs"][:][0,:,0,:]
-   ePotential  = f["electricPotential"][:][0,:,0]
+   x           = restart.load("centerCoordinates")[0,:,0,1]
+   pressure    = restart.load("pressure"         )[0,:,0]
+   temperature = restart.load("temperature"      )[0,:,0]
+   density     = restart.load("rho"              )[0,:,0]
+   velocity    = restart.load("velocity"         )[0,:,0,:]
+   molarFracs  = restart.load("MolarFracs"       )[0,:,0,:]
+   ePotential  = restart.load("electricPotential")[0,:,0]
 
    return x*mix.LRef, pressure*mix.PRef, temperature*mix.TRef, density*mix.rhoRef, velocity*mix.uRef, molarFracs, ePotential*mix.delPhi, f.attrs.get("SpeciesNames")
 

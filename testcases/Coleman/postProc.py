@@ -31,26 +31,18 @@ config = json.load(args.json_file)
 xNum    = config["Grid"]["xNum"]
 yNum    = config["Grid"]["yNum"]
 zNum    = config["Grid"]["zNum"]
-xWidth  = config["Grid"]["xWidth"]
-yWidth  = config["Grid"]["yWidth"]
-zWidth  = config["Grid"]["zWidth"]
-xOrigin = config["Grid"]["origin"][0]
-yOrigin = config["Grid"]["origin"][1]
-zOrigin = config["Grid"]["origin"][2]
+xWidth  = config["Grid"]["GridInput"]["width"][0]
+yWidth  = config["Grid"]["GridInput"]["width"][1]
+zWidth  = config["Grid"]["GridInput"]["width"][2]
+xOrigin = config["Grid"]["GridInput"]["origin"][0]
+yOrigin = config["Grid"]["GridInput"]["origin"][1]
+zOrigin = config["Grid"]["GridInput"]["origin"][2]
 #gamma = data["Flow"]["gamma"]
 
 ##############################################################################
 #                               Compute Grid                                 #
 ##############################################################################
-
-yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
-                            config["Grid"]["yWidth"],
-                            config["Grid"]["yNum"],
-                            config["Grid"]["yType"],
-                            config["Grid"]["yStretching"],
-                            False,
-                            StagMinus=True,
-                            StagPlus=True)
+xGrid, yGrid, zGrid, dx, dy, dz = gridGen.getCellCenters(config)
 
 ##############################################################################
 #                          Load reference solution                           #
@@ -124,9 +116,9 @@ velocity_rey[:,0] -= velocity_rey  [::-1,0]
 velocity_rey[:,1] += velocity_rey  [::-1,1]
 velocity_rey[:,2] -= velocity_rey  [::-1,2]
 
-rho_avg += rho_avg [::-1] 
+rho_avg += rho_avg [::-1]
 rho_rms += rho_rms [::-1]
-mu_avg  += mu_avg [::-1] 
+mu_avg  += mu_avg [::-1]
 mu_rms  += mu_rms [::-1]
 lam_avg += lam_avg [::-1]
 lam_rms += lam_rms [::-1]
@@ -170,16 +162,16 @@ MolarFracs_rms  = np.sqrt(np.maximum( MolarFracs_rms -  MolarFracs_avg**2, 0.0))
 velocity_rms    = velocity_rms -    velocity_avg**2
 
 rho_avg  /= weight
-rho_rms  /= weight 
+rho_rms  /= weight
 mu_avg  /= weight
-mu_rms  /= weight 
-lam_avg /= weight 
-lam_rms /= weight 
-SoS_avg /= weight 
-SoS_rms /= weight 
+mu_rms  /= weight
+lam_avg /= weight
+lam_rms /= weight
+SoS_avg /= weight
+SoS_rms /= weight
 for isp, sp in enumerate(SpeciesNames):
-   Di_avg[:,isp] /= weight 
-   Di_rms[:,isp] /= weight 
+   Di_avg[:,isp] /= weight
+   Di_rms[:,isp] /= weight
 
 mu_rms  = np.sqrt(np.maximum( mu_rms -  mu_avg**2, 0.0))
 lam_rms = np.sqrt(np.maximum(lam_rms - lam_avg**2, 0.0))
@@ -263,7 +255,7 @@ figureDir = "Figures"
 if not os.path.exists(figureDir):
    os.makedirs(figureDir)
 
-yovh = yGrid[:]/config["Grid"]["yWidth"]*2
+yovh = yGrid[:]/config["Grid"]["GridInput"]["width"][1]*2
 
 # Mean profiles
 plt.figure(1)

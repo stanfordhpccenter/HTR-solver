@@ -7,6 +7,10 @@ import os
 import h5py
 import pandas as pd
 
+# load HTR modules
+sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
+import HTRrestart
+
 ###########################################################################
 ###                         Read Exact Solution                          ##
 ###########################################################################
@@ -48,11 +52,9 @@ def process(case, i):
       data = json.load(f)
 
    xNum = data["Grid"]["xNum"]
-   xWidth  = data["Grid"]["xWidth"]
+   xWidth  = data["Grid"]["GridInput"]["width"][0]
 
-   dt    = data["Integrator"]["fixedDeltaTime"]
    nstep = data["Integrator"]["maxIter"]
-   time = dt*nstep
 
    filename = os.path.join(dir_name, str(case)+'/sample0/fluid_iter'+str(nstep).zfill(10)+'/0,0,0-'+str(xNum+1)+',0,0.hdf')
 
@@ -60,38 +62,37 @@ def process(case, i):
 #                         Read Prometeo Output Data                          #
 ##############################################################################
 
-   f = h5py.File(filename, 'r')
+   restart = HTRrestart.HTRrestart(data)
+   restart.attach(sampleDir=os.path.join(dir_name, str(case)+'/sample0'), step=nstep)
 
-   SpNames = f.attrs.get("SpeciesNames")
+   SpNames = restart.SpeciesNames
 
    # Get the data
-   x   = f['centerCoordinates'][0,0,:][:,0]
-   dx  = f['cellWidth'        ][0,0,:][:,0]
-   u   = f['velocity'         ][0,0,:][:,0]
-   p   = f['pressure'         ][0,0,:]
-   rho = f['rho'              ][0,0,:]
-   T   = f['temperature'      ][0,0,:]
-   Xi  = f['MolarFracs'       ][0,0,:][:,:]
+   x   = restart.load('centerCoordinates')[0,0,:][:,0]
+   u   = restart.load('velocity'         )[0,0,:][:,0]
+   p   = restart.load('pressure'         )[0,0,:]
+   rho = restart.load('rho'              )[0,0,:]
+   T   = restart.load('temperature'      )[0,0,:]
+   Xi  = restart.load('MolarFracs'       )[0,0,:][:,:]
 
    u   /= np.sqrt(1.4)
    #p   /= abs(  p[xNum-1])
    #rho /= abs(rho[xNum-1])
 
-
    ##############################################################################
    #                                     Plot                                   #
    ##############################################################################
-   
+
    plt.figure(1)
    xExact, uExact = readExact("u.csv")
    plt.plot(xExact, uExact,  'xk', label='Reference solution')
    plt.plot(     x,    u, '-b', label='HTR solver')
    plt.xlabel(r'$x$'    , fontsize = 20)
    plt.ylabel(r'$u/a_R$', fontsize = 20)
-   plt.ylim(-0.25, 3.2) 
+   plt.ylim(-0.25, 3.2)
    plt.legend()
    plt.savefig('Velocity_'+str(case)+'.eps', bbox_inches='tight')
-   
+
    plt.figure(2)
    xExact, pExact = readExact("p.csv")
    plt.plot(xExact, pExact,  'xk', label='Reference solution')
@@ -100,7 +101,7 @@ def process(case, i):
    plt.ylabel(r'$p/p_R$', fontsize = 20)
    plt.legend()
    plt.savefig('Pressure_'+str(case)+'.eps', bbox_inches='tight')
-   
+
    plt.figure(3)
    xExact, rhoExact = readExact("rho.csv")
    plt.plot(xExact, rhoExact,  'xk', label='Reference solution')
@@ -109,7 +110,7 @@ def process(case, i):
    plt.ylabel(r'$\rho/\rho_R$', fontsize = 20)
    plt.legend()
    plt.savefig('Density_'+str(case)+'.eps', bbox_inches='tight')
-   
+
    plt.figure(4)
    plt.xlabel(r'$x$'  , fontsize = 20)
    plt.ylabel(r'$X_i$', fontsize = 20)

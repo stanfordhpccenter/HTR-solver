@@ -63,7 +63,7 @@
 // CH4
 #define iCH4 0
 #define CH4 { \
-   /*      Name = */       (char*)("CH4"), \
+   /*      Name = */       ("CH4"), \
    /*         W = */       12.0107e-3 + 4.0*1.00784e-3, \
    /*       inx = */       iCH4, \
    /*   cpCoeff = */       { \
@@ -88,7 +88,7 @@
 // O2
 #define iO2 1
 #define O2 { \
-   /*      Name = */       (char*)("O2"), \
+   /*      Name = */       ("O2"), \
    /*         W = */       2*15.9994e-3, \
    /*       inx = */       iO2, \
    /*   cpCoeff = */       { \
@@ -113,7 +113,7 @@
 // CO2
 #define iCO2 2
 #define CO2 { \
-   /*      Name = */       (char*)("CO2"), \
+   /*      Name = */       ("CO2"), \
    /*         W = */       12.0107e-3+2*15.9994e-3, \
    /*       inx = */       iCO2, \
    /*   cpCoeff = */       { \
@@ -138,7 +138,7 @@
 // H2O
 #define iH2O 3
 #define H2O { \
-   /*      Name = */       (char*)("H2O"), \
+   /*      Name = */       ("H2O"), \
    /*         W = */       2*1.00784e-3 + 15.9994e-3, \
    /*       inx = */       iH2O, \
    /*   cpCoeff = */       { \
@@ -185,8 +185,8 @@
 
 #ifndef __CUDACC__
 inline Mix::Mix(const Config &config) :
-   species({CH4, O2, CO2, H2O}),
-   reactions({R1})
+   species{CH4, O2, CO2, H2O},
+   reactions{R1}
 {
    // This executable is expecting CH41StMix in the input file
    assert(config.Flow.mixture.type == MixtureModel_CH41StMix);

@@ -32,15 +32,18 @@
 #include "cuda_utils.hpp"
 
 //-----------------------------------------------------------------------------
-// KERNEL FOR UpdateShockSensorTask
+// KERNEL FOR UpdateDucrosSensorTask
 //-----------------------------------------------------------------------------
 
-template<direction dir>
 __global__
-void ComputeDucrosSensor_kernel(const DeferredBuffer<double, 3> DucrosS,
-                                const AccessorRO<  Vec3, 3>      vGradX,
-                                const AccessorRO<  Vec3, 3>      vGradY,
-                                const AccessorRO<  Vec3, 3>      vGradZ,
+void ComputeDucrosSensor_kernel(const AccessorWO<double, 3> DucrosSensor,
+                                const AccessorRO<  Vec3, 3> velocity,
+                                const AccessorRO<   int, 3> nType_csi,
+                                const AccessorRO<   int, 3> nType_eta,
+                                const AccessorRO<   int, 3> nType_zet,
+                                const AccessorRO<double, 3> dcsi_d,
+                                const AccessorRO<double, 3> deta_d,
+                                const AccessorRO<double, 3> dzet_d,
                                 const Rect<3> my_bounds,
                                 const Rect<3> Fluid_bounds,
                                 const double eps,
@@ -56,15 +59,68 @@ void ComputeDucrosSensor_kernel(const DeferredBuffer<double, 3> DucrosS,
       const Point<3> p = Point<3>(x + my_bounds.lo.x,
                                   y + my_bounds.lo.y,
                                   z + my_bounds.lo.z);
-      DucrosS[p] = DucrosSensor(vGradX[p], vGradY[p], vGradZ[p], eps);
+      DucrosSensor[p] = UpdateDucrosSensorTask::DucrosSensor(velocity,
+                                     nType_csi, nType_eta, nType_zet,
+                                     dcsi_d, deta_d, dzet_d,
+                                     p, Fluid_bounds, eps);
+
    }
 }
 
+__host__
+void UpdateDucrosSensorTask::gpu_base_impl(
+                      const Args &args,
+                      const std::vector<PhysicalRegion> &regions,
+                      const std::vector<Future>         &futures,
+                      Context ctx, Runtime *runtime)
+{
+   assert(regions.size() == 3);
+   assert(futures.size() == 0);
+
+   // Accessors for variables in the Ghost regions
+   const AccessorRO<  Vec3, 3> acc_velocity         (regions[0], FID_velocity);
+
+   // Accessors for metrics
+   const AccessorRO<   int, 3> acc_nType_x          (regions[1], FID_nType_x);
+   const AccessorRO<   int, 3> acc_nType_y          (regions[1], FID_nType_y);
+   const AccessorRO<   int, 3> acc_nType_z          (regions[1], FID_nType_z);
+   const AccessorRO<double, 3> acc_dcsi_d           (regions[1], FID_dcsi_d);
+   const AccessorRO<double, 3> acc_deta_d           (regions[1], FID_deta_d);
+   const AccessorRO<double, 3> acc_dzet_d           (regions[1], FID_dzet_d);
+
+   // Accessors for shock sensor
+   const AccessorWO<double, 3> acc_DucrosSensor     (regions[2], FID_DucrosSensor);
+
+   // Extract execution domains
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
+   Rect<3> Fluid_bounds = args.Fluid_bounds;
+
+   // Compute vorticity scale
+   const double eps = max(args.vorticityScale*args.vorticityScale, 1e-6);
+
+   // Launch the kernel to update the Ducros sensor
+   const int threads_per_block = 256;
+   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
+   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
+                                   (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
+                                   (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
+   ComputeDucrosSensor_kernel<<<num_blocks_3d, TPB_3d>>>(
+                              acc_DucrosSensor, acc_velocity,
+                              acc_nType_x, acc_nType_y, acc_nType_z,
+                              acc_dcsi_d, acc_deta_d, acc_dzet_d,
+                              r_MyFluid, Fluid_bounds, eps,
+                              getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
+}
+
+//-----------------------------------------------------------------------------
+// KERNEL FOR UpdateShockSensorTask
+//-----------------------------------------------------------------------------
+
 template<direction dir>
 __global__
-void UpdateShockSensor_kernel(const DeferredBuffer<double, 3> DucrosS,
-                              const AccessorRO<VecNEq, 3>   Conserved,
-                              const AccessorRO<   int, 3>       nType,
+void UpdateShockSensor_kernel(const AccessorRO<double, 3> DucrosSensor,
+                              const AccessorRO<VecNEq, 3> Conserved,
+                              const AccessorRO<   int, 3> nType,
                               const AccessorWO<  bool, 3> shockSensor,
                               const Rect<3> my_bounds,
                               const Rect<3> Fluid_bounds,
@@ -88,12 +144,12 @@ void UpdateShockSensor_kernel(const DeferredBuffer<double, 3> DucrosS,
       const Point<3> pP3 = warpPeriodic<dir, Plus >(Fluid_bounds, p, size, offP3(nType[p]));
 
       const double Phi = max(max(max(max(max(
-                           DucrosS[pM2],
-                           DucrosS[pM1]),
-                           DucrosS[p  ]),
-                           DucrosS[pP1]),
-                           DucrosS[pP2]),
-                           DucrosS[pP3]);
+                           DucrosSensor[pM2],
+                           DucrosSensor[pM1]),
+                           DucrosSensor[p  ]),
+                           DucrosSensor[pP1]),
+                           DucrosSensor[pP2]),
+                           DucrosSensor[pP3]);
 
       bool sensor = true;
       #pragma unroll
@@ -113,14 +169,12 @@ void UpdateShockSensorTask<dir>::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 4);
+   assert(regions.size() == 3);
    assert(futures.size() == 0);
 
    // Accessors for variables in the Ghost regions
    const AccessorRO<VecNEq, 3> acc_Conserved        (regions[0], FID_Conserved);
-   const AccessorRO<  Vec3, 3> acc_vGradX           (regions[0], FID_velocityGradientX);
-   const AccessorRO<  Vec3, 3> acc_vGradY           (regions[0], FID_velocityGradientY);
-   const AccessorRO<  Vec3, 3> acc_vGradZ           (regions[0], FID_velocityGradientZ);
+   const AccessorRO<double, 3> acc_DucrosSensor     (regions[0], FID_DucrosSensor);
 
    // Accessors for node type
    const AccessorRO<   int, 3> acc_nType            (regions[1], FID_nType);
@@ -129,43 +183,21 @@ void UpdateShockSensorTask<dir>::gpu_base_impl(
    const AccessorWO<  bool, 3> acc_shockSensor      (regions[2], FID_shockSensor);
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
    const coord_t size = getSize<dir>(Fluid_bounds);
 
-   // Compute vorticity scale
-   const double eps = max(args.vorticityScale*args.vorticityScale, 1e-6);
-
-   // Store Ducros sensor in a DeferredBuffer
-   Domain GhostDomain = runtime->get_index_space_domain(ctx, args.Ghost.get_index_space());
-   DeferredBuffer<double, 3> DucrosSensor(Memory::GPU_FB_MEM, GhostDomain);
-   {
-   const int threads_per_block = 256;
-   for (RectInDomainIterator<3> Rit(GhostDomain); Rit(); Rit++) {
-      const dim3 TPB_3d = splitThreadsPerBlock<dir>(threads_per_block, *Rit);
-      const dim3 num_blocks_3d = dim3((getSize<Xdir>(*Rit) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                      (getSize<Ydir>(*Rit) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                      (getSize<Zdir>(*Rit) + (TPB_3d.z - 1)) / TPB_3d.z);
-      ComputeDucrosSensor_kernel<dir><<<num_blocks_3d, TPB_3d>>>(
-                              DucrosSensor, acc_vGradX, acc_vGradY, acc_vGradZ,
-                              (*Rit), Fluid_bounds, eps,
-                              getSize<Xdir>(*Rit), getSize<Ydir>(*Rit), getSize<Zdir>(*Rit));
-   }
-   }
-
    // Launch the kernel to update the shock sensor
-   {
    const int threads_per_block = 256;
    const dim3 TPB_3d = splitThreadsPerBlock<dir>(threads_per_block, r_MyFluid);
    const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
                                    (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
                                    (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
    UpdateShockSensor_kernel<dir><<<num_blocks_3d, TPB_3d>>>(
-                              DucrosSensor, acc_Conserved,
+                              acc_DucrosSensor, acc_Conserved,
                               acc_nType, acc_shockSensor,
                               r_MyFluid, Fluid_bounds,
                               getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid), size);
-   }
 }
 
 template void UpdateShockSensorTask<Xdir>::gpu_base_impl(

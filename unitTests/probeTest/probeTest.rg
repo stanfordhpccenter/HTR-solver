@@ -3,67 +3,69 @@ import "regent"
 -- IMPORTS
 -------------------------------------------------------------------------------
 
-local C = regentlib.c
+   local C = regentlib.c
 local fabs = regentlib.fabs(double)
-local SCHEMA = terralib.includec("config_schema.h")
-local UTIL = require 'util-desugared'
+   local SCHEMA = terralib.includec("config_schema.h")
+   local UTIL = require 'util'
 
-local Config = SCHEMA.Config
+   local Config = SCHEMA.Config
 
-local CONST = require "prometeo_const"
-local MACRO = require "prometeo_macro"
+   local CONST = require "prometeo_const"
+   local MACRO = require "prometeo_macro"
 
-local Primitives = CONST.Primitives
-local Properties = CONST.Properties
+   local Primitives = CONST.Primitives
+   local Properties = CONST.Properties
 
--------------------------------------------------------------------------------
--- ACTIVATE ELECTRIC FIELD SOLVER
--------------------------------------------------------------------------------
+   -------------------------------------------------------------------------------
+   -- ACTIVATE ELECTRIC FIELD SOLVER
+   -------------------------------------------------------------------------------
 
-local ELECTRIC_FIELD = false
-if os.getenv("ELECTRIC_FIELD") == "1" then
+   local ELECTRIC_FIELD = false
+   if os.getenv("ELECTRIC_FIELD") == "1" then
    ELECTRIC_FIELD = true
    print("#############################################################################")
    print("WARNING: You are compiling with electric field solver.")
    print("#############################################################################")
-end
+   end
 
-local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
-if ELECTRIC_FIELD then
+   local types_inc_flags = terralib.newlist({"-DEOS="..os.getenv("EOS")})
+   if ELECTRIC_FIELD then
    types_inc_flags:insert("-DELECTRIC_FIELD")
-end
-local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
-local Fluid_columns = TYPES.Fluid_columns
-local MIX = (require 'prometeo_mixture')(SCHEMA, TYPES)
-local nSpec = MIX.nSpec
-local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
+   end
+   local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
+   local Fluid_columns = TYPES.Fluid_columns
+   local MIX = (require 'prometeo_mixture')(SCHEMA, TYPES)
+   local nSpec = MIX.nSpec
+   local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
---External modules
-local IO = (require 'prometeo_IO')(SCHEMA)
-local PROBES = (require 'prometeo_probe')(SCHEMA, MIX, IO, Fluid_columns)
+   --External modules
+   local IO = (require 'prometeo_IO')(SCHEMA)
+   local PROBES = (require 'prometeo_probe')(SCHEMA, MIX, IO, Fluid_columns)
 
--- Test parameters
-local Npx = 16
-local Npy = 16
-local Npz = 16
-local Nx = 2
-local Ny = 2
-local Nz = 2
+   -- Test parameters
+   local Npx = 16
+   local Npy = 16
+   local Npz = 16
+   local Nx = 2
+   local Ny = 2
+   local Nz = 2
 
-local Nsam = 1
-local fromCell = rexpr array(  8,   8,   8) end
-local uptoCell = fromCell
+   local Nsam = 1
+   local fromCell = rexpr array(  8,   8,   8) end
+   local uptoCell = fromCell
 
---local R = rexpr 8.3144598 end
-local P = rexpr 101325.0 end
-local T = rexpr 5000.0 end
+   --local R = rexpr 8.3144598 end
+   local P = rexpr 101325.0 end
+   local T = rexpr 5000.0 end
 
 __demand(__inline)
 task InitializeCell(Fluid : region(ispace(int3d), Fluid_columns))
 where
    writes(Fluid)
 do
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
+   fill(Fluid.dcsi_d, 0.0)
+   fill(Fluid.deta_d, 0.0)
+   fill(Fluid.dzet_d, 0.0)
    fill(Fluid.pressure, [P])
    fill(Fluid.temperature, [T])
 end
@@ -71,10 +73,12 @@ end
 __demand(__inline)
 task InitGeometry(Fluid : region(ispace(int3d), Fluid_columns))
 where
-   writes(Fluid.cellWidth)
+   writes(Fluid.{dcsi_d, deta_d, dzet_d})
 do
    for c in Fluid do
-      Fluid[c].cellWidth = array(1.0, double(c.y), 1.0)
+      Fluid[c].dcsi_d = 1.0
+      Fluid[c].deta_d = 1.0/double(c.y)
+      Fluid[c].dzet_d = 1.0
    end
 end
 
@@ -84,7 +88,7 @@ local function checkProbe(s)
    end
 end
 
-local Probes = PROBES.ProbesList
+local Probes = PROBES.mkProbesList()
 
 local Grid = {
    xBnum = regentlib.newsymbol(),

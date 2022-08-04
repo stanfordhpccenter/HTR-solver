@@ -28,7 +28,10 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "Poisson.hpp"
-#include "omp.h"
+
+#ifdef REALM_USE_OPENMP
+#include <omp.h>
+#endif
 
 // InitFFTplansTask
 /*static*/ const char * const    initFFTplansTask::TASK_NAME = "initFFTplans";
@@ -49,13 +52,13 @@ void initFFTplansTask::cpu_base_impl(
    const AccessorRW<legion_address_space_t, 1> acc_id        (regions[1], FID_id);
 
    // Get size of the FFT execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
    fftw_complex *aux = new fftw_complex[(size_x*size_z)];
 
    // Get index of the plans that we are initializing
-   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, args.s.get_index_space())).lo;
+   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space())).lo;
    // crate plan for direct transform with FFTW
    fftw_make_planner_thread_safe();
    acc_fftw_fwd[p] = fftw_plan_dft_2d(size_x, size_z, aux, aux,  FFTW_FORWARD, FFTW_MEASURE);
@@ -86,7 +89,7 @@ void destroyFFTplansTask::cpu_base_impl(
    const AccessorRW<             fftw_plan, 1> acc_fftw_bwd(regions[0], FID_fftw_bwd);
    const AccessorRW<legion_address_space_t, 1> acc_id      (regions[0], FID_id);
    // Get index of the plans that we are destroying
-   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, args.r.get_index_space())).lo;
+   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[p] == runtime->get_executing_processor(runtime->get_context()).address_space());
    // destroy plan for direct transform with FFTW
@@ -116,13 +119,13 @@ void performDirFFTFromFieldTask::cpu_base_impl(
    const AccessorRO<             fftw_plan, 1> acc_fftw_fwd(regions[2], FID_fftw_fwd);
    const AccessorRO<legion_address_space_t, 1> acc_id      (regions[2], FID_id);
 
-   // Get index of the plans that we are initializing
-   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, args.p.get_index_space())).lo;
+   // Get index of the plans
+   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[plan] == runtime->get_executing_processor(runtime->get_context()).address_space());
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
    const double FFTfact = 1.0/(size_x*size_z);
@@ -180,13 +183,13 @@ void performDirFFTFromMixTask::cpu_base_impl(
    const AccessorRO<             fftw_plan, 1> acc_fftw_fwd(regions[2], FID_fftw_fwd);
    const AccessorRO<legion_address_space_t, 1> acc_id      (regions[2], FID_id);
 
-   // Get index of the plans that we are initializing
-   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, args.p.get_index_space())).lo;
+   // Get index of the plans
+   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[plan] == runtime->get_executing_processor(runtime->get_context()).address_space());
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
    const double FFTfact = 1.0/(size_x*size_z);
@@ -247,13 +250,13 @@ void performInvFFTTask::cpu_base_impl(
    const AccessorRO<             fftw_plan, 1> acc_fftw_bwd(regions[2], FID_fftw_bwd);
    const AccessorRO<legion_address_space_t, 1> acc_id      (regions[2], FID_id);
 
-   // Get index of the plans that we are initializing
-   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, args.p.get_index_space())).lo;
+   // Get index of the plans
+   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[plan] == runtime->get_executing_processor(runtime->get_context()).address_space());
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
 
@@ -315,7 +318,7 @@ void solveTridiagonalsTask::cpu_base_impl(
    const AccessorRO<complex<double>, 1> acc_k2Z (regions[3], FID_k2);
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_y = getSize<Ydir>(bounds);
 
    // Allocate a buffer for the Thomas algorithm of size_y for each thread

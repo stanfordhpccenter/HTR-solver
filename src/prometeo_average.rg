@@ -37,7 +37,7 @@ return function(SCHEMA, MIX, TYPES, PART,
 -------------------------------------------------------------------------------
 local C = regentlib.c
 local sqrt = regentlib.sqrt(double)
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
 local format = require "std/format"
@@ -163,75 +163,77 @@ local HDF_PLANES = (require 'hdf_helper')(int3d, int3d, Averages_columns,
                                                         {},
                                                         {SpeciesNames={nSpec,20}})
 
-Exports.AvgList = {
-   -- 2D averages
-   YZAverages = regentlib.newsymbol(),
-   XZAverages = regentlib.newsymbol(),
-   XYAverages = regentlib.newsymbol(),
-   YZAverages_copy = regentlib.newsymbol(),
-   XZAverages_copy = regentlib.newsymbol(),
-   XYAverages_copy = regentlib.newsymbol(),
-   -- partitions for IO
-   is_Xrakes = regentlib.newsymbol(),
-   is_Yrakes = regentlib.newsymbol(),
-   is_Zrakes = regentlib.newsymbol(),
-   Xrakes = regentlib.newsymbol(),
-   Yrakes = regentlib.newsymbol(),
-   Zrakes = regentlib.newsymbol(),
-   Xrakes_copy = regentlib.newsymbol(),
-   Yrakes_copy = regentlib.newsymbol(),
-   Zrakes_copy = regentlib.newsymbol(),
-   -- partitions for average collection
-   p_Xrakes = regentlib.newsymbol(),
-   p_Yrakes = regentlib.newsymbol(),
-   p_Zrakes = regentlib.newsymbol(),
-   -- considered partitions of the Fluid domain
-   p_Fluid_YZAvg = regentlib.newsymbol("p_Fluid_YZAvg"),
-   p_Fluid_XZAvg = regentlib.newsymbol("p_Fluid_XZAvg"),
-   p_Fluid_XYAvg = regentlib.newsymbol("p_Fluid_XYAvg"),
-   -- considered partitions of the Fluid domain that provide support to gradient stencil
-   p_Gradient_YZAvg = regentlib.newsymbol("p_Gradient_YZAvg"),
-   p_Gradient_XZAvg = regentlib.newsymbol("p_Gradient_XZAvg"),
-   p_Gradient_XYAvg = regentlib.newsymbol("p_Gradient_XYAvg"),
-   -- tiles of Fluid where the average kernels will be launched
-   YZAvg_tiles = regentlib.newsymbol(),
-   XZAvg_tiles = regentlib.newsymbol(),
-   XYAvg_tiles = regentlib.newsymbol(),
+function Exports.mkAvgList()
+   return {
+      -- 2D averages
+      YZAverages = regentlib.newsymbol(),
+      XZAverages = regentlib.newsymbol(),
+      XYAverages = regentlib.newsymbol(),
+      YZAverages_copy = regentlib.newsymbol(),
+      XZAverages_copy = regentlib.newsymbol(),
+      XYAverages_copy = regentlib.newsymbol(),
+      -- partitions for IO
+      is_Xrakes = regentlib.newsymbol(),
+      is_Yrakes = regentlib.newsymbol(),
+      is_Zrakes = regentlib.newsymbol(),
+      Xrakes = regentlib.newsymbol(),
+      Yrakes = regentlib.newsymbol(),
+      Zrakes = regentlib.newsymbol(),
+      Xrakes_copy = regentlib.newsymbol(),
+      Yrakes_copy = regentlib.newsymbol(),
+      Zrakes_copy = regentlib.newsymbol(),
+      -- partitions for average collection
+      p_Xrakes = regentlib.newsymbol(),
+      p_Yrakes = regentlib.newsymbol(),
+      p_Zrakes = regentlib.newsymbol(),
+      -- considered partitions of the Fluid domain
+      p_Fluid_YZAvg = regentlib.newsymbol("p_Fluid_YZAvg"),
+      p_Fluid_XZAvg = regentlib.newsymbol("p_Fluid_XZAvg"),
+      p_Fluid_XYAvg = regentlib.newsymbol("p_Fluid_XYAvg"),
+      -- considered partitions of the Fluid domain that provide support to gradient stencil
+      p_Gradient_YZAvg = regentlib.newsymbol("p_Gradient_YZAvg"),
+      p_Gradient_XZAvg = regentlib.newsymbol("p_Gradient_XZAvg"),
+      p_Gradient_XYAvg = regentlib.newsymbol("p_Gradient_XYAvg"),
+      -- tiles of Fluid where the average kernels will be launched
+      YZAvg_tiles = regentlib.newsymbol(),
+      XZAvg_tiles = regentlib.newsymbol(),
+      XYAvg_tiles = regentlib.newsymbol(),
 
-   -- 1D averages
-   XAverages = regentlib.newsymbol(),
-   YAverages = regentlib.newsymbol(),
-   ZAverages = regentlib.newsymbol(),
-   XAverages_copy = regentlib.newsymbol(),
-   YAverages_copy = regentlib.newsymbol(),
-   ZAverages_copy = regentlib.newsymbol(),
-   -- partitions for average collection
-   YZplanes = regentlib.newsymbol(),
-   XZplanes = regentlib.newsymbol(),
-   XYplanes = regentlib.newsymbol(),
-   -- partitions for IO
-   is_IO_YZplanes = regentlib.newsymbol(),
-   is_IO_XZplanes = regentlib.newsymbol(),
-   is_IO_XYplanes = regentlib.newsymbol(),
-   IO_YZplanes = regentlib.newsymbol(),
-   IO_XZplanes = regentlib.newsymbol(),
-   IO_XYplanes = regentlib.newsymbol(),
-   IO_YZplanes_copy = regentlib.newsymbol(),
-   IO_XZplanes_copy = regentlib.newsymbol(),
-   IO_XYplanes_copy = regentlib.newsymbol(),
-   -- considered partitions of the Fluid domain
-   p_Fluid_XAvg = regentlib.newsymbol("p_Fluid_XAvg"),
-   p_Fluid_YAvg = regentlib.newsymbol("p_Fluid_YAvg"),
-   p_Fluid_ZAvg = regentlib.newsymbol("p_Fluid_ZAvg"),
-   -- considered partitions of the Fluid domain that provide support to gradient stencil
-   p_Gradient_XAvg = regentlib.newsymbol("p_Gradient_YZAvg"),
-   p_Gradient_YAvg = regentlib.newsymbol("p_Gradient_XZAvg"),
-   p_Gradient_ZAvg = regentlib.newsymbol("p_Gradient_XYAvg"),
-   -- tiles of Fluid where the average kernels will be launched
-   XAvg_tiles = regentlib.newsymbol(),
-   YAvg_tiles = regentlib.newsymbol(),
-   ZAvg_tiles = regentlib.newsymbol()
-}
+      -- 1D averages
+      XAverages = regentlib.newsymbol(),
+      YAverages = regentlib.newsymbol(),
+      ZAverages = regentlib.newsymbol(),
+      XAverages_copy = regentlib.newsymbol(),
+      YAverages_copy = regentlib.newsymbol(),
+      ZAverages_copy = regentlib.newsymbol(),
+      -- partitions for average collection
+      YZplanes = regentlib.newsymbol(),
+      XZplanes = regentlib.newsymbol(),
+      XYplanes = regentlib.newsymbol(),
+      -- partitions for IO
+      is_IO_YZplanes = regentlib.newsymbol(),
+      is_IO_XZplanes = regentlib.newsymbol(),
+      is_IO_XYplanes = regentlib.newsymbol(),
+      IO_YZplanes = regentlib.newsymbol(),
+      IO_XZplanes = regentlib.newsymbol(),
+      IO_XYplanes = regentlib.newsymbol(),
+      IO_YZplanes_copy = regentlib.newsymbol(),
+      IO_XZplanes_copy = regentlib.newsymbol(),
+      IO_XYplanes_copy = regentlib.newsymbol(),
+      -- considered partitions of the Fluid domain
+      p_Fluid_XAvg = regentlib.newsymbol("p_Fluid_XAvg"),
+      p_Fluid_YAvg = regentlib.newsymbol("p_Fluid_YAvg"),
+      p_Fluid_ZAvg = regentlib.newsymbol("p_Fluid_ZAvg"),
+      -- considered partitions of the Fluid domain that provide support to gradient stencil
+      p_Gradient_XAvg = regentlib.newsymbol("p_Gradient_YZAvg"),
+      p_Gradient_YAvg = regentlib.newsymbol("p_Gradient_XZAvg"),
+      p_Gradient_ZAvg = regentlib.newsymbol("p_Gradient_XYAvg"),
+      -- tiles of Fluid where the average kernels will be launched
+      XAvg_tiles = regentlib.newsymbol(),
+      YAvg_tiles = regentlib.newsymbol(),
+      ZAvg_tiles = regentlib.newsymbol()
+   }
+end
 
 -------------------------------------------------------------------------------
 -- AVERAGES ROUTINES
@@ -335,14 +337,12 @@ local function mkAddAverages(dir)
                              Fluid_bounds : rect3d,
                              Integrator_deltaTime : double)
    where
-      reads(Ghost.{temperature, MolarFracs}),
+      reads(Ghost.{temperature, MolarFracs, velocity}),
       reads(Fluid.centerCoordinates),
-      reads(Fluid.cellWidth),
       reads(Fluid.{nType_x, nType_y, nType_z}),
       reads(Fluid.{dcsi_d, deta_d, dzet_d}),
-      reads(Fluid.{pressure, MassFracs, velocity}),
+      reads(Fluid.{pressure, MassFracs}),
       reads(Fluid.[Properties]),
-      reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
       reads(Fluid.[additionalVars]),
       reduces+(Averages.[AveragesVars])
    end
@@ -365,14 +365,12 @@ local function mkAdd1DAverages(dir)
                              Fluid_bounds : rect3d,
                              Integrator_deltaTime : double)
    where
-      reads(Ghost.{temperature, MolarFracs}),
+      reads(Ghost.{temperature, MolarFracs, velocity}),
       reads(Fluid.centerCoordinates),
-      reads(Fluid.cellWidth),
       reads(Fluid.{nType_x, nType_y, nType_z}),
       reads(Fluid.{dcsi_d, deta_d, dzet_d}),
-      reads(Fluid.{pressure, MassFracs, velocity}),
+      reads(Fluid.{pressure, MassFracs}),
       reads(Fluid.[Properties]),
-      reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
       reads(Fluid.[additionalVars]),
       reduces+(Averages.[AveragesVars])
    end
@@ -599,9 +597,9 @@ function Exports.InitPartitions(s, Grid, Fluid, p_All, config)
                               (Fluid, Fluid_XYAvg, p_All, s.p_Fluid_XYAvg, aux)
 
       -- Determine partitions for gradient operations
-      var [s.p_Gradient_YZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_YZAvg, s.p_Fluid_YZAvg, config.IO.YZAverages.length)
-      var [s.p_Gradient_XZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XZAvg, s.p_Fluid_XZAvg, config.IO.XZAverages.length)
-      var [s.p_Gradient_XYAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XYAvg, s.p_Fluid_XYAvg, config.IO.XYAverages.length)
+      var [s.p_Gradient_YZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_YZAvg, s.p_Fluid_YZAvg, config.IO.YZAverages.length, config)
+      var [s.p_Gradient_XZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XZAvg, s.p_Fluid_XZAvg, config.IO.XZAverages.length, config)
+      var [s.p_Gradient_XYAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XYAvg, s.p_Fluid_XYAvg, config.IO.XYAverages.length, config)
 
       -------------------------------------------------------------------------
       -- 1D Averages
@@ -655,9 +653,9 @@ function Exports.InitPartitions(s, Grid, Fluid, p_All, config)
                               (Fluid, Fluid_ZAvg, p_All, s.p_Fluid_ZAvg, aux)
 
       -- Determine partitions for gradient operations of 2D averages
-      var [s.p_Gradient_XAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XAvg, s.p_Fluid_XAvg, config.IO.XAverages.length)
-      var [s.p_Gradient_YAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_YAvg, s.p_Fluid_YAvg, config.IO.YAverages.length)
-      var [s.p_Gradient_ZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_ZAvg, s.p_Fluid_ZAvg, config.IO.ZAverages.length)
+      var [s.p_Gradient_XAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_XAvg, s.p_Fluid_XAvg, config.IO.XAverages.length, config)
+      var [s.p_Gradient_YAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_YAvg, s.p_Fluid_YAvg, config.IO.YAverages.length, config)
+      var [s.p_Gradient_ZAvg] = PART.PartitionAverageGhost(Fluid, p_All, Fluid_ZAvg, s.p_Fluid_ZAvg, config.IO.ZAverages.length, config)
    end
 end
 
@@ -690,7 +688,7 @@ function Exports.ReadAverages(s, config)
          if config.IO.[avg].length ~= 0 then
             var restartDir = config.Flow.initCase.u.Restart.restartDir
             format.snprint(dirname, 256, "{}/{}", [&int8](restartDir), [avg])
-            HDF.load(0, s.[is], dirname, s.[avg], s.[acopy], s.[p], s.[pcopy])
+            HDF.load(s.[is], dirname, s.[avg], s.[acopy], s.[p], s.[pcopy])
          end
       end
    end
@@ -799,7 +797,7 @@ function Exports.AddAverages(s, Fluid_bounds, deltaTime, config, Mix)
    end
 end
 
-function Exports.WriteAverages(_2, s, tiles, dirname, IO, SpeciesNames, config)
+function Exports.WriteAverages(_, s, tiles, dirname, IO, SpeciesNames, config)
    local function write2DAvg(dir)
       local avg
       local p
@@ -819,9 +817,9 @@ function Exports.WriteAverages(_2, s, tiles, dirname, IO, SpeciesNames, config)
             ---------------------------------
             var Avgdirname = [&int8](C.malloc(256))
             format.snprint(Avgdirname, 256, "{}/{}", dirname, [avg])
-            var _1 = IO.createDir(_2, Avgdirname)
+            var _1 = IO.createDir(_, Avgdirname)
             _1 = HDF_RAKES.dump(               _1, s.[is], Avgdirname, s.[avg], s.[acopy], s.[p], s.[pcopy])
-            _1 = HDF_RAKES.write.SpeciesNames( _1, s.[is], Avgdirname, s.[avg], s.[p], SpeciesNames)
+            _1 = HDF_RAKES.write.SpeciesNames( _1, Avgdirname, SpeciesNames)
             C.free(Avgdirname)
          end
       end
@@ -849,9 +847,9 @@ function Exports.WriteAverages(_2, s, tiles, dirname, IO, SpeciesNames, config)
             ----------------------------------------------
             var Avgdirname = [&int8](C.malloc(256))
             format.snprint(Avgdirname, 256, "{}/{}", dirname, [avg])
-            var _1 = IO.createDir(_2, Avgdirname)
+            var _1 = IO.createDir(_, Avgdirname)
             _1 = HDF_PLANES.dump(               _1, s.[is], Avgdirname, s.[avg], s.[acopy], s.[iop], s.[iopcopy])
-            _1 = HDF_PLANES.write.SpeciesNames( _1, s.[is], Avgdirname, s.[avg], s.[iop], SpeciesNames)
+            _1 = HDF_PLANES.write.SpeciesNames( _1, Avgdirname, SpeciesNames)
             C.free(Avgdirname)
          end
       end

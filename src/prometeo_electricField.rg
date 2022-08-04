@@ -57,7 +57,7 @@ local SOLVER = (require "Poisson")(SCHEMA, MIX, TYPES, Fluid_columns,
                                    "electricPotential",
                                    "dcsi_d", "deta_d", "dzet_d", "deta_s", "nType_y")
 
-Exports.DataList    = SOLVER.DataList
+Exports.mkDataList  = SOLVER.mkDataList
 Exports.DeclSymbols = SOLVER.DeclSymbols
 Exports.Init        = SOLVER.Init
 Exports.Solve       = SOLVER.Solve
@@ -67,7 +67,7 @@ Exports.Cleanup     = SOLVER.Cleanup
 -- ELECTRIC FIELD TASK
 -------------------------------------------------------------------------------
 local extern task GetElectricField(Ghost : region(ispace(int3d), Fluid_columns),
-                                   Fluid : region(ispace(int3d), Fluid_columns),
+                                   [Fluid],
                                    Fluid_bounds : rect3d)
 where
    reads(Ghost.electricPotential),
@@ -120,7 +120,6 @@ local mkUpdateUsingIonDriftFlux = terralib.memoize(function(dir)
                                        DiffGhost : region(ispace(int3d), Fluid_columns),
                                        FluxGhost : region(ispace(int3d), Fluid_columns),
                                        [Fluid],
-                                       ModCells : region(ispace(int3d), Fluid_columns),
                                        Fluid_bounds : rect3d,
                                        mix : MIX.Mixture)
    where
@@ -148,7 +147,7 @@ local mkUpdateUsingIonDriftFlux = terralib.memoize(function(dir)
 end)
 
 __demand(__inline)
-task Exports.UpdateUsingIonDriftFlux(Fluid : region(ispace(int3d), Fluid_columns),
+task Exports.UpdateUsingIonDriftFlux([Fluid],
                                      tiles : ispace(int3d),
                                      Fluid_Zones : zones_partitions(Fluid, tiles),
                                      Fluid_Ghost : ghost_partitions(Fluid, tiles),
@@ -158,26 +157,26 @@ where
    reads writes(Fluid)
 do
    var {p_All, p_x_divg, p_y_divg, p_z_divg} = Fluid_Zones;
-   var {p_XFluxGhosts,     p_YFluxGhosts,   p_ZFluxGhosts,
-        p_XDiffGhosts,    p_YDiffGhosts,    p_ZDiffGhosts,
-        p_XEulerGhosts2,  p_YEulerGhosts2,  p_ZEulerGhosts2} = Fluid_Ghost;
+   var {p_XFluxGhosts,  p_YFluxGhosts,  p_ZFluxGhosts,
+        p_XDiffGhosts,  p_YDiffGhosts,  p_ZDiffGhosts,
+        p_XEulerGhosts, p_YEulerGhosts, p_ZEulerGhosts} = Fluid_Ghost;
 
    __demand(__index_launch)
    for c in tiles do
-      [mkUpdateUsingIonDriftFlux("z")](p_ZEulerGhosts2[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
-                                       p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+      [mkUpdateUsingIonDriftFlux("z")](p_ZEulerGhosts[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
+                                       p_z_divg[c], Fluid.bounds, Mix)
    end
 
    __demand(__index_launch)
    for c in tiles do
-      [mkUpdateUsingIonDriftFlux("y")](p_YEulerGhosts2[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
-                                       p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+      [mkUpdateUsingIonDriftFlux("y")](p_YEulerGhosts[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
+                                       p_y_divg[c], Fluid.bounds, Mix)
    end
 
    __demand(__index_launch)
    for c in tiles do
-      [mkUpdateUsingIonDriftFlux("x")](p_XEulerGhosts2[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
-                                       p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+      [mkUpdateUsingIonDriftFlux("x")](p_XEulerGhosts[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
+                                       p_x_divg[c], Fluid.bounds, Mix)
    end
 end
 end
@@ -192,7 +191,6 @@ if (MIX.nIons > 0) then
 end
 extern task Exports.AddIonWindSources(GradGhost : region(ispace(int3d), Fluid_columns),
                                       [Fluid],
-                                      ModCells : region(ispace(int3d), Fluid_columns),
                                       Fluid_bounds : rect3d,
                                       mix : MIX.Mixture)
 where

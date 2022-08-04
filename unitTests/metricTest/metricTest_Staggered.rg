@@ -8,7 +8,7 @@ local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
 local REGISTRAR = terralib.includec("prometeo_metric.h")
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 
 -- Reference solution
@@ -37,12 +37,16 @@ if ELECTRIC_FIELD then
 end
 local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
 local Fluid_columns = TYPES.Fluid_columns
+local bBoxType = TYPES.bBoxType
 
 --External modules
 local MACRO = require "prometeo_macro"
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
-local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
-local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns, PART.zones_partitions)
+local IO = (require 'prometeo_IO')(SCHEMA)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
+local GRID = (require 'prometeo_grid')(SCHEMA, IO, Fluid_columns, bBoxType,
+                                       PART.zones_partitions, PART.output_partitions)
 
 -- Test parameters
 local Npx = 16
@@ -57,9 +61,6 @@ local zO = 0.0
 local xW = 1.0
 local yW = 1.0
 local zW = 1.0
-local xGrid = SCHEMA.GridType_Tanh
-local yGrid = SCHEMA.GridType_Tanh
-local zGrid = SCHEMA.GridType_Tanh
 
 
 __demand(__inline)
@@ -68,7 +69,6 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, 0)
    fill(Fluid.nType_y, 0)
    fill(Fluid.nType_z, 0)
@@ -112,12 +112,30 @@ task main()
    C.printf("metricTest_Staggered: run...\n")
 
    var config : SCHEMA.Config
+
+   C.snprintf([&int8](config.Mapping.outDir), 256, "./StaggeredDir")
+   UTIL.createDir(config.Mapping.outDir)
+
    config.BC.xBCLeft.type  = SCHEMA.FlowBC_Dirichlet
    config.BC.xBCRight.type = SCHEMA.FlowBC_Dirichlet
    config.BC.yBCLeft.type  = SCHEMA.FlowBC_Dirichlet
    config.BC.yBCRight.type = SCHEMA.FlowBC_Dirichlet
    config.BC.zBCLeft.type  = SCHEMA.FlowBC_Dirichlet
    config.BC.zBCRight.type = SCHEMA.FlowBC_Dirichlet
+
+   config.Grid.xNum = Npx
+   config.Grid.yNum = Npy
+   config.Grid.zNum = Npz
+
+   config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+   config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+   config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+   config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Tanh
+   config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Tanh
+   config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Tanh
+   config.Grid.GridInput.u.Cartesian.xType.u.Tanh.Stretching = 1.0
+   config.Grid.GridInput.u.Cartesian.yType.u.Tanh.Stretching = 1.0
+   config.Grid.GridInput.u.Cartesian.zType.u.Tanh.Stretching = 1.0
 
    -- No ghost cells
    var xBnum = 1
@@ -136,52 +154,17 @@ task main()
 
    -- Fluid Partitioning
    var Fluid_Zones = PART.PartitionZones(Fluid, tiles, config, xBnum, yBnum, zBnum)
-   var {p_All}= Fluid_Zones
+   var Fluid_Ghost = PART.PartitionGhost(Fluid, tiles, Fluid_Zones, config)
 
    InitializeCell(Fluid)
 
-   METRIC.InitializeOperators(Fluid, tiles, p_All)
+   var boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
 
-   -- Enforce BCs on the operators
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostOperators("x")](p_All[c], Fluid_bounds, config.BC.xBCLeft.type, config.BC.xBCRight.type, xBnum, Npx) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostOperators("y")](p_All[c], Fluid_bounds, config.BC.yBCLeft.type, config.BC.yBCRight.type, yBnum, Npy) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostOperators("z")](p_All[c], Fluid_bounds, config.BC.zBCLeft.type, config.BC.zBCRight.type, zBnum, Npz) end
+   METRIC.InitializeOperators(Fluid, tiles, Fluid_Zones, config,
+                              xBnum, yBnum, zBnum)
 
-   __demand(__index_launch)
-   for c in tiles do
-      GRID.InitializeGeometry(p_All[c],
-                              xGrid, yGrid, zGrid,
-                              1.0, 1.0, 1.0,
-                              xBnum, Npx, xO, xW,
-                              yBnum, Npy, yO, yW,
-                              zBnum, Npz, zO, zW)
-   end
-
-   -- Create partitions to support stencils
-   var Fluid_Ghosts = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
-   var {p_MetricGhosts} = Fluid_Ghosts
-
-   -- Enforce BCs
-   GRID.InitializeGhostGeometry(Fluid, tiles, Fluid_Zones, config)
-
-   __demand(__index_launch)
-   for c in tiles do
-      METRIC.InitializeMetric(p_MetricGhosts[c],
-                              p_All[c],
-                              Fluid_bounds,
-                              xW, yW, zW);
-   end
-
-   -- Enforce BCs on the metric
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostMetric("x")](p_All[c]) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostMetric("y")](p_All[c]) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostMetric("z")](p_All[c]) end
+   METRIC.InitializeMetric(Fluid, tiles, Fluid_Zones, Fluid_Ghost,
+                           boundingBox, config)
 
    checkMetric(Fluid)
 

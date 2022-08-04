@@ -50,9 +50,9 @@ template<direction dir>
 __host__
 inline dim3 splitThreadsPerBlock(const int TPB, const Legion::Rect<3> bounds) {
    assert(TPB%2 == 0);
-   const coord_t size_x = getSize<Xdir>(bounds);
-   const coord_t size_y = getSize<Ydir>(bounds);
-   const coord_t size_z = getSize<Zdir>(bounds);
+   const Legion::coord_t size_x = getSize<Xdir>(bounds);
+   const Legion::coord_t size_y = getSize<Ydir>(bounds);
+   const Legion::coord_t size_z = getSize<Zdir>(bounds);
    dim3 r;
    r.x = 1 << findHighestPower2(size_x, findHighestPower2(TPB));
    r.y = 1 << findHighestPower2(size_y, findHighestPower2(TPB/r.x));
@@ -70,8 +70,8 @@ template<>
 __host__
 inline dim3 splitThreadsPerBlockPlane<Xdir>(const int TPB, const Legion::Rect<3> bounds) {
    assert(TPB%2 == 0);
-   const coord_t size_y = getSize<Ydir>(bounds);
-   const coord_t size_z = getSize<Zdir>(bounds);
+   const Legion::coord_t size_y = getSize<Ydir>(bounds);
+   const Legion::coord_t size_z = getSize<Zdir>(bounds);
    dim3 r;
    // Y has priority...
    r.y = 1 << findHighestPower2(size_y, findHighestPower2(TPB));
@@ -85,8 +85,8 @@ template<>
 __host__
 inline dim3 splitThreadsPerBlockPlane<Ydir>(const int TPB, const Legion::Rect<3> bounds) {
    assert(TPB%2 == 0);
-   const coord_t size_x = getSize<Xdir>(bounds);
-   const coord_t size_z = getSize<Zdir>(bounds);
+   const Legion::coord_t size_x = getSize<Xdir>(bounds);
+   const Legion::coord_t size_z = getSize<Zdir>(bounds);
    dim3 r;
    // X has priority...
    r.x = 1 << findHighestPower2(size_x, findHighestPower2(TPB));
@@ -100,8 +100,8 @@ template<>
 __host__
 inline dim3 splitThreadsPerBlockPlane<Zdir>(const int TPB, const Legion::Rect<3> bounds) {
    assert(TPB%2 == 0);
-   const coord_t size_x = getSize<Xdir>(bounds);
-   const coord_t size_y = getSize<Ydir>(bounds);
+   const Legion::coord_t size_x = getSize<Xdir>(bounds);
+   const Legion::coord_t size_y = getSize<Ydir>(bounds);
    dim3 r;
    // X has priority...
    r.x = 1 << findHighestPower2(size_x, findHighestPower2(TPB));
@@ -123,9 +123,9 @@ template<>
 __host__
 inline dim3 splitThreadsPerBlockSpan<Xdir>(const int TPB, const Legion::Rect<3> bounds) {
    assert(TPB%2 == 0);
-   const coord_t size_x = getSize<Xdir>(bounds);
-   const coord_t size_y = getSize<Ydir>(bounds);
-   const coord_t size_z = getSize<Zdir>(bounds);
+   const Legion::coord_t size_x = getSize<Xdir>(bounds);
+   const Legion::coord_t size_y = getSize<Ydir>(bounds);
+   const Legion::coord_t size_z = getSize<Zdir>(bounds);
    dim3 r;
    // Y has priority...
    r.y = 1 << findHighestPower2(size_y, findHighestPower2(TPB));
@@ -139,9 +139,9 @@ template<>
 __host__
 inline dim3 splitThreadsPerBlockSpan<Ydir>(const int TPB, const Legion::Rect<3> bounds) {
    assert(TPB%2 == 0);
-   const coord_t size_x = getSize<Xdir>(bounds);
-   const coord_t size_y = getSize<Ydir>(bounds);
-   const coord_t size_z = getSize<Zdir>(bounds);
+   const Legion::coord_t size_x = getSize<Xdir>(bounds);
+   const Legion::coord_t size_y = getSize<Ydir>(bounds);
+   const Legion::coord_t size_z = getSize<Zdir>(bounds);
    dim3 r;
    // X has priority...
    r.x = 1 << findHighestPower2(size_x, findHighestPower2(TPB));
@@ -155,9 +155,9 @@ template<>
 __host__
 inline dim3 splitThreadsPerBlockSpan<Zdir>(const int TPB, const Legion::Rect<3> bounds) {
    assert(TPB%2 == 0);
-   const coord_t size_x = getSize<Xdir>(bounds);
-   const coord_t size_y = getSize<Ydir>(bounds);
-   const coord_t size_z = getSize<Zdir>(bounds);
+   const Legion::coord_t size_x = getSize<Xdir>(bounds);
+   const Legion::coord_t size_y = getSize<Ydir>(bounds);
+   const Legion::coord_t size_z = getSize<Zdir>(bounds);
    dim3 r;
    // X has priority...
    r.x = 1 << findHighestPower2(size_x, findHighestPower2(TPB));
@@ -273,6 +273,116 @@ __device__
 inline Legion::coord_t lastIndexInSpan<Zdir>(const Legion::coord_t size) {
    return min((threadIdx.z+1)*((size + (blockDim.z-1))/blockDim.z), size);
 };
+
+//-----------------------------------------------------------------------------
+// This utility generates a list of cuda streams and performs a round-robin
+//-----------------------------------------------------------------------------
+template<int N>
+class streamsRR {
+public:
+   streamsRR() {
+      idx = 0;
+      for (int i = 0; i < N; i++)
+         cudaStreamCreateWithFlags(&s[i], cudaStreamNonBlocking);
+   };
+
+   ~streamsRR() {
+      for (int i = 0; i < N; i++)
+         cudaStreamDestroy(s[i]);
+   };
+
+   cudaStream_t operator++() {
+      idx = (idx + 1)%N; 
+      return s[idx];
+   }
+
+private:
+   int idx;
+   cudaStream_t s[N];
+};
+
+//-----------------------------------------------------------------------------
+// These utilities perform butterfly reduction across threads of a warp
+//-----------------------------------------------------------------------------
+__device__
+inline void reduceSum(double my_data, const Legion::DeferredBuffer<double, 1> &buffer) {
+   // We know there is never more than 32 warps in a CTA
+   __shared__ double trampoline[32];
+
+   // make sure that everyone is in sync
+   __syncthreads();
+
+   // Perform a local reduction inside the CTA
+   // Butterfly reduction across all threads in all warps
+   for (int i = 16; i >= 1; i/=2)
+      my_data += __shfl_xor_sync(0xfffffff, my_data, i, 32);
+   unsigned laneid;
+   asm volatile("mov.u32 %0, %laneid;" : "=r"(laneid) : );
+   unsigned warpid = ((threadIdx.z * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x) >> 5;
+   // First thread in each warp writes out all values
+   if (laneid == 0)
+      trampoline[warpid] = my_data;
+   __syncthreads();
+
+   // Butterfly reduction across all thread in the first warp
+   if (warpid == 0) {
+      unsigned numwarps = (blockDim.x * blockDim.y * blockDim.z) >> 5;
+      my_data = (laneid < numwarps) ? trampoline[laneid] : 0;
+      for (int i = 16; i >= 1; i/=2)
+         my_data += __shfl_xor_sync(0xfffffff, my_data, i, 32);
+      // First thread writes to the buffer
+      if (laneid == 0) {
+         unsigned blockId = (blockIdx.z * gridDim.y + blockIdx.y) * gridDim.x + blockIdx.x;
+         buffer[blockId] = my_data;
+      }
+   }
+};
+
+__device__
+inline void reduceMax(double my_data, const Legion::DeferredBuffer<double, 1> &buffer) {
+   // We know there is never more than 32 warps in a CTA
+   __shared__ double trampoline[32];
+
+   // make sure that everyone is in sync
+   __syncthreads();
+
+   // Perform a local reduction inside the CTA
+   // Butterfly reduction across all threads in all warps
+   for (int i = 16; i >= 1; i/=2)
+      my_data = max(my_data, __shfl_xor_sync(0xfffffff, my_data, i, 32));
+   unsigned laneid;
+   asm volatile("mov.u32 %0, %laneid;" : "=r"(laneid) : );
+   unsigned warpid = ((threadIdx.z * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x) >> 5;
+   // First thread in each warp writes out all values
+   if (laneid == 0)
+      trampoline[warpid] = my_data;
+   __syncthreads();
+
+   // Butterfly reduction across all thread in the first warp
+   if (warpid == 0) {
+      unsigned numwarps = (blockDim.x * blockDim.y * blockDim.z) >> 5;
+      my_data = (laneid < numwarps) ? trampoline[laneid] : 0;
+      for (int i = 16; i >= 1; i/=2)
+         my_data = max(my_data, __shfl_xor_sync(0xfffffff, my_data, i, 32));
+      // First thread writes to the buffer
+      if (laneid == 0) {
+         unsigned blockId = (blockIdx.z * gridDim.y + blockIdx.y) * gridDim.x + blockIdx.x;
+         buffer[blockId] = my_data;
+      }
+   }
+};
+
+//-----------------------------------------------------------------------------
+// These utilities perform butterfly reduction across a DeferedBuffer
+//-----------------------------------------------------------------------------
+__global__
+void ReduceBufferSum_kernel(const Legion::DeferredBuffer<double, 1> buffer,
+                            const Legion::DeferredValue<double> result,
+                            const size_t size);
+__global__
+void ReduceBufferMax_kernel(const Legion::DeferredBuffer<double, 1> buffer,
+                            const Legion::DeferredValue<double> result,
+                            const size_t size);
 
 #endif // __CUDA_UTILS_HPP__
 

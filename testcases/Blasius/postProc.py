@@ -9,6 +9,10 @@ import h5py
 from scipy.integrate import odeint
 from scipy.optimize import fsolve
 
+# load HTR modules
+sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
+import HTRrestart
+
 #parser = argparse.ArgumentParser()
 #parser.add_argument('-n', '--num_times', type=int, default=4)
 #args = parser.parse_args()
@@ -20,17 +24,17 @@ def GetBlasius():
    def BlasiusFun(U, y):
       f1, f2, f3 = U
       return [ f2, f3, -0.5*f1*f3 ]
-   
+
    Np = 100
    eta = np.linspace(0, 10, Np)
    f1_0 = eta[0]
    f2_0 = 0.0
-   
+
    def objective(f3_0):
       U = odeint(BlasiusFun, [f1_0, f2_0, f3_0], eta)
       f1, f2, f3 = U.T
       return (f2[Np-1] - 1.0)
-   
+
    f3_0, = fsolve(objective, 0.5)
 
    U = odeint(BlasiusFun, [f1_0, f2_0, f3_0], eta)
@@ -51,10 +55,10 @@ def process():
 
    xNum = data["Grid"]["xNum"]
    yNum = data["Grid"]["yNum"]
-   xWidth  = data["Grid"]["xWidth"]
-   yWidth  = data["Grid"]["yWidth"]
-   xOrigin = data["Grid"]["origin"][0]
-   yOrigin = data["Grid"]["origin"][1]
+   xWidth  = data["Grid"]["GridInput"]["width"][0]
+   yWidth  = data["Grid"]["GridInput"]["width"][1]
+   xOrigin = data["Grid"]["GridInput"]["origin"][0]
+   yOrigin = data["Grid"]["GridInput"]["origin"][1]
 
    R = data["Flow"]["mixture"]["gasConstant"]
    mu = data["Flow"]["mixture"]["viscosityModel"]["Visc"]
@@ -67,43 +71,19 @@ def process():
    Rho = P/(R*T)
    nu = mu/Rho
 
-   dt    = data["Integrator"]["fixedDeltaTime"]
    nstep = int(data["Integrator"]["maxIter"])
-   time = dt*nstep
 
    filename = os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/0,0,0-'+str(xNum+1)+','+str(yNum+1)+',0.hdf')
-   exists = os.path.isfile(filename)
-
-   if (not exists):
-      print('Merging the tile files')
-      # merge files from different tiles 
-      merge_command = 'python {} {}'.format(os.path.expandvars('$HTR_DIR/scripts/merge.py'),
-                                            os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/*.hdf'))
-      mv_command = 'mv {} {}'.format('./0,0,0-'+str(xNum+1)+','+str(yNum+1)+',0.hdf',
-                                     os.path.join(dir_name, 'sample0/fluid_iter'+str(nstep).zfill(10)+'/'))
-
-      try:
-         subprocess.call(merge_command, shell=True)
-      except OSError:
-         print("Failed command: {}".format(merge_command))
-         sys.exit()
-
-      try:
-         subprocess.call(   mv_command, shell=True)
-      except OSError:
-         print("Failed command: {}".format(mv_command))
-         sys.exit()
 
 ##############################################################################
-#                        Read Prometeo Output Data                           #
+# Read HTR output data                                                       #
 ##############################################################################
-
-   f = h5py.File(filename, 'r')
+   restart = HTRrestart.HTRrestart(data)
+   restart.attach(sampleDir=os.path.join(dir_name, 'sample0'), step=nstep)
 
    # Get the data
-   centerCoordinates = f['centerCoordinates']
-   cellWidth   = f['cellWidth']
-   velocity    = f['velocity']
+   centerCoordinates = restart.load("centerCoordinates")
+   velocity          = restart.load("velocity")
 
    # Get simulation data along a line (ignore ghost cells)
    x_slice_idx = int(xNum*0.5)

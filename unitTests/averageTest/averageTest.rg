@@ -6,9 +6,9 @@ import "regent"
 local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
-local REGISTRAR = terralib.includec("prometeo_average.h")
+local REGISTRAR = terralib.includec("registrar.h")
 local SCHEMA = terralib.includec("config_schema.h")
-local UTIL = require "util-desugared"
+local UTIL = require "util"
 local format = require "std/format"
 
 local Config = SCHEMA.Config
@@ -43,8 +43,9 @@ local nSpec = MIX.nSpec
 local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
 --External modules
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
-local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
 local IO = (require 'prometeo_IO')(SCHEMA)
 local AVG = (require 'prometeo_average')(SCHEMA, MIX, TYPES, PART, ELECTRIC_FIELD)
 
@@ -103,10 +104,12 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, CONST.Std_node)
    fill(Fluid.nType_y, CONST.Std_node)
    fill(Fluid.nType_z, CONST.Std_node)
+   fill(Fluid.dcsi_d, 0.0)
+   fill(Fluid.deta_d, 0.0)
+   fill(Fluid.dzet_d, 0.0)
    fill(Fluid.pressure, [P]/[PRef])
    fill(Fluid.temperature, [T]/[TRef])
    fill(Fluid.MassFracs,  [Xi])
@@ -117,19 +120,18 @@ do
    fill(Fluid.lam, [eLam]/[lamRef])
    fill(Fluid.Di , array([eDi][0]/[DiRef], [eDi][1]/[DiRef], [eDi][2]/[DiRef], [eDi][3]/[DiRef], [eDi][4]/[DiRef]))
    fill(Fluid.SoS, [eSoS]/[uRef])
-   fill(Fluid.velocityGradientX,   array(0.0, 0.0, 0.0))
-   fill(Fluid.velocityGradientY,   array(0.0, 0.0, 0.0))
-   fill(Fluid.velocityGradientZ,   array(0.0, 0.0, 0.0))
    fill(Fluid.Conserved, [eConserved])
 end
 
 __demand(__inline)
 task InitGeometry(Fluid : region(ispace(int3d), Fluid_columns))
 where
-   writes(Fluid.cellWidth)
+   writes(Fluid.{dcsi_d, deta_d, dzet_d})
 do
    for c in Fluid do
-      Fluid[c].cellWidth = array(1.0, double(c.y), 1.0)
+      Fluid[c].dcsi_d = 1.0
+      Fluid[c].deta_d = 1.0/double(c.y)
+      Fluid[c].dzet_d = 1.0
    end
 end
 
@@ -173,7 +175,7 @@ local function checkAverages(YZAverages, XZAverages, XYAverages)
    end
 end
 
-local Averages = AVG.AvgList
+local Averages = AVG.mkAvgList()
 
 local MAPPER = {
    SAMPLE_ID_TAG = 1234
@@ -232,9 +234,6 @@ task main()
    config.Flow.mixture.u.AirMix.XiRef.Species.values[0].MolarFrac = [MixWRef]*[YO2Ref]/(2*15.999e-3)
    config.Flow.mixture.u.AirMix.XiRef.Species.values[1].MolarFrac = [MixWRef]*[YN2Ref]/28.0134e-3
 
-   -- Define mixture
-   var Mix = MIX.InitMixtureStruct(config);
-
    -- Define the domain
    var [Grid.xBnum] = 1
    var [Grid.yBnum] = 1
@@ -261,18 +260,21 @@ task main()
    var tiles = ispace(int3d, {Grid.NX, Grid.NY, Grid.NZ})
 
    -- Fluid Partitioning
-   var p_Fluid =
-      [UTIL.mkPartitionByTile(int3d, int3d, Fluid_columns, "p_All")]
-      (Fluid, tiles, int3d{Grid.xBnum,Grid.yBnum,Grid.zBnum}, int3d{0,0,0});
+   var Fluid_Zones = PART.PartitionZones(Fluid, tiles, config, Grid.xBnum, Grid.yBnum, Grid.zBnum)
+   var Fluid_Ghost = PART.PartitionGhost(Fluid, tiles, Fluid_Zones, config)
+   var {p_All} = Fluid_Zones
 
-   [AVG.DeclSymbols(Averages, Grid, Fluid, p_Fluid, config, MAPPER)];
+   -- Define mixture
+   var Mix = MIX.InitMixture(Fluid, tiles, p_All, config);
+
+   [AVG.DeclSymbols(Averages, Grid, Fluid, p_All, config, MAPPER)];
 
    InitializeCell(Fluid)
 
    InitGeometry(Fluid);
 
    -- Initialize averages partitions
-   [AVG.InitPartitions(Averages, Grid, Fluid, p_Fluid, config)];
+   [AVG.InitPartitions(Averages, Grid, Fluid, p_All, config)];
 
    -- Initialize averages
    [AVG.InitRakesAndPlanes(Averages)];
@@ -307,4 +309,4 @@ end
 -- COMPILATION CALL
 -------------------------------------------------------------------------------
 
-regentlib.saveobj(main, "averageTest.o", "object", REGISTRAR.register_average_tasks)
+regentlib.saveobj(main, "averageTest.o", "object", REGISTRAR.register_tasks)

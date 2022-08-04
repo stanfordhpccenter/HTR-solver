@@ -7,7 +7,7 @@
 //                         multi-GPU high-order code for hypersonic aerothermodynamics.
 //                         Computer Physics Communications 255, 107262"
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 //    * Redistributions in binary form must reproduce the above copyright
 //      notice, this list of conditions and the following disclaimer in the
 //      documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 // ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -37,7 +37,7 @@ inline Mix::Mix(const Config &config) :
 };
 #endif
 
-inline char* Mix::GetSpeciesName(const int i) const {
+inline const char* Mix::GetSpeciesName(const int i) const {
    return (char*)"MIX";
 };
 
@@ -46,7 +46,7 @@ inline int Mix::FindSpecies(const char *Name) const {
 };
 
 __CUDA_HD__
-inline bool Mix::CheckMixture(const VecNSp &Yi) const { 
+inline bool Mix::CheckMixture(const VecNSp &Yi) const {
 #ifdef CHECK_MIX
    return (fabs(Yi[0] - 1.0) < 1e-3);
 #else
@@ -76,7 +76,7 @@ __CUDA_HD__
 inline void Mix::GetYi(VecNSp &Yi, const double rho, const VecNSp &rhoYi) const { Yi[0] = rhoYi[0]/rho; };
 
 __CUDA_HD__
-inline double Mix::GetRho(const double P, const double T, const double MixW) const { return pow(T, 1.0/(gamma-1)); };
+inline double Mix::GetRho(const double P, const double T, const double MixW) const { return P/(R * T); };
 
 __CUDA_HD__
 inline double Mix::GetHeatCapacity(const double T, const VecNSp &Yi) const { return gamma/(gamma-1)*R; };
@@ -103,10 +103,10 @@ __CUDA_HD__
 inline double Mix::isValidInternalEnergy(const double e, const VecNSp &Yi) const { return (e > 0); };
 
 __CUDA_HD__
-inline double Mix::GetTFromRhoAndP(const double rho, const double MixW, const double P) const { return P*MixW/(rho*RGAS); };
+inline double Mix::GetTFromRhoAndP(const double rho, const double MixW, const double P) const { return P/(rho*R); };
 
 __CUDA_HD__
-inline double Mix::GetPFromRhoAndT(const double rho, const double MixW, const double T) const { return rho*RGAS*T/MixW; };
+inline double Mix::GetPFromRhoAndT(const double rho, const double MixW, const double T) const { return rho*R*T; };
 
 __CUDA_HD__
 inline double Mix::GetViscosity(const double T, const VecNSp &Xi) const { return 0.0; };

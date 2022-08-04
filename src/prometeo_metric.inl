@@ -55,6 +55,15 @@ using std::max;
 #endif
 
 //-----------------------------------------------------------------------------
+// Utility to compute powers of 10 at compile time
+//-----------------------------------------------------------------------------
+inline constexpr double my_10_pow(const int n){
+   return n > 0 ? 1.0e1 *my_10_pow(n-1) :
+          n < 0 ? 1.0e-1*my_10_pow(n+1) :
+          1;
+} 
+
+//-----------------------------------------------------------------------------
 // Stencil offset helper functions
 //-----------------------------------------------------------------------------
 __CUDA_H__
@@ -106,9 +115,27 @@ inline double getDeriv(const AccessorRO<double, 3> &q,
    return getDeriv(nType, q[pM1], q[p], q[pP1], m);
 };
 
-template<direction dir>
+template<direction dir, typename T, int SIZE>
 __CUDA_H__
-inline double getDeriv(const AccessorRO<VecNSp, 3> &q,
+inline MyArray<T, SIZE> getDeriv(const AccessorRO<MyArray<T, SIZE>, 3> &q,
+                     const Point<3> &p,
+                     const int nType,
+                     const double  m,
+                     const Rect<3> &bounds) {
+   // Compute stencil points
+   const coord_t dsize = getSize<dir>(bounds);
+   const Point<3> pM1 = warpPeriodic<dir, Minus>(bounds, p, dsize, offM1(nType));
+   const Point<3> pP1 = warpPeriodic<dir, Plus >(bounds, p, dsize, offP1(nType));
+   MyArray<T, SIZE> d;
+   __UNROLL__
+   for (int i=0; i<SIZE; i++)
+      d[i] = getDeriv(nType, q[pM1][i], q[p][i], q[pP1][i], m);
+   return d;
+};
+
+template<direction dir, typename T, int SIZE>
+__CUDA_H__
+inline double getDeriv(const AccessorRO<MyArray<T, SIZE>, 3> &q,
                        const Point<3> &p,
                        const int i,
                        const int nType,
@@ -138,8 +165,9 @@ inline Vec3 getGrad(const AccessorRO<double, 3> &q,
    return grad;
 };
 
+template<typename T, int SIZE>
 __CUDA_H__
-inline Vec3 getGrad(const AccessorRO<VecNSp, 3> &q,
+inline Vec3 getGrad(const AccessorRO<MyArray<T, SIZE>, 3> &q,
                     const Point<3> &p,
                     const int i,
                     const int nType_x,
@@ -364,7 +392,7 @@ public:
 
          // Use TENO-A cutoff adaptation
          const double decay = pow((1 - Phi), 12) * (1 + 12*Phi);
-         const int power = floor(Smooth_pow - Diff_pow*(1 - decay));
+         const int power = min(max(int(floor(Smooth_pow - Diff_pow*(1 - decay))), 0), 13);
          const float cut_off = p10[power];
 
          return ((a1*a > cut_off) and
@@ -383,7 +411,7 @@ private:
    // Constants for TENO cut-off
    static constexpr double TENO_cut_off = 1e-6;
    static constexpr double Smooth_pow = 12.5;
-   static constexpr double Shock_pow  =  5.0;
+   static constexpr double Shock_pow  =  1.0;
    static constexpr double Diff_pow = Smooth_pow - Shock_pow;
 
    // Small number
@@ -400,6 +428,7 @@ private:
 //-----------------------------------------------------------------------------
 // TENO reconstruction operators
 //-----------------------------------------------------------------------------
+template<int exp = -10>
 class TENO_Op {
 public:
    __CUDA_H__
@@ -563,7 +592,7 @@ private:
    static constexpr double cut_off = 1e-6;
 
    // Small number
-   static constexpr double eps = 1e-10;
+   static constexpr double eps = my_10_pow(exp);
 
    // JS coefficients
    static constexpr double C13 =  13.0/12.0;
@@ -576,6 +605,7 @@ private:
 //-----------------------------------------------------------------------------
 // TENO-A reconstruction operators
 //-----------------------------------------------------------------------------
+template<int exp = -8>
 class TENOA_Op {
 public:
    __CUDA_H__
@@ -597,32 +627,36 @@ public:
 
       // not recommend to rescale the small number
       const double tau6 = fabs(s4 - (s3 + s2 + 4*s1)/6);
-      double a1 = pow(1 + tau6/(s1 + 1.0e-10), 6);
-      double a2 = pow(1 + tau6/(s2 + 1.0e-10), 6);
-      double a3 = pow(1 + tau6/(s3 + 1.0e-10), 6);
-      double a4 = pow(1 + tau6/(s4 + 1.0e-10), 6);
+      double a1 = pow(1 + tau6/(s1 + eps), 6);
+      double a2 = pow(1 + tau6/(s2 + eps), 6);
+      double a3 = pow(1 + tau6/(s3 + eps), 6);
+      double a4 = pow(1 + tau6/(s4 + eps), 6);
 
-      if (Coeffs[Stencil1] < 1e-10) a1 = 0.0;
-      if (Coeffs[Stencil2] < 1e-10) a2 = 0.0;
-      if (Coeffs[Stencil3] < 1e-10) a3 = 0.0;
-      if (Coeffs[Stencil4] < 1e-10) a4 = 0.0;
+      float cut_off;
+      if (nType == Std_node) {
+         // Adapt cut_off based on Ren sensor
+         const double var2 = fabs(ym1 - ym2);
+         const double var3 = fabs(y   - ym1);
+         const double var4 = fabs(yp1 - y  );
+         const double var5 = fabs(yp2 - yp1);
+         const double var6 = fabs(yp3 - yp2);
 
-      // Adapt cut_off based on Ren sensor
-      const double var2 = fabs(ym1 - ym2);
-      const double var3 = fabs(y   - ym1);
-      const double var4 = fabs(yp1 - y  );
-      const double var5 = fabs(yp2 - yp1);
-      const double var6 = fabs(yp3 - yp2);
+         double eta = min((2*var2*var3 + Ren_eps) / (var2*var2 + var3*var3 + Ren_eps),
+                          (2*var3*var4 + Ren_eps) / (var3*var3 + var4*var4 + Ren_eps));
+         eta = min(eta,   (2*var4*var5 + Ren_eps) / (var4*var4 + var5*var5 + Ren_eps));
+         eta = min(eta,   (2*var5*var6 + Ren_eps) / (var5*var5 + var6*var6 + Ren_eps));
 
-      double eta = min((2*var2*var3 + Ren_eps) / (var2*var2 + var3*var3 + Ren_eps),
-                       (2*var3*var4 + Ren_eps) / (var3*var3 + var4*var4 + Ren_eps));
-      eta = min(eta,   (2*var4*var5 + Ren_eps) / (var4*var4 + var5*var5 + Ren_eps));
-      eta = min(eta,   (2*var5*var6 + Ren_eps) / (var5*var5 + var6*var6 + Ren_eps));
-
-      const double delta = 1 - min(eta*Ren_irc, 1.0);
-      const double decay = pow((1 - delta), 8) * (1 + 8*delta);
-      const int power = floor(Smooth_pow - Diff_pow*(1 - decay));
-      const float cut_off = p10[power];
+         const double delta = 1 - min(eta*Ren_irc, 1.0);
+         const double decay = pow((1 - delta), 4) * (1 + 4*delta);
+         const int power = min(max(int(floor(Smooth_pow - Diff_pow*(1 - decay))), 0), 13);
+         cut_off = p10[power];
+      } else {
+         if (Coeffs[Stencil1] < 1e-10) a1 = 0.0;
+         if (Coeffs[Stencil2] < 1e-10) a2 = 0.0;
+         if (Coeffs[Stencil3] < 1e-10) a3 = 0.0;
+         if (Coeffs[Stencil4] < 1e-10) a4 = 0.0;
+         cut_off = p10[BC_pow];
+      }
 
       // Select stencils
       double a = 1.0/(a1 + a2 + a3 + a4);
@@ -698,27 +732,31 @@ public:
       double a3 = pow(1 + tau6/(s3 + eps), 6);
       double a4 = pow(1 + tau6/(s4 + eps), 6);
 
-      if (Coeffs[Stencil1] < 1e-10) a1 = 0.0;
-      if (Coeffs[Stencil2] < 1e-10) a2 = 0.0;
-      if (Coeffs[Stencil3] < 1e-10) a3 = 0.0;
-      if (Coeffs[Stencil4] < 1e-10) a4 = 0.0;
+      float cut_off;
+      if (nType == Std_node) {
+         // Adapt cut_off based on Ren sensor
+         const double var2 = fabs(ym1 - ym2);
+         const double var3 = fabs(y   - ym1);
+         const double var4 = fabs(yp1 - y  );
+         const double var5 = fabs(yp2 - yp1);
+         const double var6 = fabs(yp3 - yp2);
 
-      // Adapt cut_off based on Ren sensor
-      const double var2 = fabs(ym1 - ym2);
-      const double var3 = fabs(y   - ym1);
-      const double var4 = fabs(yp1 - y  );
-      const double var5 = fabs(yp2 - yp1);
-      const double var6 = fabs(yp3 - yp2);
+         double eta = min((2*var2*var3 + Ren_eps) / (var2*var2 + var3*var3 + Ren_eps),
+                          (2*var3*var4 + Ren_eps) / (var3*var3 + var4*var4 + Ren_eps));
+         eta = min(eta,   (2*var4*var5 + Ren_eps) / (var4*var4 + var5*var5 + Ren_eps));
+         eta = min(eta,   (2*var5*var6 + Ren_eps) / (var5*var5 + var6*var6 + Ren_eps));
 
-      double eta = min((2*var2*var3 + Ren_eps) / (var2*var2 + var3*var3 + Ren_eps),
-                       (2*var3*var4 + Ren_eps) / (var3*var3 + var4*var4 + Ren_eps));
-      eta = min(eta,   (2*var4*var5 + Ren_eps) / (var4*var4 + var5*var5 + Ren_eps));
-      eta = min(eta,   (2*var5*var6 + Ren_eps) / (var5*var5 + var6*var6 + Ren_eps));
-
-      const double delta = 1 - min(eta*Ren_irc, 1.0);
-      const double decay = pow((1 - delta), 8) * (1 + 8*delta);
-      const int power = floor(Smooth_pow - Diff_pow*(1 - decay));
-      const float cut_off = p10[power];
+         const double delta = 1 - min(eta*Ren_irc, 1.0);
+         const double decay = pow((1 - delta), 4) * (1 + 4*delta);
+         const int power = min(max(int(floor(Smooth_pow - Diff_pow*(1 - decay))), 0), 13);
+         cut_off = p10[power];
+      } else {
+         if (Coeffs[Stencil1] < 1e-10) a1 = 0.0;
+         if (Coeffs[Stencil2] < 1e-10) a2 = 0.0;
+         if (Coeffs[Stencil3] < 1e-10) a3 = 0.0;
+         if (Coeffs[Stencil4] < 1e-10) a4 = 0.0;
+         cut_off = p10[BC_pow];
+      }
 
       // Select stencils
       double a = 1.0/(a1 + a2 + a3 + a4);
@@ -773,16 +811,17 @@ public:
 private:
    // Ren sensor coefficients
    static constexpr double Ren_r_c = 0.2;
-   static constexpr double Ren_eps = 0.9*Ren_r_c*1e-6/(1.0 - 0.9*Ren_r_c);
+   static constexpr double Ren_eps = 0.9*Ren_r_c*1e-16/(1.0 - 0.9*Ren_r_c);
    static constexpr double Ren_irc = 1.0/Ren_r_c;
 
    // Constants for TENO cut-off adaptation
-   static constexpr double Smooth_pow = 12.5;
-   static constexpr double Shock_pow  =  5.0;
+   static constexpr double Smooth_pow = 9.5;
+   static constexpr double Shock_pow  = 6.0;
+   static constexpr int    BC_pow     = 4;
    static constexpr double Diff_pow = Smooth_pow - Shock_pow;
 
    // Small number
-   static constexpr double eps = 1e-10;
+   static constexpr double eps = my_10_pow(exp);
 
    // JS coefficients
    static constexpr double C13 =  13.0/12.0;
@@ -797,6 +836,7 @@ private:
 // TENO-LAD reconstruction operators
 // See Peng et al. Journal of Computational Physics 425, 2021
 //-----------------------------------------------------------------------------
+template<int exp = -16>
 class TENOLAD_Op {
 public:
    __CUDA_H__
@@ -836,7 +876,7 @@ public:
       const double chiMax = max(chi1, max(chi2,
                             max(chi3,     chi4)));
       const double theta = 1.0/(1 + chiMax*iH);
-      const int power = floor(Shock_pow + Diff_pow*theta);
+      const int power = min(max(int(floor(Shock_pow + Diff_pow*theta)), 0), 13);
       const float cut_off = p10[power];
 
       // Select stencils
@@ -926,7 +966,7 @@ public:
       const double chiMax = max(chi1, max(chi2,
                             max(chi3,     chi4)));
       const double theta = 1.0/(1 + chiMax*iH);
-      const int power = floor(Shock_pow + Diff_pow*theta);
+      const int power = min(max(int(floor(Shock_pow + Diff_pow*theta)), 0), 13);
       const float cut_off = p10[power];
 
       // Select stencils
@@ -987,7 +1027,7 @@ private:
    static constexpr double Diff_pow = Smooth_pow - Shock_pow;
 
    // Small number
-   static constexpr double eps = 1e-16;
+   static constexpr double eps = my_10_pow(exp);
 
    // JS coefficients
    static constexpr double C13 =  13.0/12.0;

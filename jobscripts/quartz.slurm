@@ -17,6 +17,5 @@ source "$HTR_DIR"/jobscripts/jobscript_shared.sh
 
 export OMPI_MCA_mtl="^psm,psm2"
 srun -n "$NUM_RANKS" --tasks-per-node "$RANKS_PER_NODE" --cpu_bind none --mpibind=off \
-   -x LD_LIBRARY_PATH -x HTR_DIR -x REALM_BACKTRACE -x LEGION_FREEZE_ON_ERROR\
    $COMMAND
 

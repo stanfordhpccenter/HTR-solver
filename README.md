@@ -4,7 +4,7 @@ Organization of the repository
 ./  
    > [prometeo.sh](prometeo.sh): Script to run a calculation  
    > [Makefile.in](Makefile.in): Basic definitions of compile time variables  
-
+   >
    > [src/](src/)  
    >  > [prometeo.rg](src/prometeo.rg): Main tasks of the solver  
    >  > [prometeo_const.rg](src/prometeo_const.rg): Module that contains constants used by the solver  
@@ -81,6 +81,7 @@ Organization of the repository
    >  > [prometeo_electricField.inl](src/prometeo_electricField.inl): C++ implementations of the inlined function that update the electric field and ion wind  
    >  > [prometeo_electricField.cc](src/prometeo_electricField.cc): C++ implementations of the tasks to update the electric field and ion wind  
    >  > [prometeo_electricField.cu](src/prometeo_electricField.cu): CUDA implementations of the tasks to update the electric field and ion wind  
+   >  > [prometeo_laser.rg](src/prometeo_laser.rg): Module containing tasks for the laser model
    >  > [prometeo_mapper.h](src/prometeo_mapper.h) [prometeo_mapper.cc](src/prometeo_mapper.cc): Source files for the mapper of the solver  
    >  > [desugar.py](src/desugar.py): Script that substitutes some macros used for metaprogramming  
    >  > [Makefile](src/Makefile): Builds the solver  
@@ -95,15 +96,18 @@ Organization of the repository
    >  >  > [task_helper.hpp](src/Utils/task_helper.hpp): Utilities for task registration  
    >  >  > [PointDomain_helper.hpp](src/Utils/PointDomain_helper.hpp): Utilities for point and domains  
    >  >  > [cuda_utils.hpp](src/Utils/cuda_utils.hpp): Utilities for CUDA kernels  
+   >  >  > [cuda_utils.cu](src/Utils/cuda_utils.cu): Utilities for CUDA kernels  
    >  >  > [math_utils.h](src/Utils/math_utils.h): Definition of data types for basic mathematical operations deployed in the solver  
    >  >  > [math_utils.rg](src/Utils/math_utils.rg): Regent implementation of basic mathematical operations deployed in the solver  
    >  >  > [math_utils.hpp](src/Utils/math_utils.hpp): C++ implementations of basic mathematical operations deployed in the solver  
+   >  >
    >  > [Poisson](src/Poisson)  
    >  >  > [Poisson.rg](src/Poisson/Poisson.rg): Module that contains the the tasks of the Poisson solver  
    >  >  > [Poisson.h](src/Poisson/Poisson.h): C header for the tasks of the Poisson solver  
    >  >  > [Poisson.hpp](src/Poisson/Poisson.hpp): C++ header for the tasks of the Poisson solver  
    >  >  > [Poisson.cc](src/Poisson/Poisson.cc): C++ implementations of the tasks of the Poisson solver  
    >  >  > [Poisson.cu](src/Poisson/Poisson.cu): CUDA implementations of the tasks of the Poisson solver  
+   >  >
    >  > [Mixtures](src/Mixtures)  
    >  >  > [Reaction.hpp](src/Mixtures/Reaction.hpp): C++ declarations of the data structures related to chemical reactions  
    >  >  > [Reaction.inl](src/Mixtures/Reaction.inl): C++ implementations of the functions related to chemical reactions  
@@ -118,7 +122,11 @@ Organization of the repository
    >  >  > [AirMix.hpp](src/Mixtures/AirMix.hpp): C++ headers for the tasks of a non-equilibrium dissociating air  
    >  >  > [CH41StMix.hpp](src/Mixtures/CH41StMix.hpp): C++ headers for the tasks and data structures describing single step combustion mechanism for CH4  
    >  >  > [CH4_30SpMix.hpp](src/Mixtures/CH4_30SpMix.hpp): C++ headers for the tasks and data structures describing Lu and Law (2008) combustion mechanism for CH4  
-
+   >  >  > [FFCM1Mix.hpp](src/Mixtures/FFCM1Mix.hpp): C++ headers for the tasks and data structures describing FFCM1 mechanism, (https://web.stanford.edu/group/haiwanglab/FFCM1/)  
+   >  >  > [CH4_26SpIonsMix.hpp](src/Mixtures/CH4_26SpIonsMix.hpp): C++ headers for the tasks and data structures describing 26 species combustion mechanism for CH4 with ions  
+   >  >  > [BoivinMix.hpp](src/Mixtures/BoivinMix.hpp): C++ headers for the tasks and data structures describing 9 species combustion mechanism for H2 from Boivin et al. PCI 2011  
+   >  >  > [H2_UCSDMix.hpp](src/Mixtures/H2_UCSDMix.hpp): C++ headers for the tasks and data structures describing UCSD 9 species combustion mechanism for H2 (Saxena & Williams (2006) CnF 145))  
+   >
    > [jobscripts/](jobscripts/)  
    >  > [blacklist](jobscripts/blacklist): Folder containing potential blacklists of nodes that should not be used  
    >  > [run.sh](jobscripts/run.sh): Script called by [prometeo.sh](prometeo.sh) to generate the execution command (modify this script using the provided templates to add a new machine)  
@@ -127,10 +135,9 @@ Organization of the repository
    >  > [armstrong.slurm](jobscripts/armstrong.slurm): Submission script for Armstrong (@ Stanford) (use as a template script for slurm system)  
    >  > [quartz.slurm](jobscripts/quartz.slurm): Submission script for Quartz (@ LLNL) (use as a template script for slurm system)  
    >  > [lassen.lsf](jobscripts/lassen.lsf): Submission script for Lassen (@ LLNL) (use as a template script for IBM Spectrum LSF system)  
-   >  > [galileo.slurm](jobscripts/galileo.slurm): Submission script for Galileo (@ Cineca) (use as a template script for slurm system)  
    >  > [m100.slurm](jobscripts/m100.slurm): Submission script for Marconi100 (@ Cineca) (use as a template script for slurm system)  
    >  > [kraken.slurm](jobscripts/kraken.slurm): Submission script for Kraken (@ CERFACS)
-
+   >
    > [scripts/](scripts/)  
    >  > [viz_fluid.py](scripts/viz_fluid.py): Script to produce Xdmf files for visualization  
    >  > [compare_hdf.py](scripts/compare_hdf.py): Script to compare two HDF5 files  
@@ -139,7 +146,7 @@ Organization of the repository
    >  > [interpolate.py](scripts/interpolate.py): Script to interpolate a solution on a new grid  
    >  > [convert_output_for_viz.py](scripts/convert_output_for_viz.py): Script that automates the production of visualization files for multiple snapshots  
    >  > [modules/](scripts/modules/): Various utility modules used by the python scripts
-
+   >
    > [testcases/](testcases/)  
    >  > [README.md](testcases/README.md): Instructions on how to run the provided testcases  
    >  > [SodProblem/](testcases/SodProblem/): Contains the setup and postporcessing files needed to run Sod's shock tube  
@@ -159,20 +166,22 @@ Organization of the repository
    >  > [MultispeciesTBL/](testcases/MultispeciesTBL/): Contains the setup and postporcessing files needed to run Multispecies hypersonic boundary layer  
    >  > [scalingTest/WeakScaling](testcases/scalingTest/WeakScaling): Contains the setup and postporcessing files needed to run the weak scaling test
    >  > [scalingTest/StrongScaling](testcases/scalingTest/StrongScaling): Contains the setup and postporcessing files needed to run the strong scaling test
-
+   >  > [scalingTest/LFHF](testcases/scalingTest/LFHF): Contains the setup and postporcessing files needed to run the scaling test of an ensamble run with high-fidelity and low-fidelity samples
+   >
    > [unitTests/](unitTests/)  
    >  > [cflTest/](unitTests/cflTest/): Contains the unit test for the cfl module  
    >  > [chemTest/](unitTests/chemTest/): Contains the unit test for the chemistry module  
    >  > [configTest/](unitTests/configTest/): Contains the unit test for the config schema module  
    >  > [geometryTest/](unitTests/geometryTest/): Contains the unit test for the geometry module  
    >  > [hdfTest/](unitTests/hdfTest/): Contains the unit test for the hdf helper module  
+   >  > [laserTest/](unitTests/laserTest/): Contains the unit test for the laser model
    >  > [mathUtilsTest/](unitTests/mathUtilsTest/): Contains the unit test for the mathUtils module  
    >  > [metricTest/](unitTests/metricTest/): Contains the unit test for the metric module  
    >  > [mixTest/](unitTests/mixTest/): Contains the unit test for the mixture modules  
    >  > [variablesTest/](unitTests/variablesTest/): Contains the unit test for the variables module  
    >  > [probeTest/](unitTests/probeTest/): Contains the unit test for the probe module  
    >  > [averageTest/](unitTests/averageTest/): Contains the unit test for the average module  
-
+   >
    > [solverTests/](solverTests/)  
    >  > [VortexAdvection2D/](solverTests/VortexAdvection2D/): Contains the solver test for the bi-periodic 2D inviscid testcase  
    >  > [3DPeriodic/](solverTests/3DPeriodic/): Contains the solver test for the tri-periodic 3D testcase  
@@ -197,15 +206,15 @@ See below for instructions targeting specific systems.
 ### Prerequisites
 
 * Legion (latest version)
-* GCC 4.9+ (we need a working `std::regex` library)
+* GCC 6.0+
 * CUDA 9.0+
 * Python 3.X
 
 The following are automatically installed during Legion installation:
 
-* LLVM 6.0
+* LLVM 13
 * GASNET (custom version)
-* Terra (custom version)
+* Terra 1.0.3
 * HDF5 (any recent version)
 
 ### Optional modules include
@@ -246,7 +255,7 @@ export MAX_DIM=3
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -256,7 +265,7 @@ Replace the `?` depending on your system's capabilities.
 
 ```
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 See [Elliott's instructions](https://docs.google.com/document/d/1Qkl6r-1ZIb8WyH1f_WZbKgjp3due_Q8UiWKLh_nG1ec/edit) for more help.
@@ -284,6 +293,7 @@ Currently, the solver reads the following options:
 
 * `-i <config>.json`: Provide a case configuration file, to be run as an additional sample. See [src/config_schema.lua](src/config_schema.lua) for documentation on the available options (`Config` struct).
 * `-o <out_dir>`: Specify an output directory for the executable (default is current directory).
+* `-lp <config>.json`: Provide a case configuration file to be run as an additional low-priority sample. Low-priority samples are limited to using CPUs only. See [src/config_schema.lua](src/config_schema.lua) for documentation on the available options (`Config` struct).
 
 Setup (local Ubuntu machine w/o GPU)
 ====================================
@@ -309,7 +319,7 @@ export MAX_DIM=3
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -317,7 +327,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 
 ```
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 ### Compile the HTR solver
@@ -327,6 +337,71 @@ cd "$HTR_DIR"/src
 USE_CUDA=0 make
 ```
 
+Setup (local macOS machine w/o GPU)
+====================================
+
+### Add to shell startup
+
+```
+# Build config
+export INCLUDE_PATH="$(xcrun --sdk macosx --show-sdk-path)/usr/include:$INCLUDE_PATH"
+export CXX_FLAGS="-std=c++11"
+# Path setup
+export LLVM_DIR=???
+export LEGION_DIR=???
+export HDF_ROOT="$LEGION_DIR"/language/hdf/install
+export HTR_DIR=???
+# Legion setup
+export USE_CUDA=0
+export USE_OPENMP=1
+export USE_GASNET=0
+export USE_HDF=1
+export MAX_DIM=3
+```
+
+### Install HDF5
+
+```
+mkdir $LEGION_DIR/language/hdf
+cd $LEGION_DIR/language/hdf
+curl http://sapling.stanford.edu/~manolis/hdf/hdf5-1.10.1.tar.gz --out hdf5-1.10.1.tar.gz
+tar -xvf hdf5-1.10.1.tar.gz
+cd hdf5-1.10.1
+./configure --prefix=$HDF_ROOT  --enable-threadsafe --disable-hl
+make -j
+make install
+```
+
+### Download LLVM
+
+```
+mkdir $LLVM_DIR
+cd $LLVM_DIR
+curl -O https://github.com/llvm/llvm-project/releases/download/llvmorg-9.0.1/clang+llvm-9.0.1-x86_64-apple-darwin.tar.xz
+tar xfJ clang+llvm-9.0.1-x86_64-apple-darwin.tar.xz
+```
+
+### Download software
+
+```
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
+```
+
+### Install Legion
+
+```
+cd "$LEGION_DIR"/language
+CXXFLAGS='-std=c++11' $LEGION_DIR/language/install.py -j --no-clean
+```
+
+### Compile the HTR solver
+
+```
+cd "$HTR_DIR"/src
+make
+```
+
 Setup (Sapling @ Stanford)
 ==========================
 
@@ -334,11 +409,12 @@ Setup (Sapling @ Stanford)
 
 ```
 # Module loads
-module load mpi/openmpi/1.8.2
+module load mpi/openmpi/4.1.0
+module load slurm/20.11.4
 # Build config
 export CONDUIT=ibv
-export CC=gcc-5
-export CXX=g++-5
+export CC=gcc-8
+export CXX=g++-8
 # Path setup
 export LEGION_DIR=???
 export HDF_ROOT="$LEGION_DIR"/language/hdf/install
@@ -350,12 +426,13 @@ export USE_OPENMP=1
 export USE_GASNET=1
 export USE_HDF=1
 export MAX_DIM=3
+export GASNET_VERSION="GASNet-2020.3.0"
 ```
 
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -363,7 +440,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 
 ```
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 ### Compile the HTR solver
@@ -374,14 +451,16 @@ make
 ```
 
 Setup (Yellowstone @ Stanford w/o GPUs)
+============================
 
 ### Add to shell startup
 
 ```
 # Module loads
 module load gnu7/7.3.0
-module load openmpi3/3.0.0
+module load openmpi3/3.1.0
 module load pmix/2.2.2
+module load cmake/3.15.4
 # Build config
 export CONDUIT=ibv
 export CC=gcc
@@ -401,7 +480,7 @@ export MAX_DIM=3
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -410,7 +489,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 # Rest of compilation as normal
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 ### Compile the HTR solver
@@ -428,9 +507,10 @@ Setup (Yellowstone @ Stanford w/ GPUs)
 ```
 # Module loads
 module load gnu7/7.3.0
-module load cuda/10.2
-module load openmpi3/3.0.0
+module load cuda/11.1
+module load openmpi3/3.1.0
 module load pmix/2.2.2
+module load cmake/3.15.4
 # Build config
 export CONDUIT=ibv
 export CC=gcc
@@ -440,9 +520,9 @@ export LEGION_DIR=???
 export HDF_ROOT="$LEGION_DIR"/language/hdf/install
 export HTR_DIR=???
 # CUDA config
-export CUDA_HOME=/usr/local/cuda-10.2
+export CUDA_HOME=/usr/local/cuda-11.1
 export CUDA="$CUDA_HOME"
-export GPU_ARCH=kepler
+export GPU_ARCH=maxwell
 # Legion setup
 export USE_CUDA=1
 export USE_OPENMP=1
@@ -454,7 +534,7 @@ export MAX_DIM=3
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -463,14 +543,14 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 # Rest of compilation as normal
 cd "$LEGION_DIR"/language
-srun -p gpu scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+srun -p gpu-maxwell scripts/setup_env.py
 ```
 
-### Compile the HTR solver
+### Compile Prometeo
 
 ```
 cd "$HTR_DIR"/src
-srun -p gpu make -j
+srun -p gpu-maxwell make -j
 ```
 
 Setup (Armstrong @ Stanford)
@@ -502,8 +582,8 @@ export MAX_DIM=3
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
-git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone https://gitlab.com/insieme1/htr/htr-solver.git "$HTR_DIR"
 ```
 
 ### Install Legion
@@ -511,7 +591,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 # Rest of compilation as normal
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 ### Compile Prometeo
@@ -552,7 +632,7 @@ export GASNET_VERSION="GASNet-1.32.0"
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -560,7 +640,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 
 ```
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 ### Compile the HTR solver
@@ -578,7 +658,8 @@ Setup (Lassen @ LLNL)
 ```
 # Module loads
 module load gcc/7.3.1
-module load cuda/10.2.89
+module load cuda/11.1.1
+module load cmake
 module load python
 # Build config
 export CC=gcc
@@ -590,7 +671,7 @@ export HDF_ROOT="$LEGION_DIR"/language/hdf/install
 export HTR_DIR=???
 export SCRATCH=???
 # CUDA config
-export CUDA_HOME=/usr/tce/packages/cuda/cuda-10.2.89
+export CUDA_HOME=/usr/tce/packages/cuda/cuda-11.1.1
 export CUDA="$CUDA_HOME"
 export GPU_ARCH=volta
 
@@ -607,7 +688,7 @@ export MAX_DIM=3
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -615,7 +696,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 
 ```
 cd "$LEGION_DIR"/language
-lalloc 1 scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+lalloc 1 scripts/setup_env.py
 ```
 
 ### Compile the HTR solver
@@ -625,16 +706,16 @@ cd "$HTR_DIR"/src
 lalloc 1 -W 120 make
 ```
 
-Setup (Galileo @ Cineca)
+Setup (Solo @ Sandia)
 ============================
 
 ### Add to shell startup
 
 ```
 # Module loads
-module load gnu
-module load openmpi/3.1.1--gnu--6.1.0
-module load cuda/9.0
+module load gnu/7.3.1
+module load openmpi-gnu/3.0
+module load pmix214
 module load python
 # Build config
 export CC=gcc
@@ -645,15 +726,8 @@ export LEGION_DIR=???
 export HDF_ROOT="$LEGION_DIR"/language/hdf/install
 export HTR_DIR=???
 export SCRATCH=???
-# CUDA config
-export CUDA_HOME="/cineca/prod/compilers/cuda/9.0/none"
-export CUDA="$CUDA_HOME"
-export GPU_ARCH=kepler
-
-export ACCOUNT=[ACCOUNT TO BE CHARGED]
-
 # Legion setup
-export USE_CUDA=1
+export USE_CUDA=0
 export USE_OPENMP=1
 export USE_GASNET=1
 export USE_HDF=1
@@ -663,7 +737,7 @@ export MAX_DIM=3
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -671,14 +745,14 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 
 ```
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+salloc -N1 --time=1:00:00 -p short --account=??? scripts/setup_env.py
 ```
 
 ### Compile Prometeo
 
 ```
 cd "$HTR_DIR"/src
-srun --cpus-per-task=3 --mem 30000 -p gll_usr_gpuprod -t 0:50:00 make -j &
+salloc -N1 --time=1:00:00 -p short --account=??? make -j
 ```
 
 Setup (Marconi100 @ Cineca)
@@ -688,15 +762,15 @@ Setup (Marconi100 @ Cineca)
 
 ```
 # Module loads
-module load profile/advanced
-module load gnu
-module load cuda/10.1
-module load openmpi/4.0.3--gnu--8.4.0
+module load profile/global
+module load gnu/8.4.0
+module load cuda/11.1
+module load spectrum_mpi/10.4.0--binary
 module load cmake
 module load anaconda
 # Build config
-export CC=mpicc
-export CXX=mpic++
+export CC=gcc
+export CXX=g++
 export CONDUIT=ibv
 # Path setup
 export LEGION_DIR=???
@@ -704,7 +778,7 @@ export HDF_ROOT="$LEGION_DIR"/language/hdf/install
 export HTR_DIR=???
 export SCRATCH=???
 # CUDA config
-export CUDA_HOME="/cineca/prod/opt/compilers/cuda/10.1/none"
+export CUDA_HOME="/cineca/prod/opt/compilers/cuda/11.1/none"
 export CUDA="$CUDA_HOME"
 export GPU_ARCH=volta
 
@@ -716,12 +790,13 @@ export USE_OPENMP=1
 export USE_GASNET=1
 export USE_HDF=1
 export MAX_DIM=3
+export REALM_NETWORKS=gasnetex
 ```
 
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -729,7 +804,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 
 ```
 cd "$LEGION_DIR"/language
-scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/mariodirenzo/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 ### Compile Prometeo
@@ -747,10 +822,11 @@ Setup (Kraken @ CERFACS)
 ```
 # Module loads
 module purge
-module load compiler/gcc
-module load mpi/openmpi/3.1.5_gcc54
-module load nvidia/cuda/10.1
+module load compiler/gcc/8.3.0
+module load mpi/openmpi/3.1.5_gcc83
+module load nvidia/cuda/11.2
 module load python/anaconda3.7
+module load tools/cmake
 # Build config
 export CONDUIT=psm
 export CC=gcc
@@ -761,11 +837,9 @@ export LEGION_DIR="$SCRATCH"/legion
 export HDF_ROOT="$LEGION_DIR"/language/hdf/install
 export HTR_DIR="$SCRATCH"/htr
 # CUDA config
-export CUDA_HOME="/softs/nvidia/cuda-10.1"
+export CUDA_HOME="/softs/nvidia/cuda-11.2"
 export CUDA="$CUDA_HOME"
 export GPU_ARCH=volta
-
-export ACCOUNT=[ACCOUNT TO BE CHARGED]
 
 # Legion setup
 export USE_CUDA=1
@@ -775,10 +849,12 @@ export USE_HDF=1
 export MAX_DIM=3
 ```
 
+# For new GPU nodes change `GPU_ARCH=ampere`
+
 ### Download software
 
 ```
-git clone -b HTR-1.3 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
 git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 ```
 
@@ -786,7 +862,7 @@ git clone https://github.com/stanfordhpccenter/HTR-solver.git "$HTR_DIR"
 
 ```
 cd "$LEGION_DIR"/language
-CXXFLAGS='-std=c++11' scripts/setup_env.py --llvm-version 60 --terra-url 'https://github.com/StanfordLegion/terra.git' --terra-branch 'luajit2.1'
+scripts/setup_env.py
 ```
 
 ### Compile Prometeo
@@ -794,5 +870,55 @@ CXXFLAGS='-std=c++11' scripts/setup_env.py --llvm-version 60 --terra-url 'https:
 ```
 cd "$HTR_DIR"/src
 make -j
+```
+
+Setup (Agave @ ASU)
+============================
+
+### Add to shell startup
+
+```
+# Module loads
+module purge
+module load gcc/7.5.0
+module load openmpi/3.0.6-gnu-7.5.0
+module load cmake/3.20.3
+# Build config
+export CC=gcc
+export CXX=g++
+export CONDUIT=psm
+# Path setup
+export LEGION_DIR=$HOME/legion
+export HDF_ROOT="$LEGION_DIR"/language/hdf/install
+export HTR_DIR=$HOME/htr
+export SCRATCH=/scratch/$USER
+# Legion setup
+export USE_CUDA=0
+export USE_OPENMP=1
+export USE_GASNET=1
+export USE_HDF=1
+export MAX_DIM=3
+export GASNET_VERSION="GASNet-1.32.0"
+```
+
+### Download software
+
+```
+git clone -b HTR-1.4 https://gitlab.com/mario.direnzo/legion.git "$LEGION_DIR"
+git clone https://gitlab.com/insieme1/htr/htr-solver.git "$HTR_DIR"
+```
+
+### Install Legion
+
+```
+cd "$LEGION_DIR"/language
+srun -p parallel --cpu-bind=none --mpi=pmi2 -N 1 --exclusive scripts/setup_env.py
+```
+
+### Compile Prometeo
+
+```
+cd "$HTR_DIR"/src
+srun -p parallel --cpu-bind=none --mpi=pmi2 -N 1 --exclusive make -j
 ```
 

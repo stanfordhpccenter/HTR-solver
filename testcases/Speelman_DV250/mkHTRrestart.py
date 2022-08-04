@@ -83,149 +83,47 @@ import h5py
 sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
 import gridGen
 import MulticomponentMix
+import HTRrestart
 
 with open("Speelman.json") as f:
    config = json.load(f)
 
 mix = MulticomponentMix.Mix(config["Flow"]["mixture"])
 
-xGrid, dx = gridGen.GetGrid(config["Grid"]["origin"][0],
-                            config["Grid"]["xWidth"],
-                            config["Grid"]["xNum"],
-                            config["Grid"]["xType"],
-                            config["Grid"]["xStretching"],
-                            True)
-
-yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
-                            config["Grid"]["yWidth"],
-                            config["Grid"]["yNum"],
-                            config["Grid"]["yType"],
-                            config["Grid"]["yStretching"],
-                            False)
-
-zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
-                            config["Grid"]["zWidth"],
-                            config["Grid"]["zNum"],
-                            config["Grid"]["zType"],
-                            config["Grid"]["yStretching"],
-                            True)
-
-# Load mapping
-assert config["Mapping"]["tiles"][0] % config["Mapping"]["tilesPerRank"][0] == 0
-assert config["Mapping"]["tiles"][1] % config["Mapping"]["tilesPerRank"][1] == 0
-assert config["Mapping"]["tiles"][2] % config["Mapping"]["tilesPerRank"][2] == 0
-Ntiles = config["Mapping"]["tiles"]
-Ntiles[0] = int(Ntiles[0]/config["Mapping"]["tilesPerRank"][0])
-Ntiles[1] = int(Ntiles[1]/config["Mapping"]["tilesPerRank"][1])
-Ntiles[2] = int(Ntiles[2]/config["Mapping"]["tilesPerRank"][2])
-
-assert config["Grid"]["xNum"] % Ntiles[0] == 0
-assert config["Grid"]["yNum"] % Ntiles[1] == 0
-assert config["Grid"]["zNum"] % Ntiles[2] == 0
-
-NxTile = int(config["Grid"]["xNum"]/Ntiles[0])
-NyTile = int(config["Grid"]["yNum"]/Ntiles[1])
-NzTile = int(config["Grid"]["zNum"]/Ntiles[2])
-
-halo = [0, 1, 0]
+xGrid, yGrid, zGrid, dx, dy, dz = gridGen.getCellCenters(config)
 
 ##############################################################################
 #                     Produce restart and profile files                      #
 ##############################################################################
+def pressure(i, j, k):
+   ct.one_atm/mix.PRef
+
+T = np.interp(yGrid, gridIn, flame.T/mix.TRef)
+def temperature(i, j, k):
+   return T[j]
+
+MFracs = np.ndarray((yGrid.size, Xi.size), dtype="f8")
+for i, x in enumerate(Xi):
+   MFracs[:,i] = np.interp(yGrid, gridIn, flame.X[i,:])
+def MolarFracs(i, j, k):
+   return  MFracs[j,:]
+
+v = np.interp(yGrid, gridIn, flame.velocity/mix.uRef)
+def velocity(i, j, k):
+   return [ 0.0, v[j], 0.0]
+
+Phi = np.interp(yGrid, gridIn, flame.electric_potential/mix.delPhi)
+def electricPotential(i,j,k):
+   return Phi[j]
 
 restartDir="restart"
-
-if not os.path.exists(restartDir):
-   os.makedirs(restartDir)
-
-def writeTile(xt, yt, zt):
-   lo_bound = [(xt  )*NxTile  +halo[0], (yt  )*NyTile  +halo[1], (zt  )*NzTile  +halo[2]]
-   hi_bound = [(xt+1)*NxTile-1+halo[0], (yt+1)*NyTile-1+halo[1], (zt+1)*NzTile-1+halo[2]]
-   if (xt == 0): lo_bound[0] -= halo[0]
-   if (yt == 0): lo_bound[1] -= halo[1]
-   if (zt == 0): lo_bound[2] -= halo[2]
-   if (xt == Ntiles[0]-1): hi_bound[0] += halo[0]
-   if (yt == Ntiles[1]-1): hi_bound[1] += halo[1]
-   if (zt == Ntiles[2]-1): hi_bound[2] += halo[2]
-   filename = ('%s,%s,%s-%s,%s,%s.hdf'
-      % (lo_bound[0],  lo_bound[1],  lo_bound[2],
-         hi_bound[0],  hi_bound[1],  hi_bound[2]))
-   print("Working on: ", filename)
-
-   shape = [hi_bound[2] - lo_bound[2] +1,
-            hi_bound[1] - lo_bound[1] +1,
-            hi_bound[0] - lo_bound[0] +1]
-
-   gridIn = flame.grid/mix.LRef
-
-   with h5py.File(os.path.join(restartDir, filename), 'w') as fout:
-      fout.attrs.create("timeStep", 0)
-      fout.attrs.create("simTime", 0.0)
-      fout.attrs.create("channelForcing", 0.0)
-
-      fout.create_dataset("centerCoordinates",     shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("cellWidth",             shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("rho",                   shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("pressure",              shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("temperature",           shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("MolarFracs",            shape=shape, dtype = np.dtype("(43,)f8"))
-      fout.create_dataset("velocity",              shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dTdtBoundary",          shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("MolarFracs_profile",    shape=shape, dtype = np.dtype("(43,)f8"))
-      fout.create_dataset("velocity_profile",      shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("temperature_profile",   shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("electricPotential",     shape=shape, dtype = np.dtype("f8"))
-
-      fout["centerCoordinates"][:] = np.reshape([(x,y,z)
-                                 for z in zGrid[lo_bound[2]:hi_bound[2]+1]
-                                 for y in yGrid[lo_bound[1]:hi_bound[1]+1]
-                                 for x in xGrid[lo_bound[0]:hi_bound[0]+1]],
-                              (shape[0], shape[1], shape[2], 3))
-
-      fout["cellWidth"][:] = np.reshape([(x,y,z)
-                                 for z in dz[lo_bound[2]:hi_bound[2]+1]
-                                 for y in dy[lo_bound[1]:hi_bound[1]+1]
-                                 for x in dx[lo_bound[0]:hi_bound[0]+1]],
-                              (shape[0], shape[1], shape[2], 3))
-
-      fout["pressure"][:] = ct.one_atm/mix.PRef
-      fout["dTdtBoundary"][:] = np.zeros(shape=shape, dtype = np.dtype("f8"))
-      fout["dudtBoundary"][:] = np.zeros(shape=shape, dtype = np.dtype("(3,)f8"))
-
-      v = np.interp(yGrid[lo_bound[1]:hi_bound[1]+1], gridIn, flame.velocity/mix.uRef)
-      velocity = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-      for j in range(hi_bound[1]-lo_bound[1]+1): velocity[:,j,:] = [ 0.0, v[j], 0.0]
-      fout["velocity"][:] = velocity[:]
-      fout["velocity_profile"][:] = velocity[:]
-      del velocity
-
-      temperature = np.ndarray(shape)
-      T = np.interp(yGrid[lo_bound[1]:hi_bound[1]+1], gridIn, flame.T/mix.TRef)
-      for j in range(hi_bound[1]-lo_bound[1]+1): temperature[:,j,:] = T[j]
-      fout["temperature"][:] = temperature
-      fout["temperature_profile"][:] = temperature
-      del temperature
-
-      rho = np.ndarray(shape)
-      r = np.interp(yGrid[lo_bound[1]:hi_bound[1]+1], gridIn, flame.density/mix.rhoRef)
-      for j in range(hi_bound[1]-lo_bound[1]+1): rho[:,j,:] = r[j]
-      fout["rho"][:] = rho
-      del rho
-
-      MolarFracs = np.ndarray(shape, dtype=np.dtype('(43,)f8'))
-      for i, x in enumerate(Xi):
-         X = np.interp(yGrid[lo_bound[1]:hi_bound[1]+1], gridIn, flame.X[i,:])
-         for j in range(hi_bound[1]-lo_bound[1]+1): MolarFracs[:,j,:,i] = X[j]
-      fout["MolarFracs"][:] = MolarFracs
-      fout["MolarFracs_profile"][:] = MolarFracs
-      del MolarFracs
-
-      Phi = np.ndarray(shape)
-      p = np.interp(yGrid[lo_bound[1]:hi_bound[1]+1], gridIn, flame.electric_potential/mix.delPhi)
-      for j in range(hi_bound[1]-lo_bound[1]+1): Phi[:,j,:] = p[j]
-      fout["electricPotential"][:] = Phi
-      del Phi
-
-for x, y, z in np.ndindex((Ntiles[0], Ntiles[1], Ntiles[2])): writeTile(x, y, z)
-
+restart = HTRrestart.HTRrestart(config)
+restart.write(restartDir, 43,
+              pressure,
+              temperature,
+              MolarFracs,
+              Phi = electricPotential,
+              T_p = temperature,
+              Xi_p = MolarFracs,
+              U_p = velocity,
+              nproc = 1)

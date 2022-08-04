@@ -138,6 +138,20 @@ $HTR_DIR/prometeo.sh -i Speelman.json
 python postProc.py
 ```
 
+### One-dimensional planar flame
+
+This test case is similar to `Speelman` but provides the premixed laminar flame
+speed, which is readily compared with published values.  Depending on the
+system, the `wallTime` parameter in `base.json` may need to be adjusted in
+order to reach a steady state.  Four cases are run at varying equivalence
+ratios and compared with a Cantera-generated solution.
+
+```
+cd PlanarFlame1D
+source run.sh
+python3 postProc.py
+```
+
 ### Weak scaling test
 
 ```
@@ -153,4 +167,20 @@ cd scalingTest/StrongScaling
 python scale_up.py -n [Number of refinements] -out [output dir] base.json
 python postProc.py -n [Number of refinements] -out [output dir]
 ```
+### Laser-in-box test
 
+This test runs a low-energy case for the `GeometricKernel` laser model, post-processes
+the solution files, and checks global quantities.
+
+```
+cd LaserInBox
+source run.sh
+source run-postproc.sh # Run this after the simulation is done.
+
+### High-Fidelity along with Low fidelity test
+
+```
+cd scalingTest/LFHF
+python scale_up.py -n [Number of refinements] --lp lf.json -out [output dir] base.json
+python postProc.py -n [Number of refinements] -out [output dir]
+```

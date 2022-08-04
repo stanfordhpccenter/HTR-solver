@@ -16,4 +16,7 @@ class unitTest(unittest.TestCase, testAll.Test2DTiledBase):
       return MyOut
 
 if __name__ == "__main__":
+   # Get reference data
+   testAll.downloadRefData()
+   # Run the test
    unittest.main()

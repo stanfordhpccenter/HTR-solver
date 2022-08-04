@@ -29,16 +29,21 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, METRIC, TYPES, Fluid_columns,
+return function(SCHEMA, MIX, METRIC, TYPES, STAT,
                 zones_partitions, ghost_partitions,
+                IncomingShockParams,
                 ATOMIC) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
 -------------------------------------------------------------------------------
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
+
+-- Math
+local C = regentlib.c
+local pow  = regentlib.pow(double)
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -46,16 +51,25 @@ local irU = CONST.GetirU(MIX) -- Index of the momentum in Conserved vector
 local irE = CONST.GetirE(MIX) -- Index of the total energy density in Conserved vector
 local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
-local Primitives = CONST.Primitives
-local Properties = CONST.Properties
+local Primitives   = CONST.Primitives
+local Properties   = CONST.Properties
+local ProfilesVars = CONST.ProfilesVars
+
+-- Types
+local Fluid_columns = TYPES.Fluid_columns
+local bBoxType      = TYPES.bBoxType
 
 -- Atomic switch
 local Fluid = regentlib.newsymbol(region(ispace(int3d), Fluid_columns), "Fluid")
+local BC = regentlib.newsymbol(region(ispace(int3d), Fluid_columns), "BC")
 local coherence_mode
+local coherence_mode_BC
 if ATOMIC then
-   coherence_mode = regentlib.coherence(regentlib.atomic,    Fluid, "Conserved_t")
+   coherence_mode    = regentlib.coherence(regentlib.atomic,    Fluid, "Conserved_t")
+   coherence_mode_BC = regentlib.coherence(regentlib.atomic,       BC, "Conserved_t")
 else
-   coherence_mode = regentlib.coherence(regentlib.exclusive, Fluid, "Conserved_t")
+   coherence_mode    = regentlib.coherence(regentlib.exclusive, Fluid, "Conserved_t")
+   coherence_mode_BC = regentlib.coherence(regentlib.exclusive,    BC, "Conserved_t")
 end
 
 -------------------------------------------------------------------------------
@@ -65,46 +79,45 @@ end
 local mkUpdateUsingHybridEulerFlux = terralib.memoize(function(dir)
    local UpdateUsingHybridEulerFlux
 
---   local FluxC
    local shockSensor
    local nType
    local m_e
    if (dir == "x") then
---      FluxC = "FluxXCorr"
       shockSensor = "shockSensorX"
       nType = "nType_x"
       m_e   = "dcsi_e"
    elseif (dir == "y") then
---      FluxC = "FluxYCorr"
       shockSensor = "shockSensorY"
       nType = "nType_y"
       m_e   = "deta_e"
    elseif (dir == "z") then
---      FluxC = "FluxZCorr"
       shockSensor = "shockSensorZ"
       nType = "nType_z"
       m_e   = "dzet_e"
    else assert(false) end
+   local Conserved_list = terralib.newlist({"Conserved"})
+   if MIX.nSpec > 1 then
+      Conserved_list:insert("Conserved_old")
+   end
 
    extern task UpdateUsingHybridEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
                                           SensorGhost : region(ispace(int3d), Fluid_columns),
-                                          DiffGhost : region(ispace(int3d), Fluid_columns),
                                           FluxGhost : region(ispace(int3d), Fluid_columns),
                                           [Fluid],
-                                          ModCells : region(ispace(int3d), Fluid_columns),
+                                          RK_coeffs    : double[2],
+                                          deltaTime    : double,
                                           Fluid_bounds : rect3d,
-                                          mix : MIX.Mixture)
+                                          mix          : MIX.Mixture)
    where
-      reads(EulerGhost.Conserved),
+      reads(EulerGhost.[Conserved_list]),
       reads(EulerGhost.rho),
       reads(EulerGhost.MassFracs),
       reads(EulerGhost.velocity),
       reads(EulerGhost.pressure),
       reads(EulerGhost.SoS),
       reads(SensorGhost.[shockSensor]),
-      reads(DiffGhost.temperature),
+      reads(SensorGhost.[m_e]),
       reads(FluxGhost.[nType]),
-      reads(Fluid.[m_e]),
       reads writes(Fluid.Conserved_t),
       [coherence_mode]
    end
@@ -122,42 +135,43 @@ local mkUpdateUsingHybridEulerFlux = terralib.memoize(function(dir)
    return UpdateUsingHybridEulerFlux
 end)
 
-local mkUpdateUsingTENOAEulerFlux = terralib.memoize(function(dir)
-   local UpdateUsingTENOAEulerFlux
+local mkUpdateUsingTENOEulerFlux = terralib.memoize(function(dir, Op)
+   local UpdateUsingTENOEulerFlux
 
---   local FluxC
    local nType
    local m_e
    if (dir == "x") then
---      FluxC = "FluxXCorr"
       nType = "nType_x"
       m_e   = "dcsi_e"
    elseif (dir == "y") then
---      FluxC = "FluxYCorr"
       nType = "nType_y"
       m_e   = "deta_e"
    elseif (dir == "z") then
---      FluxC = "FluxZCorr"
       nType = "nType_z"
       m_e   = "dzet_e"
    else assert(false) end
+   local Conserved_list = terralib.newlist({"Conserved"})
+   if MIX.nSpec > 1 then
+      Conserved_list:insert("Conserved_old")
+   end
 
-   extern task UpdateUsingTENOAEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
-                                         DiffGhost : region(ispace(int3d), Fluid_columns),
-                                         FluxGhost : region(ispace(int3d), Fluid_columns),
-                                         [Fluid],
-                                         ModCells : region(ispace(int3d), Fluid_columns),
-                                         Fluid_bounds : rect3d,
-                                         mix : MIX.Mixture)
+   extern task UpdateUsingTENOEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
+                                        DiffGhost : region(ispace(int3d), Fluid_columns),
+                                        FluxGhost : region(ispace(int3d), Fluid_columns),
+                                        [Fluid],
+                                        RK_coeffs    : double[2],
+                                        deltaTime    : double,
+                                        Fluid_bounds : rect3d,
+                                        mix          : MIX.Mixture)
    where
-      reads(EulerGhost.Conserved),
+      reads(EulerGhost.[Conserved_list]),
       reads(EulerGhost.rho),
       reads(EulerGhost.velocity),
       reads(EulerGhost.pressure),
       reads(EulerGhost.SoS),
-      reads(DiffGhost.{MassFracs, temperature}),
+      reads(DiffGhost.MassFracs),
+      reads(DiffGhost.[m_e]),
       reads(FluxGhost.[nType]),
-      reads(Fluid.[m_e]),
       reads writes(Fluid.Conserved_t),
       [coherence_mode]
    end
@@ -165,85 +179,54 @@ local mkUpdateUsingTENOAEulerFlux = terralib.memoize(function(dir)
    --   print(k, v)
    --   for k2, v2 in pairs(v) do print(k2, v2) end
    --end
-   if     (dir == "x") then
-      UpdateUsingTENOAEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxX)
-   elseif (dir == "y") then
-      UpdateUsingTENOAEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxY)
-   elseif (dir == "z") then
-      UpdateUsingTENOAEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxZ)
+   if (Op == "TENO") then
+      if     (dir == "x") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOEulerFluxX)
+      elseif (dir == "y") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOEulerFluxY)
+      elseif (dir == "z") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOEulerFluxZ)
+      else
+         assert(false)
+      end
+   elseif (Op == "TENOA") then
+      if     (dir == "x") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxX)
+      elseif (dir == "y") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxY)
+      elseif (dir == "z") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOAEulerFluxZ)
+      else
+         assert(false)
+      end
+   elseif (Op == "TENOLAD") then
+      if     (dir == "x") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxX)
+      elseif (dir == "y") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxY)
+      elseif (dir == "z") then
+         UpdateUsingTENOEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxZ)
+      else
+         assert(false)
+      end
+   else
+      assert(false)
    end
-   return UpdateUsingTENOAEulerFlux
-end)
-
-local mkUpdateUsingTENOLADEulerFlux = terralib.memoize(function(dir)
-   local UpdateUsingTENOLADEulerFlux
-
---   local FluxC
-   local nType
-   local m_e
-   if (dir == "x") then
---      FluxC = "FluxXCorr"
-      nType = "nType_x"
-      m_e   = "dcsi_e"
-   elseif (dir == "y") then
---      FluxC = "FluxYCorr"
-      nType = "nType_y"
-      m_e   = "deta_e"
-   elseif (dir == "z") then
---      FluxC = "FluxZCorr"
-      nType = "nType_z"
-      m_e   = "dzet_e"
-   else assert(false) end
-
-   extern task UpdateUsingTENOLADEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
-                                           DiffGhost : region(ispace(int3d), Fluid_columns),
-                                           FluxGhost : region(ispace(int3d), Fluid_columns),
-                                           [Fluid],
-                                           ModCells : region(ispace(int3d), Fluid_columns),
-                                           Fluid_bounds : rect3d,
-                                           mix : MIX.Mixture)
-   where
-      reads(EulerGhost.Conserved),
-      reads(EulerGhost.rho),
-      reads(EulerGhost.velocity),
-      reads(EulerGhost.pressure),
-      reads(EulerGhost.SoS),
-      reads(DiffGhost.{MassFracs, temperature}),
-      reads(FluxGhost.[nType]),
-      reads(Fluid.[m_e]),
-      reads writes(Fluid.Conserved_t),
-      [coherence_mode]
-   end
-   --for k, v in pairs(UpdateUsingFlux:get_params_struct():getentries()) do
-   --   print(k, v)
-   --   for k2, v2 in pairs(v) do print(k2, v2) end
-   --end
-   if     (dir == "x") then
-      UpdateUsingTENOLADEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxX)
-   elseif (dir == "y") then
-      UpdateUsingTENOLADEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxY)
-   elseif (dir == "z") then
-      UpdateUsingTENOLADEulerFlux:set_task_id(TYPES.TID_UpdateUsingTENOLADEulerFluxZ)
-   end
-   return UpdateUsingTENOLADEulerFlux
+   return UpdateUsingTENOEulerFlux
 end)
 
 local mkUpdateUsingSkewSymmetricEulerFlux = terralib.memoize(function(dir)
    local UpdateUsingSkewSymmetricEulerFlux
 
---   local FluxC
    local nType
    local m_e
    if (dir == "x") then
---      FluxC = "FluxXCorr"
       nType = "nType_x"
       m_e   = "dcsi_e"
    elseif (dir == "y") then
---      FluxC = "FluxYCorr"
       nType = "nType_y"
       m_e   = "deta_e"
    elseif (dir == "z") then
---      FluxC = "FluxZCorr"
       nType = "nType_z"
       m_e   = "dzet_e"
    else assert(false) end
@@ -251,7 +234,6 @@ local mkUpdateUsingSkewSymmetricEulerFlux = terralib.memoize(function(dir)
    extern task UpdateUsingSkewSymmetricEulerFlux(EulerGhost : region(ispace(int3d), Fluid_columns),
                                                  FluxGhost : region(ispace(int3d), Fluid_columns),
                                                  [Fluid],
-                                                 ModCells : region(ispace(int3d), Fluid_columns),
                                                  Fluid_bounds : rect3d,
                                                  mix : MIX.Mixture)
    where
@@ -276,100 +258,122 @@ local mkUpdateUsingSkewSymmetricEulerFlux = terralib.memoize(function(dir)
 end)
 
 __demand(__inline)
-task Exports.UpdateUsingEulerFlux(Fluid : region(ispace(int3d), Fluid_columns),
+task Exports.UpdateUsingEulerFlux([Fluid],
                                   tiles : ispace(int3d),
                                   Fluid_Zones : zones_partitions(Fluid, tiles),
                                   Fluid_Ghost : ghost_partitions(Fluid, tiles),
-                                  Mix : MIX.Mixture,
-                                  config : SCHEMA.Config)
+                                  RK_coeffs : double[2],
+                                  deltaTime : double,
+                                  Mix       : MIX.Mixture,
+                                  config    : SCHEMA.Config)
 where
    reads writes(Fluid)
 do
    -- Unpack the partitions that we are going to need
-   var {p_All, p_x_divg, p_y_divg, p_z_divg} = Fluid_Zones;
-   var {p_XFluxGhosts,     p_YFluxGhosts,   p_ZFluxGhosts,
+   var {p_x_divg, p_y_divg, p_z_divg} = Fluid_Zones;
+   var {p_XFluxGhosts,    p_YFluxGhosts,    p_ZFluxGhosts,
         p_XDiffGhosts,    p_YDiffGhosts,    p_ZDiffGhosts,
-        p_XEulerGhosts2,  p_YEulerGhosts2,  p_ZEulerGhosts2,
+        p_XEulerGhosts,   p_YEulerGhosts,   p_ZEulerGhosts,
         p_XSensorGhosts2, p_YSensorGhosts2, p_ZSensorGhosts2} = Fluid_Ghost;
 
    if (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_Hybrid) then
       -- Call tasks with hybrid scheme
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingHybridEulerFlux("z")](p_ZEulerGhosts2[c], p_ZSensorGhosts2[c], p_ZDiffGhosts[c],
-                                             p_ZFluxGhosts[c], p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingHybridEulerFlux("z")](p_ZEulerGhosts[c], p_ZSensorGhosts2[c], p_ZFluxGhosts[c],
+                                             p_z_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingHybridEulerFlux("y")](p_YEulerGhosts2[c], p_YSensorGhosts2[c], p_YDiffGhosts[c],
-                                             p_YFluxGhosts[c], p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingHybridEulerFlux("y")](p_YEulerGhosts[c], p_YSensorGhosts2[c], p_YFluxGhosts[c],
+                                             p_y_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingHybridEulerFlux("x")](p_XEulerGhosts2[c], p_XSensorGhosts2[c], p_XDiffGhosts[c],
-                                             p_XFluxGhosts[c], p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingHybridEulerFlux("x")](p_XEulerGhosts[c], p_XSensorGhosts2[c], p_XFluxGhosts[c],
+                                             p_x_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
+      end
+
+   elseif (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_TENO) then
+      -- Call tasks with TENO scheme
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOEulerFlux("z", "TENO")](p_ZEulerGhosts[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
+                                                   p_z_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOEulerFlux("y", "TENO")](p_YEulerGhosts[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
+                                                   p_y_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
+      end
+
+      __demand(__index_launch)
+      for c in tiles do
+         [mkUpdateUsingTENOEulerFlux("x", "TENO")](p_XEulerGhosts[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
+                                                   p_x_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
    elseif (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_TENOA) then
       -- Call tasks with TENO-A scheme
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingTENOAEulerFlux("z")](p_ZEulerGhosts2[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
-                                            p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingTENOEulerFlux("z", "TENOA")](p_ZEulerGhosts[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
+                                                    p_z_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingTENOAEulerFlux("y")](p_YEulerGhosts2[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
-                                            p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingTENOEulerFlux("y", "TENOA")](p_YEulerGhosts[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
+                                                    p_y_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingTENOAEulerFlux("x")](p_XEulerGhosts2[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
-                                            p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingTENOEulerFlux("x", "TENOA")](p_XEulerGhosts[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
+                                                    p_x_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
    elseif (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_TENOLAD) then
       -- Call tasks with TENO-A scheme
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingTENOLADEulerFlux("z")](p_ZEulerGhosts2[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
-                                              p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingTENOEulerFlux("z", "TENOLAD")](p_ZEulerGhosts[c], p_ZDiffGhosts[c], p_ZFluxGhosts[c],
+                                                      p_z_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingTENOLADEulerFlux("y")](p_YEulerGhosts2[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
-                                              p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingTENOEulerFlux("y", "TENOLAD")](p_YEulerGhosts[c], p_YDiffGhosts[c], p_YFluxGhosts[c],
+                                                      p_y_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingTENOLADEulerFlux("x")](p_XEulerGhosts2[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
-                                              p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingTENOEulerFlux("x", "TENOLAD")](p_XEulerGhosts[c], p_XDiffGhosts[c], p_XFluxGhosts[c],
+                                                      p_x_divg[c], RK_coeffs, deltaTime, Fluid.bounds, Mix)
       end
 
    elseif (config.Integrator.EulerScheme.type == SCHEMA.EulerSchemes_SkewSymmetric) then
       -- Call tasks with SkewSymmetric scheme
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingSkewSymmetricEulerFlux("z")](p_ZEulerGhosts2[c], p_ZFluxGhosts[c],
-                                                    p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingSkewSymmetricEulerFlux("z")](p_ZEulerGhosts[c], p_ZFluxGhosts[c],
+                                                    p_z_divg[c], Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingSkewSymmetricEulerFlux("y")](p_YEulerGhosts2[c], p_YFluxGhosts[c],
-                                                    p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingSkewSymmetricEulerFlux("y")](p_YEulerGhosts[c], p_YFluxGhosts[c],
+                                                    p_y_divg[c], Fluid.bounds, Mix)
       end
 
       __demand(__index_launch)
       for c in tiles do
-         [mkUpdateUsingSkewSymmetricEulerFlux("x")](p_XEulerGhosts2[c], p_XFluxGhosts[c],
-                                                    p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+         [mkUpdateUsingSkewSymmetricEulerFlux("x")](p_XEulerGhosts[c], p_XFluxGhosts[c],
+                                                    p_x_divg[c], Fluid.bounds, Mix)
       end
    end
 end
@@ -382,41 +386,51 @@ local mkUpdateUsingDiffusionFlux = terralib.memoize(function(dir)
    local UpdateUsingDiffusionFlux
 
    local nType
+   local nType1
+   local nType2
    local m_d
+   local m_d1
+   local m_d2
    local m_s
-   local vGrad1
-   local vGrad2
    if (dir == "x") then
       nType  = "nType_x"
+      nType1 = "nType_y"
+      nType2 = "nType_z"
       m_d    = "dcsi_d"
+      m_d1   = "deta_d"
+      m_d2   = "dzet_d"
       m_s    = "dcsi_s"
-      vGrad1 = "velocityGradientY"
-      vGrad2 = "velocityGradientZ"
    elseif (dir == "y") then
       nType  = "nType_y"
+      nType1 = "nType_x"
+      nType2 = "nType_z"
       m_d    = "deta_d"
+      m_d1   = "dcsi_d"
+      m_d2   = "dzet_d"
       m_s    = "deta_s"
-      vGrad1 = "velocityGradientX"
-      vGrad2 = "velocityGradientZ"
    elseif (dir == "z") then
       nType  = "nType_z"
+      nType1 = "nType_x"
+      nType2 = "nType_y"
       m_d    = "dzet_d"
+      m_d1   = "dcsi_d"
+      m_d2   = "deta_d"
       m_s    = "dzet_s"
-      vGrad1 = "velocityGradientX"
-      vGrad2 = "velocityGradientY"
    else assert(false) end
 
    extern task UpdateUsingDiffusionFlux(DiffGhost : region(ispace(int3d), Fluid_columns),
+                                        DiffGradGhost : region(ispace(int3d), Fluid_columns),
                                         FluxGhost : region(ispace(int3d), Fluid_columns),
                                         [Fluid],
-                                        ModCells : region(ispace(int3d), Fluid_columns),
                                         Fluid_bounds : rect3d,
                                         mix : MIX.Mixture)
    where
       reads(DiffGhost.Conserved),
-      reads(DiffGhost.{MolarFracs, temperature, velocity}),
+      reads(DiffGhost.{MolarFracs, temperature}),
       reads(DiffGhost.{rho, mu, lam, Di}),
-      reads(DiffGhost.{[vGrad1], [vGrad2]}),
+      reads(DiffGhost.{[nType1], [nType2]}),
+      reads(DiffGhost.{[m_d1], [m_d2]}),
+      reads(DiffGradGhost.velocity),
       reads(FluxGhost.[nType]),
       reads(FluxGhost.[m_s]),
       reads(Fluid.[m_d]),
@@ -438,7 +452,7 @@ local mkUpdateUsingDiffusionFlux = terralib.memoize(function(dir)
 end)
 
 __demand(__inline)
-task Exports.UpdateUsingDiffusionFlux(Fluid : region(ispace(int3d), Fluid_columns),
+task Exports.UpdateUsingDiffusionFlux([Fluid],
                                       tiles : ispace(int3d),
                                       Fluid_Zones : zones_partitions(Fluid, tiles),
                                       Fluid_Ghost : ghost_partitions(Fluid, tiles),
@@ -447,26 +461,27 @@ task Exports.UpdateUsingDiffusionFlux(Fluid : region(ispace(int3d), Fluid_column
 where
    reads writes(Fluid)
 do
-   var {p_All, p_x_divg, p_y_divg, p_z_divg} = Fluid_Zones;
-   var {p_XFluxGhosts,     p_YFluxGhosts,   p_ZFluxGhosts,
-        p_XDiffGhosts,    p_YDiffGhosts,    p_ZDiffGhosts} = Fluid_Ghost;
+   var {p_x_divg, p_y_divg, p_z_divg} = Fluid_Zones;
+   var {p_XFluxGhosts,     p_YFluxGhosts,     p_ZFluxGhosts,
+        p_XDiffGhosts,     p_YDiffGhosts,     p_ZDiffGhosts,
+        p_XDiffGradGhosts, p_YDiffGradGhosts, p_ZDiffGradGhosts} = Fluid_Ghost;
 
    __demand(__index_launch)
    for c in tiles do
-      [mkUpdateUsingDiffusionFlux("z")](p_ZDiffGhosts[c], p_ZFluxGhosts[c],
-                                        p_All[c], p_z_divg[c], Fluid.bounds, Mix)
+      [mkUpdateUsingDiffusionFlux("z")](p_ZDiffGhosts[c], p_ZDiffGradGhosts[c], p_ZFluxGhosts[c],
+                                        p_z_divg[c], Fluid.bounds, Mix)
    end
 
    __demand(__index_launch)
    for c in tiles do
-      [mkUpdateUsingDiffusionFlux("y")](p_YDiffGhosts[c], p_YFluxGhosts[c],
-                                        p_All[c], p_y_divg[c], Fluid.bounds, Mix)
+      [mkUpdateUsingDiffusionFlux("y")](p_YDiffGhosts[c], p_YDiffGradGhosts[c], p_YFluxGhosts[c],
+                                        p_y_divg[c], Fluid.bounds, Mix)
    end
 
    __demand(__index_launch)
    for c in tiles do
-      [mkUpdateUsingDiffusionFlux("x")](p_XDiffGhosts[c], p_XFluxGhosts[c],
-                                        p_All[c], p_x_divg[c], Fluid.bounds, Mix)
+      [mkUpdateUsingDiffusionFlux("x")](p_XDiffGhosts[c], p_XDiffGradGhosts[c], p_XFluxGhosts[c],
+                                        p_x_divg[c], Fluid.bounds, Mix)
    end
 end
 
@@ -474,89 +489,176 @@ end
 -- NSCBC-FLUX ROUTINES
 -------------------------------------------------------------------------------
 -- Adds NSCBC fluxes to the inflow cells
-Exports.mkUpdateUsingFluxNSCBCInflow = terralib.memoize(function(dir)
+local mkUpdateUsingFluxNSCBCInflow = terralib.memoize(function(dir)
    local UpdateUsingFluxNSCBCInflow
 
    local nType
    local m_d
-   local vGrad
-   if     dir == "xNeg" then
+   if     ((dir == "xNeg") or (dir == "xPos")) then
       nType = "nType_x"
       m_d = "dcsi_d"
-      vGrad = "velocityGradientX"
-   elseif dir == "yNeg" then
+   elseif ((dir == "yNeg") or (dir == "yPos")) then
       nType = "nType_y"
       m_d = "deta_d"
-      vGrad = "velocityGradientY"
-   elseif dir == "yPos" then
-      nType = "nType_y"
-      m_d = "deta_d"
-      vGrad = "velocityGradientY"
+   elseif ((dir == "zNeg") or (dir == "zPos")) then
+      nType = "nType_z"
+      m_d = "dzet_d"
    end
 
-   extern task UpdateUsingFluxNSCBCInflow(Fluid    : region(ispace(int3d), Fluid_columns),
-                                          Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+   extern task UpdateUsingFluxNSCBCInflow([Fluid],
+                                          [BC],
                                           mix : MIX.Mixture)
    where
-      reads(Fluid.[nType]),
-      reads(Fluid.[m_d]),
-      reads(Fluid.{rho, SoS}),
-      reads(Fluid.{MassFracs, pressure, temperature, velocity}),
-      reads(Fluid.[vGrad]),
-      reads(Fluid.{dudtBoundary, dTdtBoundary}),
-      reads writes(Fluid.Conserved_t)
+      reads(Fluid.{MassFracs, pressure, velocity}),
+      reads(BC.[nType]),
+      reads(BC.[m_d]),
+      reads(BC.{rho, SoS}),
+      reads(BC.{temperature}),
+      reads(BC.{dudtBoundary, dTdtBoundary}),
+      reads writes(BC.Conserved_t)
    end
-
    if     dir == "xNeg" then
       UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowXNeg)
+   elseif dir == "xPos" then
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowXPos)
    elseif dir == "yNeg" then
       UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowYNeg)
    elseif dir == "yPos" then
       UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowYPos)
+   elseif dir == "zNeg" then
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowZNeg)
+   elseif dir == "zPos" then
+      UpdateUsingFluxNSCBCInflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCInflowZPos)
    else assert(false) end
-
    return UpdateUsingFluxNSCBCInflow
 end)
 
+__demand(__inline)
+task Exports.UpdateUsingNSCBCInflow([Fluid],
+                                    tiles : ispace(int3d),
+                                    Fluid_Zones : zones_partitions(Fluid, tiles),
+                                    Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                    Mix : MIX.Mixture,
+                                    config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   var {p_All,
+        p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
+        xNeg_ispace, xPos_ispace,
+        yNeg_ispace, yPos_ispace,
+        zNeg_ispace, zPos_ispace} = Fluid_Zones;
+
+   -- Update using NSCBC_Inflow
+   if ((config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) or
+       (config.BC.xBCLeft.type == SCHEMA.FlowBC_RecycleRescaling)) then
+      __demand(__index_launch)
+      for c in xNeg_ispace do
+         [mkUpdateUsingFluxNSCBCInflow("xNeg")](p_All[c], p_xNeg[0][c], Mix)
+      end
+   end
+
+   if ((config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in xPos_ispace do
+         [mkUpdateUsingFluxNSCBCInflow("xPos")](p_All[c], p_xPos[0][c], Mix)
+      end
+   end
+
+   if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in yNeg_ispace do
+         [mkUpdateUsingFluxNSCBCInflow("yNeg")](p_All[c], p_yNeg[0][c], Mix)
+      end
+   end
+
+   if (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in yPos_ispace do
+         [mkUpdateUsingFluxNSCBCInflow("yPos")](p_All[c], p_yPos[0][c], Mix)
+      end
+   end
+
+   if (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_Inflow) then
+      __demand(__index_launch)
+      for c in zNeg_ispace do
+         [mkUpdateUsingFluxNSCBCInflow("zNeg")](p_All[c], p_zNeg[0][c], Mix)
+      end
+   end
+
+   if ((config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_Inflow)) then
+      __demand(__index_launch)
+      for c in zPos_ispace do
+         [mkUpdateUsingFluxNSCBCInflow("zPos")](p_All[c], p_zPos[0][c], Mix)
+      end
+   end
+end
+
 -- Adds NSCBC fluxes to the outflow cells
-Exports.mkUpdateUsingFluxNSCBCOutflow  = terralib.memoize(function(dir)
+local mkUpdateUsingFluxNSCBCOutflow  = terralib.memoize(function(dir)
    local UpdateUsingFluxNSCBCOutflow
 
-   local nType
-   local m_d
-   if     dir == "xPos" then
-      nType = "nType_x"
-      m_d = "dcsi_d"
-   elseif dir == "yNeg" then
-      nType = "nType_y"
-      m_d = "deta_d"
-   elseif dir == "yPos" then
-      nType = "nType_y"
-      m_d = "deta_d"
+   local nType_N
+   local nType_T1
+   local nType_T2
+   local m_d_N
+   local m_d_T1
+   local m_d_T2
+   if     ((dir == "xNeg") or (dir == "xPos")) then
+      nType_N  = "nType_x"
+      nType_T1 = "nType_y"
+      nType_T2 = "nType_z"
+      m_d_N  = "dcsi_d"
+      m_d_T1 = "deta_d"
+      m_d_T2 = "dzet_d"
+   elseif ((dir == "yNeg") or (dir == "yPos")) then
+      nType_N  = "nType_y"
+      nType_T1 = "nType_x"
+      nType_T2 = "nType_z"
+      m_d_N  = "deta_d"
+      m_d_T1 = "dcsi_d"
+      m_d_T2 = "dzet_d"
+   elseif ((dir == "zNeg") or (dir == "zPos")) then
+      nType_N  = "nType_z"
+      nType_T1 = "nType_x"
+      nType_T2 = "nType_y"
+      m_d_N  = "dzet_d"
+      m_d_T1 = "dcsi_d"
+      m_d_T2 = "deta_d"
    end
-   extern task UpdateUsingFluxNSCBCOutflow([Fluid],
-                                           Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
+   extern task UpdateUsingFluxNSCBCOutflow(Ghost : region(ispace(int3d), Fluid_columns),
+                                           [Fluid],
+                                           [BC],
+                                           Fluid_bounds : rect3d,
                                            mix : MIX.Mixture,
                                            MaxMach : double,
                                            LengthScale : double,
                                            Pinf : double)
    where
-      reads(Fluid.[nType]),
-      reads(Fluid.[m_d]),
-      reads(Fluid.{rho, mu, SoS}),
-      reads(Fluid.{MassFracs, pressure, temperature, velocity}),
-      reads(Fluid.Conserved),
-      reads(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ}),
-      reads writes(Fluid.Conserved_t),
-      [coherence_mode]
+      reads(Ghost.velocity),
+      reads(Fluid.{[nType_N], [nType_T1], [nType_T2]}),
+      reads(Fluid.{[m_d_N], [m_d_T1], [m_d_T2]}),
+      reads(Fluid.{rho, mu}),
+      reads(Fluid.{MassFracs, pressure}),
+      reads(BC.SoS),
+      reads(BC.temperature),
+      reads(BC.Conserved),
+      reads writes(BC.Conserved_t),
+      [coherence_mode_BC]
    end
-   if     dir == "xPos" then
+   if     dir == "xNeg" then
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowXNeg)
+   elseif dir == "xPos" then
       UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowXPos)
    elseif dir == "yNeg" then
       UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYNeg)
    elseif dir == "yPos" then
       UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowYPos)
-   end
+   elseif dir == "zNeg" then
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowZNeg)
+   elseif dir == "zPos" then
+      UpdateUsingFluxNSCBCOutflow:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCOutflowZPos)
+   else assert(false) end
 --   for k, v in pairs(UpdateUsingFluxNSCBCOutflow:get_params_struct():getentries()) do
 --      print(k, v)
 --      for k2, v2 in pairs(v) do print(k2, v2) end
@@ -564,13 +666,336 @@ Exports.mkUpdateUsingFluxNSCBCOutflow  = terralib.memoize(function(dir)
    return UpdateUsingFluxNSCBCOutflow
 end)
 
+__demand(__inline)
+task Exports.UpdateUsingNSCBCOutflow([Fluid],
+                                     tiles : ispace(int3d),
+                                     Fluid_Zones : zones_partitions(Fluid, tiles),
+                                     Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                     Mix : MIX.Mixture,
+                                     config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   var {p_All, p_Interior,
+        p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
+        xNeg_ispace, xPos_ispace,
+        yNeg_ispace, yPos_ispace,
+        zNeg_ispace, zPos_ispace} = Fluid_Zones;
+   var {p_GradientGhosts} = Fluid_Ghost;
+   -- TODO: p_GradientGhosts is an overkill for this task, but we also want to avoid creating too many partitions
+
+   if (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow or config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+      var MaxMach = 0.0
+      __demand(__index_launch)
+      for c in tiles do
+         MaxMach max= STAT.CalculateMaxMachNumber(p_Interior[c], 0)
+      end
+      if (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in xNeg_ispace do
+            [mkUpdateUsingFluxNSCBCOutflow("xNeg")](p_GradientGhosts[c], p_All[c], p_xNeg[0][c],
+                                                    Fluid.bounds, Mix, MaxMach,
+                                                    config.BC.xBCLeft.u.NSCBC_Outflow.LengthScale,
+                                                    config.BC.xBCLeft.u.NSCBC_Outflow.P)
+         end
+      end
+      if (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in xPos_ispace do
+            [mkUpdateUsingFluxNSCBCOutflow("xPos")](p_GradientGhosts[c], p_All[c], p_xPos[0][c],
+                                                    Fluid.bounds, Mix, MaxMach,
+                                                    config.BC.xBCRight.u.NSCBC_Outflow.LengthScale,
+                                                    config.BC.xBCRight.u.NSCBC_Outflow.P)
+         end
+      end
+   end
+
+   if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow or config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+      var MaxMach = 0.0
+      __demand(__index_launch)
+      for c in tiles do
+         MaxMach max= STAT.CalculateMaxMachNumber(p_Interior[c], 1)
+      end
+      if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in yNeg_ispace do
+            [mkUpdateUsingFluxNSCBCOutflow("yNeg")](p_GradientGhosts[c], p_All[c], p_yNeg[0][c],
+                                                    Fluid.bounds, Mix, MaxMach,
+                                                    config.BC.yBCLeft.u.NSCBC_Outflow.LengthScale,
+                                                    config.BC.yBCLeft.u.NSCBC_Outflow.P)
+         end
+      end
+      if (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in yPos_ispace do
+            [mkUpdateUsingFluxNSCBCOutflow("yPos")](p_GradientGhosts[c], p_All[c], p_yPos[0][c],
+                                                    Fluid.bounds, Mix, MaxMach,
+                                                    config.BC.yBCRight.u.NSCBC_Outflow.LengthScale,
+                                                    config.BC.yBCRight.u.NSCBC_Outflow.P)
+         end
+      end
+   end
+
+   if (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow or config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+      var MaxMach = 0.0
+      __demand(__index_launch)
+      for c in tiles do
+         MaxMach max= STAT.CalculateMaxMachNumber(p_Interior[c], 2)
+      end
+      if (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in zNeg_ispace do
+            [mkUpdateUsingFluxNSCBCOutflow("zNeg")](p_GradientGhosts[c], p_All[c], p_zNeg[0][c],
+                                                    Fluid.bounds, Mix, MaxMach,
+                                                    config.BC.zBCLeft.u.NSCBC_Outflow.LengthScale,
+                                                    config.BC.zBCLeft.u.NSCBC_Outflow.P)
+         end
+      end
+      if (config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_Outflow) then
+         __demand(__index_launch)
+         for c in zPos_ispace do
+            [mkUpdateUsingFluxNSCBCOutflow("zPos")](p_GradientGhosts[c], p_All[c], p_zPos[0][c],
+                                                    Fluid.bounds, Mix, MaxMach,
+                                                    config.BC.zBCRight.u.NSCBC_Outflow.LengthScale,
+                                                    config.BC.zBCRight.u.NSCBC_Outflow.P)
+         end
+      end
+   end
+end
+
+-- Adds NSCBC fluxes to the far field cells
+local mkUpdateUsingFluxNSCBCFarField  = terralib.memoize(function(dir)
+   local UpdateUsingFluxNSCBCFarField
+
+   local nType
+   local m_d
+   if     ((dir == "xNeg") or (dir == "xPos")) then
+      nType = "nType_x"
+      m_d   = "dcsi_d"
+   elseif ((dir == "yNeg") or (dir == "yPos")) then
+      nType = "nType_y"
+      m_d   = "deta_d"
+   elseif ((dir == "zNeg") or (dir == "zPos")) then
+      nType = "nType_z"
+      m_d   = "dzet_d"
+   end
+   extern task UpdateUsingFluxNSCBCFarField([Fluid],
+                                            [BC],
+                                            mix : MIX.Mixture,
+                                            MaxMach : double,
+                                            LengthScale : double,
+                                            Pinf : double)
+   where
+      reads(Fluid.rho),
+      reads(Fluid.{MassFracs, pressure, temperature, velocity}),
+      reads(BC.[m_d]),
+      reads(BC.[nType]),
+      reads(BC.SoS),
+      reads(BC.Conserved),
+      reads(BC.[ProfilesVars]),
+      reads writes(BC.Conserved_t),
+      [coherence_mode_BC]
+   end
+   if     dir == "xNeg" then
+      UpdateUsingFluxNSCBCFarField:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCFarFieldXNeg)
+   elseif dir == "xPos" then
+      UpdateUsingFluxNSCBCFarField:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCFarFieldXPos)
+   elseif dir == "yNeg" then
+      UpdateUsingFluxNSCBCFarField:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCFarFieldYNeg)
+   elseif dir == "yPos" then
+      UpdateUsingFluxNSCBCFarField:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCFarFieldYPos)
+   elseif dir == "zNeg" then
+      UpdateUsingFluxNSCBCFarField:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCFarFieldZNeg)
+   elseif dir == "zPos" then
+      UpdateUsingFluxNSCBCFarField:set_task_id(TYPES.TID_UpdateUsingFluxNSCBCFarFieldZPos)
+   else assert(false) end
+   return UpdateUsingFluxNSCBCFarField
+end)
+
+__demand(__inline)
+task Exports.UpdateUsingNSCBCFarField([Fluid],
+                                      tiles : ispace(int3d),
+                                      Fluid_Zones : zones_partitions(Fluid, tiles),
+                                      Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                      Mix : MIX.Mixture,
+                                      config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   var {p_All, p_Interior,
+        p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
+        xNeg_ispace, xPos_ispace,
+        yNeg_ispace, yPos_ispace,
+        zNeg_ispace, zPos_ispace} = Fluid_Zones;
+
+   if (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField or config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+      var MaxMach = 0.0
+      __demand(__index_launch)
+      for c in tiles do
+         MaxMach max= STAT.CalculateMaxMachNumber(p_Interior[c], 0)
+      end
+      if (config.BC.xBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         __demand(__index_launch)
+         for c in xNeg_ispace do
+            [mkUpdateUsingFluxNSCBCFarField("xNeg")](p_All[c], p_xNeg[0][c],
+                                                    Mix, MaxMach,
+                                                    config.BC.xBCLeft.u.NSCBC_FarField.LengthScale,
+                                                    config.BC.xBCLeft.u.NSCBC_FarField.P)
+         end
+      end
+      if (config.BC.xBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         __demand(__index_launch)
+         for c in xPos_ispace do
+            [mkUpdateUsingFluxNSCBCFarField("xPos")](p_All[c], p_xPos[0][c],
+                                                    Mix, MaxMach,
+                                                    config.BC.xBCRight.u.NSCBC_FarField.LengthScale,
+                                                    config.BC.xBCRight.u.NSCBC_FarField.P)
+         end
+      end
+   end
+
+   if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField or config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+      var MaxMach = 0.0
+      __demand(__index_launch)
+      for c in tiles do
+         MaxMach max= STAT.CalculateMaxMachNumber(p_Interior[c], 1)
+      end
+      if (config.BC.yBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         __demand(__index_launch)
+         for c in yNeg_ispace do
+            [mkUpdateUsingFluxNSCBCFarField("yNeg")](p_All[c], p_yNeg[0][c],
+                                                    Mix, MaxMach,
+                                                    config.BC.yBCLeft.u.NSCBC_FarField.LengthScale,
+                                                    config.BC.yBCLeft.u.NSCBC_FarField.P)
+         end
+      end
+      if (config.BC.yBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         __demand(__index_launch)
+         for c in yPos_ispace do
+            [mkUpdateUsingFluxNSCBCFarField("yPos")](p_All[c], p_yPos[0][c],
+                                                    Mix, MaxMach,
+                                                    config.BC.yBCRight.u.NSCBC_FarField.LengthScale,
+                                                    config.BC.yBCRight.u.NSCBC_FarField.P)
+         end
+      end
+   end
+
+   if (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField or config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+      var MaxMach = 0.0
+      __demand(__index_launch)
+      for c in tiles do
+         MaxMach max= STAT.CalculateMaxMachNumber(p_Interior[c], 2)
+      end
+      if (config.BC.zBCLeft.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         __demand(__index_launch)
+         for c in zNeg_ispace do
+            [mkUpdateUsingFluxNSCBCFarField("zNeg")](p_All[c], p_zNeg[0][c],
+                                                    Mix, MaxMach,
+                                                    config.BC.zBCLeft.u.NSCBC_FarField.LengthScale,
+                                                    config.BC.zBCLeft.u.NSCBC_FarField.P)
+         end
+      end
+      if (config.BC.zBCRight.type == SCHEMA.FlowBC_NSCBC_FarField) then
+         __demand(__index_launch)
+         for c in zPos_ispace do
+            [mkUpdateUsingFluxNSCBCFarField("zPos")](p_All[c], p_zPos[0][c],
+                                                    Mix, MaxMach,
+                                                    config.BC.zBCRight.u.NSCBC_FarField.LengthScale,
+                                                    config.BC.zBCRight.u.NSCBC_FarField.P)
+         end
+      end
+   end
+end
+
+-- Adds NSCBC fluxes to the incoming shock cells
+local mkUpdateUsingFluxIncomingShock  = terralib.memoize(function(dir)
+   local UpdateUsingFluxIncomingShock
+
+   local nType
+   local m_d
+   if     ((dir == "xNeg") or (dir == "xPos")) then
+      nType = "nType_x"
+      m_d   = "dcsi_d"
+   elseif ((dir == "yNeg") or (dir == "yPos")) then
+      nType = "nType_y"
+      m_d   = "deta_d"
+   elseif ((dir == "zNeg") or (dir == "zPos")) then
+      nType = "nType_z"
+      m_d   = "dzet_d"
+   end
+   extern task UpdateUsingFluxIncomingShock([Fluid],
+                                            [BC],
+                                            mix : MIX.Mixture,
+                                            MaxMach : double,
+                                            LengthScale : double,
+                                            IncomingShock : IncomingShockParams)
+   where
+      reads(Fluid.rho),
+      reads(Fluid.{MassFracs, pressure, temperature, velocity}),
+      reads(BC.[m_d]),
+      reads(BC.[nType]),
+      reads(BC.SoS),
+      reads(BC.Conserved),
+      reads writes(BC.Conserved_t),
+      [coherence_mode_BC]
+   end
+--   if     dir == "xNeg" then
+--      UpdateUsingFluxIncomingShock:set_task_id(TYPES.TID_UpdateUsingFluxIncomingShockXNeg)
+--   elseif dir == "xPos" then
+--      UpdateUsingFluxIncomingShock:set_task_id(TYPES.TID_UpdateUsingFluxIncomingShockXPos)
+--   elseif dir == "yNeg" then
+--      UpdateUsingFluxIncomingShock:set_task_id(TYPES.TID_UpdateUsingFluxIncomingShockYNeg)
+--   elseif dir == "yPos" then
+   if dir == "yPos" then
+      UpdateUsingFluxIncomingShock:set_task_id(TYPES.TID_UpdateUsingFluxIncomingShockYPos)
+--   elseif dir == "zNeg" then
+--      UpdateUsingFluxIncomingShock:set_task_id(TYPES.TID_UpdateUsingFluxIncomingShockZNeg)
+--   elseif dir == "zPos" then
+--      UpdateUsingFluxIncomingShock:set_task_id(TYPES.TID_UpdateUsingFluxIncomingShockZPos)
+   else assert(false) end
+   return UpdateUsingFluxIncomingShock
+end)
+
+__demand(__inline)
+task Exports.UpdateUsingNSCBCIncomingShock([Fluid],
+                                           tiles : ispace(int3d),
+                                           Fluid_Zones : zones_partitions(Fluid, tiles),
+                                           Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                           IncomingShock : IncomingShockParams,
+                                           Mix : MIX.Mixture,
+                                           config : SCHEMA.Config)
+where
+   reads writes(Fluid)
+do
+   var {p_All, p_Interior,
+        p_xNeg, p_xPos, p_yNeg, p_yPos, p_zNeg, p_zPos,
+        xNeg_ispace, xPos_ispace,
+        yNeg_ispace, yPos_ispace,
+        zNeg_ispace, zPos_ispace} = Fluid_Zones;
+   if (config.BC.yBCLeft.type == SCHEMA.FlowBC_IncomingShock or config.BC.yBCRight.type == SCHEMA.FlowBC_IncomingShock) then
+      var MaxMach = 0.0
+      __demand(__index_launch)
+      for c in tiles do
+         MaxMach max= STAT.CalculateMaxMachNumber(p_Interior[c], 1)
+      end
+      if (config.BC.yBCRight.type == SCHEMA.FlowBC_IncomingShock) then
+         __demand(__index_launch)
+         for c in yPos_ispace do
+            [mkUpdateUsingFluxIncomingShock("yPos")](p_All[c], p_yPos[0][c],
+                                                     Mix, MaxMach,
+                                                     config.BC.yBCRight.u.IncomingShock.LengthScale,
+                                                     IncomingShock)
+         end
+      end
+   end
+end
+
 -------------------------------------------------------------------------------
 -- FORCING ROUTINES
 -------------------------------------------------------------------------------
 
 __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.AddBodyForces([Fluid],
-                           ModCells : region(ispace(int3d), Fluid_columns),
                            Flow_bodyForce : double[3])
 where
    reads(Fluid.{rho, velocity}),
@@ -578,7 +1003,7 @@ where
    [coherence_mode]
 do
    __demand(__openmp)
-   for c in ModCells do
+   for c in Fluid do
       for i=0, 3 do
          Fluid[c].Conserved_t[irU+i] += Fluid[c].rho*Flow_bodyForce[i]
       end
@@ -586,122 +1011,297 @@ do
    end
 end
 
----------------------------------------------------------------------------------
----- CORRECTION ROUTINES
----------------------------------------------------------------------------------
---
---local __demand(__inline)
---task isValid(Conserved : double[nEq],
---             mix : MIX.Mixture)
---   var valid = [UTIL.mkArrayConstant(nSpec+1, true)];
---   var rhoYi : double[nSpec]
---   for i=0, nSpec do
---      if Conserved[i] < 0.0 then valid[i] = false end
---      rhoYi[i] = Conserved[i]
---   end
---   var rho = MIX.GetRhoFromRhoYi(rhoYi)
---   var Yi = MIX.GetYi(rho, rhoYi)
---   var rhoInv = 1.0/rho
---   var velocity = array(Conserved[irU+0]*rhoInv,
---                        Conserved[irU+1]*rhoInv,
---                        Conserved[irU+2]*rhoInv)
---   var kineticEnergy = (0.5*MACRO.dot(velocity, velocity))
---   var InternalEnergy = Conserved[irE]*rhoInv - kineticEnergy
---   valid[nSpec] = MIX.isValidInternalEnergy(InternalEnergy, Yi, mix)
---   return valid
---end
---
---Exports.mkCorrectUsingFlux = terralib.memoize(function(dir)
---   local CorrectUsingFlux
---
---   local Flux
---   local nType
---   if (dir == "x") then
---      Flux = "FluxXCorr"
---      nType = "nType_z"
---   elseif (dir == "y") then
---      Flux = "FluxYCorr"
---      nType = "nType_y"
---   elseif (dir == "z") then
---      Flux = "FluxZCorr"
---      nType = "nType_z"
---   else assert(false) end
---   local cm1_d = function(r, c, b) return METRIC.GetCm1(dir, c, rexpr [r][c].[nType] end, b) end
---   local cp1_d = function(r, c, b) return METRIC.GetCp1(dir, c, rexpr [r][c].[nType] end, b) end
---
---   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
---   task CorrectUsingFlux(Ghost : region(ispace(int3d), Fluid_columns),
---                         [Fluid],
---                         ModCells : region(ispace(int3d), Fluid_columns),
---                         Fluid_bounds : rect3d,
---                         mix : MIX.Mixture)
---   where
---      reads(Fluid.[nType]),
---      reads(Ghost.Conserved_hat),
---      reads(Ghost.[Flux]),
---      reads writes(Fluid.Conserved_t),
---      [coherence_mode]
---   do
---      __demand(__openmp)
---      for c in ModCells do
---         -- Stencil
---         var cm1 = [cm1_d(rexpr Fluid end, rexpr c end, rexpr Fluid_bounds end)];
---         var cp1 = [cp1_d(rexpr Fluid end, rexpr c end, rexpr Fluid_bounds end)];
---
---         -- Do derivatives need to be corrected?
---         var correctC   = false
---         var correctCM1 = false
---
---         var valid_cm1 = isValid(Ghost[cm1].Conserved_hat, [mix])
---         var valid_c   = isValid(Ghost[c  ].Conserved_hat, [mix])
---         var valid_cp1 = isValid(Ghost[cp1].Conserved_hat, [mix])
---
---         for i=0, nSpec+1 do
---            if not (valid_cp1[i] and valid_c[i]) then correctC   = true end
---            if not (valid_cm1[i] and valid_c[i]) then correctCM1 = true end
---         end
---
---         -- Correct using Flux on i-1 face
---         if correctCM1 then
---            -- Correct time derivatives using fluxes between cm1 and c
---            if not (valid_cm1[nSpec] and valid_c[nSpec]) then
---               -- Temeperature is going south
---               -- Correct everything
---               for i=0, nEq do
---                  Fluid[c].Conserved_t[i] -= Ghost[cm1].[Flux][i]
---               end
---            else
---               for i=0, nSpec do
---                  if not (valid_cm1[i] and valid_c[i]) then
---                     -- Correct single species flux
---                     Fluid[c].Conserved_t[i] -= Ghost[cm1].[Flux][i]
---                  end
---               end
---            end
---         end
---
---         -- Correct using Flux on i face
---         if correctC  then
---            -- Correct time derivatives using fluxes between c and cp1
---            if not (valid_cp1[nSpec] and valid_c[nSpec]) then
---               -- Temeperature is going south
---               -- Correct everything
---               for i=0, nEq do
---                  Fluid[c].Conserved_t[i] += Ghost[c].[Flux][i]
---               end
---            else
---               for i=0, nSpec do
---                  if not (valid_cp1[i] and valid_c[i]) then
---                     -- Correct single species flux
---                     Fluid[c].Conserved_t[i] += Ghost[c].[Flux][i]
---                  end
---               end
---            end
---         end
---      end
---   end
---   return CorrectUsingFlux
---end)
+local extern task CalculateAveragePD(Ghost : region(ispace(int3d), Fluid_columns),
+                                     [Fluid],
+                                     Fluid_bounds : rect3d) : double
+where
+   reads(Ghost.velocity),
+   reads(Fluid.{nType_x, nType_y, nType_z}),
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
+   reads(Fluid.pressure)
+end
+CalculateAveragePD:set_task_id(TYPES.TID_CalculateAveragePD)
+
+local mkAddDissipation = terralib.memoize(function(dir)
+   local AddDissipation
+
+   local nType
+   local nType1
+   local nType2
+   local m_d1
+   local m_d2
+   local m_s
+   if (dir == "x") then
+      nType  = "nType_x"
+      nType1 = "nType_y"
+      nType2 = "nType_z"
+      m_d1   = "deta_d"
+      m_d2   = "dzet_d"
+      m_s    = "dcsi_s"
+   elseif (dir == "y") then
+      nType  = "nType_y"
+      nType1 = "nType_x"
+      nType2 = "nType_z"
+      m_d1   = "dcsi_d"
+      m_d2   = "dzet_d"
+      m_s    = "deta_s"
+   elseif (dir == "z") then
+      nType  = "nType_z"
+      nType1 = "nType_x"
+      nType2 = "nType_y"
+      m_d1   = "dcsi_d"
+      m_d2   = "deta_d"
+      m_s    = "dzet_s"
+   else assert(false) end
+
+   extern task AddDissipation(DiffGhost : region(ispace(int3d), Fluid_columns),
+                              DiffGradGhost : region(ispace(int3d), Fluid_columns),
+                              FluxGhost : region(ispace(int3d), Fluid_columns),
+                              [Fluid],
+                              Fluid_bounds : rect3d,
+                              mix : MIX.Mixture) : double
+   where
+      reads(DiffGhost.mu),
+      reads(DiffGhost.{[nType1], [nType2]}),
+      reads(DiffGhost.{[m_d1], [m_d2]}),
+      reads(DiffGradGhost.velocity),
+      reads(FluxGhost.[nType]),
+      reads(FluxGhost.[m_s])
+   end
+   --for k, v in pairs(UpdateUsingDiffusionFlux:get_params_struct():getentries()) do
+   --   print(k, v)
+   --   for k2, v2 in pairs(v) do print(k2, v2) end
+   --end
+   if     (dir == "x") then
+      AddDissipation:set_task_id(TYPES.TID_AddDissipationX)
+   elseif (dir == "y") then
+      AddDissipation:set_task_id(TYPES.TID_AddDissipationY)
+   elseif (dir == "z") then
+      AddDissipation:set_task_id(TYPES.TID_AddDissipationZ)
+   end
+   return AddDissipation
+end)
+
+local __demand(__cuda, __leaf)
+task AddHITSource([Fluid],
+                  averageDissipation : double,
+                  averageKineticEnergy : double,
+                  averagePressureDilatation : double,
+                  turbForcing : SCHEMA.TurbForcingModel)
+where
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
+   reads(Fluid.{rho, velocity}),
+   reads writes(Fluid.Conserved_t),
+   [coherence_mode]
+do
+   var W = averagePressureDilatation + averageDissipation
+   var G   = turbForcing.u.HIT.Gain
+   var t_o = turbForcing.u.HIT.t_o
+   var K_o = turbForcing.u.HIT.K_o
+   var A = (-W-G*(averageKineticEnergy-K_o)/t_o) / (2.0*averageKineticEnergy)
+   var acc = 0.0
+   __demand(__openmp)
+   for c in Fluid do
+      var force = MACRO.vs_mul(Fluid[c].velocity, Fluid[c].rho*A)
+      for i=0, 3 do
+         Fluid[c].Conserved_t[irU+i] += force[i]
+      end
+      var work = MACRO.dot(force, Fluid[c].velocity)
+      Fluid[c].Conserved_t[irE] += work
+      var cellVolume = 1.0/(Fluid[c].dcsi_d*Fluid[c].deta_d*Fluid[c].dzet_d)
+      acc += MACRO.dot(force, Fluid[c].velocity) * cellVolume
+   end
+   return acc
+end
+
+local __demand(__cuda, __leaf)
+task AdjustHITSource([Fluid],
+                     averageEnergySource : double)
+where
+   reads writes(Fluid.Conserved_t),
+   [coherence_mode]
+do
+   __demand(__openmp)
+   for c in Fluid do
+      Fluid[c].Conserved_t[irE] -= averageEnergySource
+   end
+end
+
+__demand(__inline)
+task Exports.UpdateUsingHITForcing([Fluid],
+                                   tiles : ispace(int3d),
+                                   Fluid_Zones : zones_partitions(Fluid, tiles),
+                                   Fluid_Ghost : ghost_partitions(Fluid, tiles),
+                                   Mix : MIX.Mixture,
+                                   config : SCHEMA.Config,
+                                   interior_volume : double)
+where
+   reads writes(Fluid)
+do
+   -- Unpack the partitions that we are going to need
+   var {p_Interior} = Fluid_Zones;
+   var {p_GradientGhosts,
+        p_XFluxGhosts,     p_YFluxGhosts,     p_ZFluxGhosts,
+        p_XDiffGhosts,     p_YDiffGhosts,     p_ZDiffGhosts,
+        p_XDiffGradGhosts, p_YDiffGradGhosts, p_ZDiffGradGhosts} = Fluid_Ghost;
+
+   -- Calculate pressure dilatation
+   var averagePressureDilatation = 0.0
+   __demand(__index_launch)
+   for c in tiles do
+      averagePressureDilatation += CalculateAveragePD(p_GradientGhosts[c], p_Interior[c], Fluid.bounds)
+   end
+   averagePressureDilatation /= interior_volume
+
+   -- Calculate dissipation
+   var averageDissipation = 0.0
+   __demand(__index_launch)
+   for c in tiles do
+      averageDissipation += [mkAddDissipation("z")](p_ZDiffGhosts[c], p_ZDiffGradGhosts[c], p_ZFluxGhosts[c],
+                                                    p_Interior[c], Fluid.bounds, Mix)
+   end
+   __demand(__index_launch)
+   for c in tiles do
+      averageDissipation += [mkAddDissipation("y")](p_YDiffGhosts[c], p_YDiffGradGhosts[c], p_YFluxGhosts[c],
+                                                    p_Interior[c], Fluid.bounds, Mix)
+   end
+   __demand(__index_launch)
+   for c in tiles do
+      averageDissipation += [mkAddDissipation("x")](p_XDiffGhosts[c], p_XDiffGradGhosts[c], p_XFluxGhosts[c],
+                                                    p_Interior[c], Fluid.bounds, Mix)
+   end
+   averageDissipation /= interior_volume
+
+   -- Calculate kinetic energy
+   var averageKineticEnergy = 0.0
+   __demand(__index_launch)
+   for c in tiles do
+      averageKineticEnergy += STAT.CalculateAverageKineticEnergy(p_Interior[c])
+   end
+   averageKineticEnergy = averageKineticEnergy/interior_volume
+
+   -- Add forcing for energy and momentum
+   var averageEnergySource = 0.0
+   __demand(__index_launch)
+   for c in tiles do
+      averageEnergySource += AddHITSource(p_Interior[c],
+                                          averageDissipation,
+                                          averageKineticEnergy,
+                                          averagePressureDilatation,
+                                          config.Flow.turbForcing)
+   end
+   averageEnergySource /= interior_volume
+
+   -- Make sure that we are not adding energy to the system
+   __demand(__index_launch)
+   for c in tiles do
+      AdjustHITSource(p_Interior[c], averageEnergySource)
+   end
+end
+
+-------------------------------------------------------------------------------
+-- BUFFER ZONE ROUTINES
+-------------------------------------------------------------------------------
+
+-- Buffer zone source; see Freund, AIAA (1997)
+__demand(__cuda, __leaf)
+task Exports.AddBufferZoneSource([Fluid],
+                                 mix    : MIX.Mixture,
+                                 bBox   : bBoxType,
+                                 config : SCHEMA.Config)
+where
+   reads(Fluid.centerCoordinates),
+   reads(Fluid.Conserved),
+   reads writes(Fluid.Conserved_t),
+   [coherence_mode]
+do
+
+   -- Target mixture
+   var mixtureTarget = config.BC.bufferZone.u.Basic.XiTarget
+   var XiTarget : double[nSpec]
+   for k = 0, mixtureTarget.Species.length do
+      var Species = mixtureTarget.Species.values[k]
+      XiTarget[MIX.FindSpecies(Species.Name, &mix)] = Species.MolarFrac
+   end
+
+   -- Target state (zero velocity assumed)
+   var pTarget = config.BC.bufferZone.u.Basic.pTarget
+   var TTarget = config.BC.bufferZone.u.Basic.TTarget
+   var mixWTarget = MIX.GetMolarWeightFromXi(XiTarget, &mix)
+   var rhoTarget = MIX.GetRho(pTarget,TTarget,mixWTarget, &mix)
+   var YiTarget : double[nSpec]
+   for k = 0,nSpec do
+      YiTarget[k] =  MIX.GetSpeciesMolarWeight(k, &mix)/mixWTarget * XiTarget[k]
+   end
+   var rhoeTarget = rhoTarget * MIX.GetInternalEnergy(TTarget,YiTarget, &mix)
+
+   ---- Grid extents
+   var xmin = bBox.v0[0]
+   var xmax = bBox.v1[0]
+   var ymin = bBox.v0[1]
+   var ymax = bBox.v2[1]
+   var zmin = bBox.v0[2]
+   var zmax = bBox.v4[2]
+
+   -- Buffer parameters
+   var xBufferLength = config.BC.bufferZone.u.Basic.xBufferLength
+   var yBufferLength = config.BC.bufferZone.u.Basic.yBufferLength
+   var zBufferLength = config.BC.bufferZone.u.Basic.zBufferLength
+   var maxAmp = config.BC.bufferZone.u.Basic.maxAmplitude
+   var n = config.BC.bufferZone.u.Basic.power
+   var xLeft = xmin+xBufferLength
+   var yLeft = ymin+yBufferLength
+   var zLeft = zmin+zBufferLength
+   var xRight = xmax-xBufferLength
+   var yRight = ymax-yBufferLength
+   var zRight = zmax-zBufferLength
+
+   __demand(__openmp)
+   for c in Fluid do
+      var x = Fluid[c].centerCoordinates[0]
+      var y = Fluid[c].centerCoordinates[1]
+      var z = Fluid[c].centerCoordinates[2]
+
+      -- Determine source amplitude
+      var sigxLeft = pow(max(xLeft-x,0)/(xLeft-xmin),2)
+      var sigxRight = pow(max(x-xRight,0)/(xmax-xRight),2)
+      var sigx = max(sigxLeft,sigxRight)
+
+      var sigyLeft = pow(max(yLeft-y,0)/(yLeft-ymin),2)
+      var sigyRight = pow(max(y-yRight,0)/(ymax-yRight),2)
+      var sigy = max(sigyLeft,sigyRight)
+
+      var sigzLeft = pow(max(zLeft-z,0)/(zLeft-zmin),2)
+      var sigzRight = pow(max(z-zRight,0)/(zmax-zRight),2)
+      var sigz = max(sigzLeft,sigzRight)
+
+      --if (x <= xLeft) then
+         --sigx = maxAmp * (xLeft-x)/(xLeft-xmin) * (xLeft-x)/(xLeft-xmin)
+      --elseif (x >= xRight) then
+         --sigx = maxAmp * (x-xRight)/(xmax-xRight) * (x-xRight)/(xmax-xRight)
+      --end
+      --if (y <= yLeft) then
+         --sigy = maxAmp * (yLeft-y)/(yLeft-ymin) * (yLeft-y)/(yLeft-ymin)
+      --elseif (y >= yRight) then
+         --sigy = maxAmp * (y-yRight)/(ymax-yRight) * (y-yRight)/(ymax-yRight)
+      --end
+      --if (z <= zLeft) then
+         --sigz = maxAmp * (zLeft-z)/(zLeft-zmin) * (zLeft-z)/(zLeft-zmin)
+      --elseif (z >= zRight) then
+         --sigz = maxAmp * (z-zRight)/(zmax-zRight) * (z-zRight)/(zmax-zRight)
+      --end
+      var sig = maxAmp * max(sigx,max(sigy,sigz))
+
+      -- Add source to RHS
+      for k = 0,nSpec do
+         Fluid[c].Conserved_t[k] += sig * (rhoTarget*YiTarget[k] - Fluid[c].Conserved[k])
+      end
+      for k = 0,3 do
+         Fluid[c].Conserved_t[irU+k] += sig * (0.0 - Fluid[c].Conserved[irU+k])
+      end
+      Fluid[c].Conserved_t[irE] += sig * (rhoeTarget - Fluid[c].Conserved[irE])
+   end
+end
 
 return Exports end
 

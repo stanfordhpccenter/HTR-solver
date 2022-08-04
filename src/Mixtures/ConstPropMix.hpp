@@ -30,6 +30,8 @@
 #ifndef ConstPropMix_HPP
 #define ConstPropMix_HPP
 
+#include <math.h>
+
 #include "config_schema.h"
 #include "constants.h"
 
@@ -102,7 +104,7 @@ struct Mix {
    inline Mix(const Config &config);
 #endif
 
-   inline char* GetSpeciesName(const int i) const;
+   inline const char* GetSpeciesName(const int i) const;
 
    inline int FindSpecies(const char *Name) const;
 

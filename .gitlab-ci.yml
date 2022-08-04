@@ -5,7 +5,7 @@
 # Global variables (will be set in every job):
 variables:
    MAX_DIM: "3"
-   LEGION_COMMIT: "e1ce6c67f58a0e6b70023c31d202eebc88efa265"
+   LEGION_COMMIT: "36851ec77ea6a317ba72a730e3df2e0bb0a0d586"
    HTR_DIR: "$CI_PROJECT_DIR"
    REALM_BACKTRACE: "1"
 #  TIMELIMIT: "600"  # each test should take less than 10 minutes
@@ -44,23 +44,31 @@ variables:
 #  TERRA_DIR: "/usr/local/terra70"
 
 .debug: &debug
-  DEBUG: "1"
+   DEBUG: "1"
 .release: &release
-  DEBUG: "0"
+   DEBUG: "0"
 
 .openmp: &openmp
-  USE_OPENMP: "1"
+   USE_OPENMP: "1"
 .hdf5: &hdf5
-  USE_HDF: "1"
+   USE_HDF: "1"
 .llvm: &llvm
-  USE_LLVM: "1"
+   USE_LLVM: "1"
 .cuda: &cuda
-  USE_CUDA: "1"
+   USE_CUDA: "1"
 .gasnet: &gasnet
-  USE_GASNET: "1"
+   USE_GASNET: "1"
 
 .prof: &prof
-  USE_PROF: "1"
+   USE_PROF: "1"
+
+###
+### Optional execution modes
+###
+
+.rpn2: &rpn2
+   RANKS: "2"
+   RANKS_PER_NODE: "2"
 
 ###
 ### Optional modules
@@ -79,24 +87,26 @@ variables:
 # These commands will run before each job.
 before_script:
    - |
-      if [[ "$(hostname)" = ctr-205-1.stanford.edu ]]; then
-         module load mpi/mpich-3.0-x86_64
+      if [[ "$(hostname)" == ctr-205-1.stanford.edu ]]; then
          export CC=gcc
          export CXX=g++
-         export LEGION_DIR=/home/gitlab-runner/legion
-         export HDF_ROOT=$LEGION_DIR/language/hdf/install
-         export USE_GASNET=0
-         export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent:$LEGION_DIR/language/hdf/install/lib"
+         export LEGION_DEP_PREFIX_DIR=/home/gitlab-runner/legion/language
+         if [[ $DEBUG == 1 ]]; then
+            export LEGION_DIR=/home/gitlab-runner/legion-debug
+         else
+            export LEGION_DIR=/home/gitlab-runner/legion
+         fi
+         export HDF_ROOT=$LEGION_DEP_PREFIX_DIR/hdf/install
+         export CONDUIT="mpi"
+         export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$LEGION_DIR/bindings/regent:$HDF_ROOT/lib"
+
+         # Make sure that we are running the last version of Legion
+         cd $LEGION_DIR/language
+         git fetch
+         git checkout $LEGION_COMMIT
+         scripts/setup_env.py --llvm-version 90 --prefix $LEGION_DEP_PREFIX_DIR
          cd $HTR_DIR
       fi
-
-   # Make sure that we are running the last version of Legion
-   - |
-      cd $LEGION_DIR/language
-      git fetch
-      git checkout $LEGION_COMMIT
-      scripts/setup_env.py --llvm-version 90
-      cd $HTR_DIR
 
 ###
 ### Tags
@@ -114,6 +124,22 @@ before_script:
 # Each job will run in a fresh container with this image.
 #.image: &image
 #  image: stanfordlegion/gitlab-ci:ubuntu16.04 # i.e. https://hub.docker.com/r/stanfordlegion/gitlab-ci/
+
+###
+### Test rules
+###
+
+# rules for which jobs will run
+.test_rules: &test_rules
+   rules:
+      # commits only run a short suite of jobs
+      - if: '$CI_PIPELINE_SOURCE == "push" && $IS_SHORT_JOB != "1"'
+        when: never
+      # if none of the above exclusions apply, run the job
+      - when: always
+
+.short: &short
+   IS_SHORT_JOB: "1"
 
 ###
 ### Tests
@@ -135,6 +161,7 @@ before_script:
       - python3 solverTests/3DPeriodic/test.py
       - python3 solverTests/RecycleBoundary/test.py
       - python3 solverTests/ShockTube/test.py
+      - python3 solverTests/PlanarJet/test.py
       - python3 solverTests/VortexAdvection2D/test.py
 
 
@@ -145,32 +172,47 @@ before_script:
 # Each item below defines a job.
 
 ctr-205-1_release_unitTests:
-   <<: [*ctr-205-1, *unitTests]
+   <<: [*ctr-205-1, *unitTests, *test_rules]
    variables:
-      <<: [*release, *openmp, *hdf5, *noelectricSolver]
+      <<: [*release, *openmp, *hdf5, *noelectricSolver, *short]
 
 ctr-205-1_release_solverTests:
-   <<: [*ctr-205-1, *solverTests]
+   <<: [*ctr-205-1, *solverTests, *test_rules]
    variables:
-      <<: [*release, *openmp, *hdf5, *noelectricSolver]
+      <<: [*release, *openmp, *hdf5, *noelectricSolver, *short]
+
+ctr-205-1_release_solverTests_rpn2:
+   <<: [*ctr-205-1, *solverTests, *test_rules]
+   variables:
+      <<: [*release, *openmp, *hdf5, *noelectricSolver, *rpn2]
 
 ctr-205-1_debug_unitTests:
-   <<: [*ctr-205-1, *unitTests]
+   <<: [*ctr-205-1, *unitTests, *test_rules]
    variables:
       <<: [*debug, *openmp, *hdf5, *noelectricSolver]
 
 ctr-205-1_debug_quickSolverTests:
-   <<: [*ctr-205-1, *quickSolverTests]
+   <<: [*ctr-205-1, *quickSolverTests, *test_rules]
    variables:
       <<: [*debug, *openmp, *hdf5, *noelectricSolver]
 
-ctr-205-1_release_electricSolver_unitTests:
-   <<: [*ctr-205-1, *unitTests]
+ctr-205-1_debug_quickSolverTests_rpn2:
+   <<: [*ctr-205-1, *quickSolverTests, *test_rules]
    variables:
-      <<: [*release, *openmp, *hdf5, *electricSolver]
+      <<: [*debug, *openmp, *hdf5, *noelectricSolver, *rpn2]
+
+ctr-205-1_release_electricSolver_unitTests:
+   <<: [*ctr-205-1, *unitTests, *test_rules]
+   variables:
+      <<: [*release, *openmp, *hdf5, *electricSolver, *short]
 
 ctr-205-1_release_electricSolver_solverTests:
-   <<: [*ctr-205-1, *solverTests]
+   <<: [*ctr-205-1, *solverTests, *test_rules]
+   variables:
+      <<: [*release, *openmp, *hdf5, *electricSolver, *short]
+
+ctr-205-1_debug_electricSolver_unitTests:
+   <<: [*ctr-205-1, *unitTests, *test_rules]
    variables:
       <<: [*release, *openmp, *hdf5, *electricSolver]
 

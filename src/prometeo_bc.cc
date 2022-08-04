@@ -28,7 +28,6 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "prometeo_bc.hpp"
-#include "prometeo_variables.hpp"
 
 // AddRecycleAverageTask
 /*static*/ const char * const    AddRecycleAverageTask::TASK_NAME = "AddRecycleAverage";
@@ -43,8 +42,10 @@ void AddRecycleAverageTask::cpu_base_impl(
    assert(regions.size() == 4);
    assert(futures.size() == 0);
 
-   // Accessors for cellWidth
-   const AccessorRO<  Vec3, 3> acc_cellWidth           (regions[0], FID_cellWidth);
+   // Accessors for metrics
+   const AccessorRO<double, 3> acc_dcsi_d              (regions[0], FID_dcsi_d);
+   const AccessorRO<double, 3> acc_deta_d              (regions[0], FID_deta_d);
+   const AccessorRO<double, 3> acc_dzet_d              (regions[0], FID_dzet_d);
 
    // Accessors for profile variables
    const AccessorRO<VecNSp, 3> acc_MolarFracs_profile  (regions[0], FID_MolarFracs_profile);
@@ -58,7 +59,8 @@ void AddRecycleAverageTask::cpu_base_impl(
    const AccessorSumRD<  Vec3, 1> acc_avg_velocity     (regions[3], RA_FID_velocity,    REGENT_REDOP_SUM_VEC3);
 
    // Extract execution domain
-   Rect<3> r_plane = runtime->get_index_space_domain(ctx, args.plane.get_index_space());
+   const Rect<3> r_plane = runtime->get_index_space_domain(ctx,
+                                    regions[0].get_logical_region().get_index_space());
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
@@ -68,8 +70,8 @@ void AddRecycleAverageTask::cpu_base_impl(
       for (int j = r_plane.lo.y; j <= r_plane.hi.y; j++)
          for (int i = r_plane.lo.x; i <= r_plane.hi.x; i++) {
             const Point<3> p = Point<3>{i,j,k};
-            collectAverages(acc_cellWidth, acc_MolarFracs_profile,
-                            acc_temperature_profile, acc_velocity_profile,
+            collectAverages(acc_dcsi_d, acc_deta_d, acc_dzet_d,
+                            acc_MolarFracs_profile, acc_temperature_profile, acc_velocity_profile,
                             acc_avg_MolarFracs, acc_avg_velocity,
                             acc_avg_temperature, acc_avg_rho,
                             args.Pbc, p, args.mix);
@@ -106,8 +108,8 @@ void SetNSCBC_InflowBCTask<dir>::cpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_velocity            (regions[1], FID_velocity);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Index of normal direction
    constexpr int iN = normalIndex(dir);
@@ -167,7 +169,7 @@ void SetNSCBC_OutflowBCTask::cpu_base_impl(
    // Accessors for conserved variables
    const AccessorRO<VecNEq, 3> acc_Conserved        (regions[0], FID_Conserved);
 
-   // Accessors for temperature variables
+   // Accessors for temperature
    const AccessorRW<double, 3> acc_temperature      (regions[1], FID_temperature);
 
    // Accessors for primitive variables
@@ -176,8 +178,8 @@ void SetNSCBC_OutflowBCTask::cpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_velocity         (regions[1], FID_velocity);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
@@ -193,6 +195,7 @@ void SetNSCBC_OutflowBCTask::cpu_base_impl(
                             p, args.mix);
          }
 }
+
 
 // SetIncomingShockBCTask
 /*static*/ const char * const    SetIncomingShockBCTask::TASK_NAME = "SetIncomingShockBC";
@@ -210,22 +213,17 @@ void SetIncomingShockBCTask::cpu_base_impl(
    // Accessor for conserved variables
    const AccessorRO<VecNEq, 3> acc_Conserved           (regions[0], FID_Conserved);
 
-   // Accessor for speed of sound
-   const AccessorRO<double, 3> acc_SoS                 (regions[0], FID_SoS);
+   // Accessors for temperature
+   const AccessorRW<double, 3> acc_temperature         (regions[1], FID_temperature);
 
    // Accessors for primitive variables
    const AccessorWO<double, 3> acc_pressure            (regions[1], FID_pressure);
-   const AccessorWO<double, 3> acc_temperature         (regions[1], FID_temperature);
    const AccessorWO<VecNSp, 3> acc_MolarFracs          (regions[1], FID_MolarFracs);
    const AccessorWO<  Vec3, 3> acc_velocity            (regions[1], FID_velocity);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
-
-   // Precompute the mixture averaged molecular weight
-   VecNSp MolarFracs(args.params.MolarFracs);
-   const double MixW = args.mix.GetMolarWeightFromXi(MolarFracs);
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
@@ -235,33 +233,29 @@ void SetIncomingShockBCTask::cpu_base_impl(
       for (int j = r_BC.lo.y; j <= r_BC.hi.y; j++)
          for (int i = r_BC.lo.x; i <= r_BC.hi.x; i++) {
             const Point<3> p = Point<3>{i,j,k};
-
-            if (i < args.params.iShock) {
-               // Set to upstream values
-               acc_MolarFracs[p]  = MolarFracs;
-               acc_velocity[p]    = Vec3(args.params.velocity0);
-               acc_temperature[p] = args.params.temperature0;
-               acc_pressure[p]    = args.params.pressure0;
-
-            } else if (i > args.params.iShock) {
-               // Treat this point as an NSCBCInflow
-               acc_MolarFracs[p]  = MolarFracs;
-               acc_velocity[p]    = Vec3(args.params.velocity1);
-               acc_temperature[p] = args.params.temperature1;
-               if (fabs(args.params.velocity1[1]) >= acc_SoS[p])
-                  // It is supersonic, everything is imposed by the BC
-                  acc_pressure[p] = args.params.pressure1;
-               else
-                  // Compute pressure from NSCBC conservation equations
-                  acc_pressure[p] = setPressure(acc_Conserved, args.params.temperature1, MixW, p, args.mix);
-
-            } else {
-               // Set to downstream values
-               acc_MolarFracs[p]  = MolarFracs;
+            if ((i < args.params.iShock - 1) or
+                (i > args.params.iShock + 1)){
+               // Threat as an outflow
+               UpdatePrimitiveFromConservedTask::UpdatePrimitive(
+                               acc_Conserved, acc_temperature, acc_pressure,
+                               acc_MolarFracs, acc_velocity,
+                               p, args.mix);
+            // Inject the shock over four points
+            } else if (i == args.params.iShock - 1) {
+               acc_MolarFracs[p]  = VecNSp(args.params.MolarFracs);
+               acc_velocity[p]    = 0.75*Vec3(args.params.velocity0) + 0.25*Vec3(args.params.velocity1);
+               acc_temperature[p] = 0.75*args.params.temperature0    + 0.25*args.params.temperature1;
+               acc_pressure[p]    = 0.75*args.params.pressure0       + 0.25*args.params.pressure1;
+            } else if (i == args.params.iShock) {
+               acc_MolarFracs[p]  = VecNSp(args.params.MolarFracs);
+               acc_velocity[p]    = 0.25*Vec3(args.params.velocity0) + 0.75*Vec3(args.params.velocity1);
+               acc_temperature[p] = 0.25*args.params.temperature0    + 0.75*args.params.temperature1;
+               acc_pressure[p]    = 0.25*args.params.pressure0       + 0.75*args.params.pressure1;
+            } else if (i == args.params.iShock + 1) {
+               acc_MolarFracs[p]  = VecNSp(args.params.MolarFracs);
                acc_velocity[p]    = Vec3(args.params.velocity1);
                acc_temperature[p] = args.params.temperature1;
                acc_pressure[p]    = args.params.pressure1;
-
             }
          }
 }
@@ -312,8 +306,8 @@ void SetRecycleRescalingBCTask::cpu_base_impl(
    const AccessorRO< float, 1> acc_FI_iloc             (regions[4], FI_FID_iloc);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Compute rescaling coefficients
    const RescalingDataType RdataRe = futures[0].get_result<RescalingDataType>();
@@ -363,18 +357,22 @@ void CorrectIonsBCTask<dir, s>::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 2);
+   assert(regions.size() == 3);
    assert(futures.size() == 0);
 
-   // Accessor for electric potential
-   const AccessorRO<double, 3> acc_ePot       (regions[0], FID_electricPotential);
+   // Accessor for BC electric potential
+   const AccessorRO<double, 3> acc_ePot         (regions[0], FID_electricPotential);
 
    // Accessors for primitive variables
-   const AccessorRW<VecNSp, 3> acc_MolarFracs (regions[1], FID_MolarFracs);
+   const AccessorWO<VecNSp, 3> acc_MolarFracs   (regions[1], FID_MolarFracs);
+
+   // Accessor for internal electric potential and molar fractions
+   const AccessorRO<double, 3> acc_ePotInt      (regions[2], FID_electricPotential);
+   const AccessorRO<VecNSp, 3> acc_MolarFracsInt(regions[2], FID_MolarFracs);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
@@ -385,12 +383,12 @@ void CorrectIonsBCTask<dir, s>::cpu_base_impl(
          for (int i = r_BC.lo.x; i <= r_BC.hi.x; i++) {
             const Point<3> p = Point<3>{i,j,k};
             const Point<3> pInt = getPIntBC<dir, s>(p);
-            const double dPhi = acc_ePot[pInt] - acc_ePot[p];
+            const double dPhi = acc_ePotInt[pInt] - acc_ePot[p];
             for (int i = 0; i < nIons; i++) {
                int ind = args.mix.ions[i];
                if (args.mix.GetSpeciesChargeNumber(ind)*dPhi > 0)
                   // the ion is flowing into the BC
-                  acc_MolarFracs[p][ind] = acc_MolarFracs[pInt][ind];
+                  acc_MolarFracs[p][ind] = acc_MolarFracsInt[pInt][ind];
                else
                   // the ion is repelled by the BC
                   acc_MolarFracs[p][ind] = 1e-60;

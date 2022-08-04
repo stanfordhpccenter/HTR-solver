@@ -35,7 +35,7 @@ return function(SCHEMA, TYPES) local Exports = {}
 -- IMPORTS
 -------------------------------------------------------------------------------
 local C = regentlib.c
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 
 -- Store Mix data structure
 Exports.Mixture = TYPES.Mix
@@ -130,7 +130,7 @@ __demand(__inline)
 task Exports.GetSpeciesNames(mix : TYPES.Mix)
    var Names : regentlib.string[TYPES.nSpec]
    for i = 0, TYPES.nSpec do
-      Names[i] = MIX.GetSpeciesName(i, mix)
+      Names[i] = MIX.GetSpeciesName(i, &mix)
    end
    return Names
 end
@@ -144,9 +144,9 @@ task Exports.ParseConfigMixture(Mixture : SCHEMA.Mixture, mix : TYPES.Mix)
    var initMolarFracs = [UTIL.mkArrayConstant(TYPES.nSpec, rexpr 1.0e-60 end)]
    for i=0, Mixture.Species.length do
       var Species = Mixture.Species.values[i]
-      initMolarFracs[MIX.FindSpecies(Species.Name, mix)] = Species.MolarFrac
+      initMolarFracs[MIX.FindSpecies(Species.Name, &mix)] = Species.MolarFrac
    end
-   regentlib.assert(Exports.CheckMixture(initMolarFracs, mix),
+   regentlib.assert(Exports.CheckMixture(initMolarFracs, &mix),
       "Molar fractions specified in the input file do not add to one")
    return initMolarFracs
 end
@@ -164,7 +164,7 @@ task Exports.InitMixture(Fluid : region(ispace(int3d), TYPES.Fluid_columns),
                          tiles : ispace(int3d),
                          p_all : partition(disjoint, Fluid, tiles),
                          config : SCHEMA.Config)
-   var Mix = MIX.InitMixture(config)
+   var Mix = MIX.InitMixture(&config)
    __demand(__index_launch)
    for c in tiles do LoadMixture(p_all[c], Mix) end
    -- Make sure that the mixurte is loaded everywhere

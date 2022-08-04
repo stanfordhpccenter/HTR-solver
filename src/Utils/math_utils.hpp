@@ -52,6 +52,11 @@
 #endif
 
 #ifndef __CUDACC__
+
+#ifdef DARWIN
+#include <cmath>
+#endif
+
 using std::max;
 using std::min;
 #endif

@@ -30,6 +30,55 @@
 #include "prometeo_sensor.hpp"
 #include "prometeo_sensor.inl"
 
+// UpdateDucrosSensorTask
+/*static*/ const char * const    UpdateDucrosSensorTask::TASK_NAME = "UpdateDucrosSensor";
+/*static*/ const int             UpdateDucrosSensorTask::TASK_ID = TID_UpdateDucrosSensor;
+
+void UpdateDucrosSensorTask::cpu_base_impl(
+                      const Args &args,
+                      const std::vector<PhysicalRegion> &regions,
+                      const std::vector<Future>         &futures,
+                      Context ctx, Runtime *runtime)
+{
+   assert(regions.size() == 3);
+   assert(futures.size() == 0);
+
+   // Accessors for variables in the Ghost regions
+   const AccessorRO<  Vec3, 3> acc_velocity         (regions[0], FID_velocity);
+
+   // Accessors for metrics
+   const AccessorRO<   int, 3> acc_nType_x          (regions[1], FID_nType_x);
+   const AccessorRO<   int, 3> acc_nType_y          (regions[1], FID_nType_y);
+   const AccessorRO<   int, 3> acc_nType_z          (regions[1], FID_nType_z);
+   const AccessorRO<double, 3> acc_dcsi_d           (regions[1], FID_dcsi_d);
+   const AccessorRO<double, 3> acc_deta_d           (regions[1], FID_deta_d);
+   const AccessorRO<double, 3> acc_dzet_d           (regions[1], FID_dzet_d);
+
+   // Accessors for shock sensor
+   const AccessorWO<double, 3> acc_DucrosSensor     (regions[2], FID_DucrosSensor);
+
+   // Extract execution domains
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
+   Rect<3> Fluid_bounds = args.Fluid_bounds;
+
+   // Compute vorticity scale
+   const double eps = std::max(args.vorticityScale*args.vorticityScale, 1e-6);
+
+   // Here we are assuming C layout of the instance
+#ifdef REALM_USE_OPENMP
+   #pragma omp parallel for collapse(3)
+#endif
+   for (int k = r_MyFluid.lo.z; k <= r_MyFluid.hi.z; k++)
+      for (int j = r_MyFluid.lo.y; j <= r_MyFluid.hi.y; j++)
+         for (int i = r_MyFluid.lo.x; i <= r_MyFluid.hi.x; i++) {
+            const Point<3> p = Point<3>{i,j,k};
+            acc_DucrosSensor[p] = DucrosSensor(acc_velocity,
+                                               acc_nType_x, acc_nType_y, acc_nType_z,
+                                               acc_dcsi_d, acc_deta_d, acc_dzet_d,
+                                               p, Fluid_bounds, eps);
+         }
+}
+
 template<direction dir>
 void UpdateShockSensorTask<dir>::cpu_base_impl(
                       const Args &args,
@@ -37,14 +86,12 @@ void UpdateShockSensorTask<dir>::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 4);
+   assert(regions.size() == 3);
    assert(futures.size() == 0);
 
    // Accessors for variables in the Ghost regions
    const AccessorRO<VecNEq, 3> acc_Conserved        (regions[0], FID_Conserved);
-   const AccessorRO<  Vec3, 3> acc_vGradX           (regions[0], FID_velocityGradientX);
-   const AccessorRO<  Vec3, 3> acc_vGradY           (regions[0], FID_velocityGradientY);
-   const AccessorRO<  Vec3, 3> acc_vGradZ           (regions[0], FID_velocityGradientZ);
+   const AccessorRO<double, 3> acc_DucrosSensor     (regions[0], FID_DucrosSensor);
 
    // Accessors for node type
    const AccessorRO<   int, 3> acc_nType            (regions[1], FID_nType);
@@ -53,12 +100,9 @@ void UpdateShockSensorTask<dir>::cpu_base_impl(
    const AccessorWO<  bool, 3> acc_shockSensor      (regions[2], FID_shockSensor);
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
    const coord_t size = getSize<dir>(Fluid_bounds);
-
-   // Compute vorticity scale
-   const double eps = std::max(args.vorticityScale*args.vorticityScale, 1e-6);
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
@@ -75,12 +119,12 @@ void UpdateShockSensorTask<dir>::cpu_base_impl(
             const Point<3> pP3 = warpPeriodic<dir, Plus >(Fluid_bounds, p, size, offP3(acc_nType[p]));
 
             const double Phi = std::max(std::max(std::max(std::max(std::max(
-                                 DucrosSensor(acc_vGradX[pM2], acc_vGradY[pM2], acc_vGradZ[pM2], eps),
-                                 DucrosSensor(acc_vGradX[pM1], acc_vGradY[pM1], acc_vGradZ[pM1], eps)),
-                                 DucrosSensor(acc_vGradX[p  ], acc_vGradY[p  ], acc_vGradZ[p  ], eps)),
-                                 DucrosSensor(acc_vGradX[pP1], acc_vGradY[pP1], acc_vGradZ[pP1], eps)),
-                                 DucrosSensor(acc_vGradX[pP2], acc_vGradY[pP2], acc_vGradZ[pP2], eps)),
-                                 DucrosSensor(acc_vGradX[pP3], acc_vGradY[pP3], acc_vGradZ[pP3], eps));
+                                 acc_DucrosSensor[pM2],
+                                 acc_DucrosSensor[pM1]),
+                                 acc_DucrosSensor[p  ]),
+                                 acc_DucrosSensor[pP1]),
+                                 acc_DucrosSensor[pP2]),
+                                 acc_DucrosSensor[pP3]);
 
             bool sensor = true;
             for (int h=0; h<nSpec; h++)
@@ -123,6 +167,8 @@ template<>
 /*static*/ const FieldID         UpdateShockSensorTask<Zdir>::FID_shockSensor = FID_shockSensorZ;
 
 void register_sensor_tasks() {
+
+   TaskHelper::register_hybrid_variants<UpdateDucrosSensorTask>();
 
    TaskHelper::register_hybrid_variants<UpdateShockSensorTask<Xdir>>();
    TaskHelper::register_hybrid_variants<UpdateShockSensorTask<Ydir>>();

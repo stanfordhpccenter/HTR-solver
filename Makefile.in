@@ -9,6 +9,9 @@ endif
 # OS-specific options
 ifeq ($(shell uname),Darwin)
   DYNLINK_PATH := DYLD_LIBRARY_PATH
+  C_FLAGS    += -DDARWIN
+  CXX_FLAGS  += -DDARWIN
+  NVCC_FLAGS += -DDARWIN
 else
   DYNLINK_PATH := LD_LIBRARY_PATH
 endif
@@ -36,20 +39,17 @@ CUFFT_LIBNAME ?= cufft
 # C and CUDA compilers options:
 # - Warnings
 C_FLAGS    += -Wall -Werror -fno-strict-aliasing
-CXX_FLAGS  += -Wall -Werror
-# - define standard
-CXX_FLAGS  += -std=c++11
-NVCC_FLAGS += -std=c++11
+CXX_FLAGS  += -Wall -Werror -Wno-return-type-c-linkage
 # - Include paths
-C_FLAGS    += -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent -I$(HTR_DIR)/src -I$(HTR_DIR)/src/Mixtures -I$(HTR_DIR)/src/Utils -I. -I$(HTR_DIR)/src/Poisson -I.
-CXX_FLAGS  += -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent -I$(HTR_DIR)/src -I$(HTR_DIR)/src/Mixtures -I$(HTR_DIR)/src/Utils -I. -I$(HTR_DIR)/src/Poisson -I.
-NVCC_FLAGS += -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent -I$(HTR_DIR)/src -I$(HTR_DIR)/src/Mixtures -I$(HTR_DIR)/src/Utils -I. -I$(HTR_DIR)/src/Poisson -I.
+C_FLAGS    += -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent -I$(HTR_DIR)/src -I$(HTR_DIR)/src/Mixtures -I$(HTR_DIR)/src/Utils -I$(HTR_DIR)/src/Poisson -I.
+CXX_FLAGS  += -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent -I$(HTR_DIR)/src -I$(HTR_DIR)/src/Mixtures -I$(HTR_DIR)/src/Utils -I$(HTR_DIR)/src/Poisson -I.
+NVCC_FLAGS += -I$(LEGION_DIR)/runtime -I$(LEGION_DIR)/bindings/regent -I$(HTR_DIR)/src -I$(HTR_DIR)/src/Mixtures -I$(HTR_DIR)/src/Utils -I$(HTR_DIR)/src/Poisson -I.
 
 # Regent options
 export TERRA_PATH := ?.rg;$(HTR_DIR)/src/?.rg;$(HTR_DIR)/src/Mixtures/?.rg;$(HTR_DIR)/src/Utils/?.rg;$(HTR_DIR)/src/Poisson/?.rg
 export INCLUDE_PATH := .;$(HTR_DIR)/src;$(HTR_DIR)/src/Mixtures;$(HTR_DIR)/src/Utils;$(HTR_DIR)/src/Poisson
 REGENT := $(LEGION_DIR)/language/regent.py
-REGENT_FLAGS := -fflow 0 -finner 1 -foffline 1
+REGENT_FLAGS += -fflow 0 -finner 1 -foffline 1
 
 # Link flags
 LINK_FLAGS += -L$(LEGION_DIR)/bindings/regent -lregent
@@ -94,7 +94,8 @@ endif
 # If DEBUG mode is active
 ######################################################
 ifeq ($(DEBUG), 1)
-   REGENT_FLAGS += -g -fbounds-checks 1
+   REGENT_OPTS  += -g
+   REGENT_FLAGS += -fbounds-checks 1
    C_FLAGS    += -g -O0 -DLEGION_BOUNDS_CHECKS -DLEGION_PRIVILEGE_CHECKS
    CXX_FLAGS  += -g -O0 -DLEGION_BOUNDS_CHECKS -DLEGION_PRIVILEGE_CHECKS
    NVCC_FLAGS += -g -O0 -DLEGION_BOUNDS_CHECKS -DLEGION_PRIVILEGE_CHECKS -G

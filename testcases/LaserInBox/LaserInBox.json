@@ -1,0 +1,162 @@
+{
+   "Case": {
+   },
+   "Mapping": {
+      "tiles": [
+         1,
+         1,
+         1
+      ],
+      "tilesPerRank": [
+         1,
+         1,
+         1
+      ],
+      "wallTime": 30
+   },
+   "Grid": {
+      "xNum": 200,
+      "yNum": 100,
+      "zNum": 100,
+      "GridInput" : {
+         "type" : "Cartesian",
+         "origin": [-1.50e-3, -0.75e-3, -0.75e-3],
+         "width": [3.0e-3, 1.5e-3, 1.5e-3],
+         "xType": { "type" : "Uniform" },
+         "yType": { "type" : "Uniform" },
+         "zType": { "type" : "Uniform" }
+      }
+   },
+   "Integrator": {
+      "startIter": 0,
+      "startTime": 0.0,
+      "resetTime": false,
+      "maxIter": 500,
+      "maxTime": 10000000.0,
+      "TimeStep" : {
+         "type" : "ConstantDeltaTime",
+         "DeltaTime" : 2.0e-10
+      },
+      "implicitChemistry": false,
+      "EulerScheme": {
+         "type": "TENOA"
+      }
+   },
+   "BC": {
+      "xBCLeft": {
+         "type": "Periodic"
+      },
+      "xBCRight": {
+         "type": "Periodic"
+      },
+      "yBCLeft": {
+         "type": "Periodic"
+      },
+      "yBCRight": {
+         "type": "Periodic"
+      },
+      "zBCLeft": {
+         "type": "Periodic"
+      },
+      "zBCRight": {
+         "type": "Periodic"
+      },
+      "bufferZone": {
+         "type": "Basic",
+         "xBufferLength": 0.2,
+         "yBufferLength": 0.2,
+         "zBufferLength": 0.2,
+         "power": 2.0,
+         "maxAmplitude": 4.0,
+         "pTarget": 101325.0,
+         "TTarget": 300.0,
+         "XiTarget": {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      }
+   },
+   "Flow": {
+      "mixture" : { 
+         "type" : "ConstPropMix",
+         "gasConstant" : 259.83,
+         "gamma" : 1.4,
+         "prandtl" : 0.7,
+         "viscosityModel" : {
+            "type" : "PowerLaw",
+            "ViscRef" : 2.0561e-5,
+            "TempRef" : 300.0
+         }
+      },
+      "initCase": {
+         "type": "Uniform",
+         "pressure" : 101325.0,
+         "temperature" : 298.0,
+         "velocity" : [0.0, 0.0, 0.0],
+         "molarFracs": {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      },
+      "resetMixture": false,
+      "initMixture" : {
+         "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+      },
+      "bodyForce": [
+         0.0,
+         0.0,
+         0.0
+      ],
+      "turbForcing": {
+         "type": "OFF"
+      },
+      "laser": {
+         "type": "GeometricKernel",
+         "volume": {
+            "fromCell": [
+               -10000,
+               -10000,
+               -10000
+            ],
+            "uptoCell": [
+               10000,
+               10000,
+               10000
+            ]
+         },
+         "dimensions": 3,
+         "peakEdotPerMass": 2e13,
+         "focalLocation": [
+            0.0,
+            0.0,
+            0.0
+         ],
+         "pulseTime": 5e-8,
+         "pulseFWHM": 1.414213562373095e-8,
+         "axialLength": 1.0e-3,
+         "nearRadius": 0.2e-3,
+         "farRadius":  0.13e-3,
+         "beamDirection": [
+            1.0,
+            0.5,
+            0.3
+         ]
+      }
+   },
+   "IO": {
+      "wrtRestart": true,
+      "restartEveryTimeSteps": 100,
+      "probesSamplingInterval": 1,
+      "probes": [],
+      "AveragesSamplingInterval": 100,
+      "ResetAverages": false,
+      "YZAverages": [],
+      "XZAverages": [],
+      "XYAverages": [],
+      "XAverages": [],
+      "YAverages": [],
+      "ZAverages": [],
+      "volumeProbes": []
+   },
+   "Efield": {
+      "type": "Off"
+   }
+}

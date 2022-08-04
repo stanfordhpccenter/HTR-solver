@@ -7,7 +7,7 @@ local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 
 -- Node types
@@ -15,10 +15,10 @@ local Std_node   = CONST.Std_node
 local L_S_node   = CONST.L_S_node
 local Lp1_S_node = CONST.Lp1_S_node
 local Lp2_S_node = CONST.Lp2_S_node
-local Rm3_S_node = CONST.Rm3_S_node 
-local Rm2_S_node = CONST.Rm2_S_node 
-local Rm1_S_node = CONST.Rm1_S_node 
-local R_S_node   = CONST.R_S_node 
+local Rm3_S_node = CONST.Rm3_S_node
+local Rm2_S_node = CONST.Rm2_S_node
+local Rm1_S_node = CONST.Rm1_S_node
+local R_S_node   = CONST.R_S_node
 
 -- Stencil indices
 local Stencil1  = CONST.Stencil1
@@ -48,7 +48,9 @@ local Fluid_columns = TYPES.Fluid_columns
 
 --External modules
 local MACRO = require "prometeo_macro"
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
 
 -- Test parameters
 local Npx = 32
@@ -203,7 +205,6 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, 0)
    fill(Fluid.nType_y, 0)
    fill(Fluid.nType_z, 0)
@@ -1216,6 +1217,19 @@ task main()
 
    C.printf("operatorsTest_Staggered: run...")
 
+   var config : SCHEMA.Config
+
+   config.BC.xBCLeft.type  = SCHEMA.FlowBC_Dirichlet
+   config.BC.xBCRight.type = SCHEMA.FlowBC_Dirichlet
+   config.BC.yBCLeft.type  = SCHEMA.FlowBC_Dirichlet
+   config.BC.yBCRight.type = SCHEMA.FlowBC_Dirichlet
+   config.BC.zBCLeft.type  = SCHEMA.FlowBC_Dirichlet
+   config.BC.zBCRight.type = SCHEMA.FlowBC_Dirichlet
+
+   config.Grid.xNum = Npx
+   config.Grid.yNum = Npy
+   config.Grid.zNum = Npz
+
    -- No ghost cells
    var xBnum = 1
    var yBnum = 1
@@ -1232,18 +1246,12 @@ task main()
    var tiles = ispace(int3d, {Nx, Ny, Nz})
 
    -- Fluid Partitioning
-   var p_Fluid =
-      [UTIL.mkPartitionByTile(int3d, int3d, Fluid_columns, "p_All")]
-      (Fluid, tiles, int3d{xBnum,yBnum,zBnum}, int3d{0,0,0})
+   var Fluid_Zones = PART.PartitionZones(Fluid, tiles, config, xBnum, yBnum, zBnum)
 
    InitializeCell(Fluid)
 
-   METRIC.InitializeOperators(Fluid, tiles, p_Fluid)
-
-   -- Enforce BCs on the Operators
-   for c in tiles do [METRIC.mkCorrectGhostOperators("x")](Fluid, Fluid_bounds, SCHEMA.FlowBC_Dirichlet, SCHEMA.FlowBC_Dirichlet, xBnum, Npx) end
-   for c in tiles do [METRIC.mkCorrectGhostOperators("y")](Fluid, Fluid_bounds, SCHEMA.FlowBC_Dirichlet, SCHEMA.FlowBC_Dirichlet, yBnum, Npy) end
-   for c in tiles do [METRIC.mkCorrectGhostOperators("z")](Fluid, Fluid_bounds, SCHEMA.FlowBC_Dirichlet, SCHEMA.FlowBC_Dirichlet, zBnum, Npz) end
+   METRIC.InitializeOperators(Fluid, tiles, Fluid_Zones, config,
+                              xBnum, yBnum, zBnum)
 
    checkOperators(Fluid)
 

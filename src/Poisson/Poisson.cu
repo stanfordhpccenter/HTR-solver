@@ -54,13 +54,13 @@ void initFFTplansTask::gpu_base_impl(
    const AccessorRW<legion_address_space_t, 1> acc_id      (regions[1], FID_id);
 
    // Get size of the FFT execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_y = getSize<Ydir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
 
    // Get index of the plans that we are initializing
-   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, args.s.get_index_space())).lo;
+   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space())).lo;
 
    // Init FFTW plans
    fftw_make_planner_thread_safe();
@@ -101,7 +101,7 @@ void destroyFFTplansTask::gpu_base_impl(
    const AccessorRW<           cufftHandle, 1> acc_cufft   (regions[0], FID_cufft);
    const AccessorRW<legion_address_space_t, 1> acc_id      (regions[0], FID_id);
    // Get index of the plans that we are destroying
-   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, args.r.get_index_space())).lo;
+   Point<1> p = Rect<1>(runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[p] == runtime->get_executing_processor(runtime->get_context()).address_space());
    // destroy plan for direct transform with FFTW
@@ -176,13 +176,13 @@ void performDirFFTFromFieldTask::gpu_base_impl(
    const AccessorRO<           cufftHandle, 1> acc_cufft(regions[2], FID_cufft);
    const AccessorRO<legion_address_space_t, 1> acc_id   (regions[2], FID_id);
 
-   // Get index of the plans that we are initializing
-   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, args.p.get_index_space())).lo;
+   // Get index of the plans
+   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[plan] == runtime->get_executing_processor(runtime->get_context()).address_space());
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_y = getSize<Ydir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
@@ -237,13 +237,13 @@ void performDirFFTFromMixTask::gpu_base_impl(
    const AccessorRO<           cufftHandle, 1> acc_cufft(regions[2], FID_cufft);
    const AccessorRO<legion_address_space_t, 1> acc_id   (regions[2], FID_id);
 
-   // Get index of the plans that we are initializing
-   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, args.p.get_index_space())).lo;
+   // Get index of the plans
+   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[plan] == runtime->get_executing_processor(runtime->get_context()).address_space());
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_y = getSize<Ydir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
@@ -320,13 +320,13 @@ void performInvFFTTask::gpu_base_impl(
    const AccessorRO<           cufftHandle, 1> acc_cufft(regions[2], FID_cufft);
    const AccessorRO<legion_address_space_t, 1> acc_id   (regions[2], FID_id);
 
-   // Get index of the plans that we are initializing
-   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, args.p.get_index_space())).lo;
+   // Get index of the plans
+   Point<1> plan = Rect<1>(runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space())).lo;
    // check that we are on the right processor
    assert(acc_id[plan] == runtime->get_executing_processor(runtime->get_context()).address_space());
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_y = getSize<Ydir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);
@@ -414,7 +414,7 @@ void solveTridiagonalsTask::gpu_base_impl(
    const AccessorRO<complex<double>, 1> acc_k2Z (regions[3], FID_k2);
 
    // Get execution domain
-   Rect<3> bounds = runtime->get_index_space_domain(ctx, args.r.get_index_space());
+   Rect<3> bounds = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
    coord_t size_x = getSize<Xdir>(bounds);
    coord_t size_y = getSize<Ydir>(bounds);
    coord_t size_z = getSize<Zdir>(bounds);

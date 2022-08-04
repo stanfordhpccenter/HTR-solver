@@ -49,7 +49,23 @@
 
 // Modified Docros sensor
 __CUDA_H__
-inline double DucrosSensor(const Vec3 &vGradX, const Vec3 &vGradY, const Vec3 &vGradZ, const double eps) {
+inline double UpdateDucrosSensorTask::DucrosSensor(
+                           const AccessorRO<  Vec3, 3> &velocity,
+                           const AccessorRO<   int, 3> &nType_csi,
+                           const AccessorRO<   int, 3> &nType_eta,
+                           const AccessorRO<   int, 3> &nType_zet,
+                           const AccessorRO<double, 3> &dcsi_d,
+                           const AccessorRO<double, 3> &deta_d,
+                           const AccessorRO<double, 3> &dzet_d,
+                           const Point<3> &p,
+                           const Rect<3> &bounds,
+                           const double eps) {
+   // Compute velocity gradients
+   Vec3 vGradX = getDeriv<Xdir>(velocity, p, nType_csi[p], dcsi_d[p], bounds);
+   Vec3 vGradY = getDeriv<Ydir>(velocity, p, nType_eta[p], deta_d[p], bounds);
+   Vec3 vGradZ = getDeriv<Zdir>(velocity, p, nType_zet[p], dzet_d[p], bounds);
+
+   // Compute the Ducros sensor
    const double div = vGradX[0] + vGradY[1] + vGradZ[2];
    const double div2 = div*div;
    const double omz = vGradX[1] - vGradY[0];

@@ -7,6 +7,10 @@ import sys
 import os
 import h5py
 
+# load HTR modules
+sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
+import HTRrestart
+
 parser = argparse.ArgumentParser()
 parser.add_argument('-n', '--num_times', type=int, default=4)
 args = parser.parse_args()
@@ -20,10 +24,9 @@ def u(xy,mu,rho,time):
 def v(xy,mu,rho,time):
    return -np.cos(xy[:,:,0])*np.sin(xy[:,:,1])*np.exp(-2*mu/rho[:]*time)
 
-def L2(err,dx):
-   tot = sum(map(sum, err**2*dx[:,:,0]*dx[:,:,1]*dx[:,:,2]))
-   vol = sum(map(sum,        dx[:,:,0]*dx[:,:,1]*dx[:,:,2]))
-   return np.sqrt(tot/vol)
+def L2(err):
+   tot = sum(map(sum, err**2))
+   return np.sqrt(tot/err.size)
 
 def process(case):
    dir_name = os.path.join(os.environ['HTR_DIR'], 'testcases/TaylorGreen2D')
@@ -38,13 +41,13 @@ def process(case):
 
    xNum = data["Grid"]["xNum"]
    yNum = data["Grid"]["yNum"]
-   xWidth  = data["Grid"]["xWidth"]
-   yWidth  = data["Grid"]["yWidth"]
+   xWidth  = data["Grid"]["GridInput"]["width"][0]
+   yWidth  = data["Grid"]["GridInput"]["width"][1]
    constantVisc = data["Flow"]["mixture"]["viscosityModel"]["Visc"]
 
    Area = xWidth*yWidth
 
-   dt    = data["Integrator"]["fixedDeltaTime"]
+   dt    = data["Integrator"]["TimeStep"]["DeltaTime"]
    nstep = data["Integrator"]["maxIter"]
    time = dt*nstep
 
@@ -55,14 +58,14 @@ def process(case):
 #                        Read Prometeo Output Data                           #
 ##############################################################################
 
-   f = h5py.File(hdf_filename, 'r')
+   restart = HTRrestart.HTRrestart(data)
+   restart.attach(sampleDir=os.path.join(dir_name, str(case)+'/sample0'), step=nstep)
 
    # Get the data
-   centerCoordinates = f['centerCoordinates']
-   cellWidth   = f['cellWidth']
-   pressure    = f['pressure']
-   rho         = f['rho']
-   velocity    = f['velocity']
+   centerCoordinates = restart.load('centerCoordinates')
+   pressure          = restart.load('pressure')
+   rho               = restart.load('rho')
+   velocity          = restart.load('velocity')
 
    # Get dimension of data
    Nx = rho.shape[2]
@@ -73,7 +76,6 @@ def process(case):
    z_slice_idx = 0
 
    xy_slice  = centerCoordinates[z_slice_idx,:,:][:,:]
-   dx_slice  =         cellWidth[z_slice_idx,:,:][:,:]
    u_slice   =          velocity[z_slice_idx,:,:][:,:]
    rho_slice =               rho[z_slice_idx,:,:]
 
@@ -90,8 +92,8 @@ def process(case):
 
    uerr = (u_slice[:,:,0]-u_slice_analytical)
    verr = (u_slice[:,:,1]-v_slice_analytical)
-   U_L2_error = L2(uerr, dx_slice)
-   V_L2_error = L2(verr, dx_slice)
+   U_L2_error = L2(uerr)
+   V_L2_error = L2(verr)
    print('U_L2 Error = {}'.format(U_L2_error))
    print('V_L2 Error = {}'.format(V_L2_error))
 

@@ -27,8 +27,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-inline char* Mix::GetSpeciesName(const int i) const {
-   return (char *)species[i].Name;
+inline const char* Mix::GetSpeciesName(const int i) const {
+   return species[i].Name;
 };
 
 inline int Mix::FindSpecies(const char *Name) const {
@@ -202,7 +202,9 @@ inline double Mix::GetTFromInternalEnergy(const double e0, double T, const VecNS
       T += f/dfdT;
       j++;
    }
+#ifdef DEBUG_MULTICOMPONENT
    assert(j < MAXITS);
+#endif
    return T;
 };
 
@@ -243,8 +245,8 @@ inline double Mix::GetViscosity(const double Tn, const VecNSp &Xi) const {
       double den = 0.0;
       __UNROLL__
       for (int j = 0; j<nSpec; j++) {
-         double Phi = pow(1 + sqrt(muk[i]/muk[j]) * pow(species[j].W/species[i].W, 0.25) , 2);
-         Phi /= sqrt(8*(1 + species[i].W/species[j].W));
+         double Phi = 1 + sqrt(muk[i]/muk[j]) * pow(species[j].W/species[i].W, 0.25);
+         Phi *= Phi/sqrt(8*(1 + species[i].W/species[j].W));
          den += Xi[j]*Phi;
       }
       mu += Xi[i]*muk[i]/den;
@@ -288,26 +290,23 @@ inline void Mix::GetDiffusivity(VecNSp &Di, const double Pn, const double Tn, co
    // Use unscaled primitive variables
    const double T = Tn*TRef;
    const double P = Pn*PRef;
-   MySymMatrix<double, nSpec> invDi;
+   Di.init(0.0);
    __UNROLL__
-   for (int i = 0; i<nSpec; i++) {
-      invDi(i, i) = 0.0;
+   for (int i = 0; i<nSpec; i++)
       __UNROLL__
-      for (int j = 0; j<i; j++)
-         invDi(i, j) = 1.0/species[i].GetDif(species[j], P, T);
-   }
+      for (int j = 0; j<i; j++) {
+         const double invDij = 1.0/species[i].GetDif(species[j], P, T);
+         Di[i] += Xi[j]*invDij;
+         Di[j] += Xi[i]*invDij;
+      }
    __UNROLL__
    for (int i = 0; i<nSpec; i++) {
       double num = 0.0;
-      double den = 0.0;
       __UNROLL__
-      for (int j = 0; j<nSpec; j++) {
-         if (j != i) {
+      for (int j = 0; j<nSpec; j++)
+         if (j != i)
             num += Xi[j]*species[j].W;
-            den += Xi[j]*invDi(i, j);
-         }
-      }
-      Di[i] = num/(MixW*den)*iDiRef;
+      Di[i] = num/(MixW*Di[i])*iDiRef;
    }
 };
 
@@ -375,11 +374,12 @@ inline void Mix::GetProductionRates(VecNSp &w, const double rhon, const double P
    const double P = Pn*PRef;
    const double rho = rhon*rhoRef;
 
+   w.init(0.0);
+
    VecNSp G;
    VecNSp C;
    __UNROLL__
    for (int i = 0; i<nSpec; i++) {
-      w[i] = 0.0;
       C[i] = Yi[i]*rho/species[i].W;
       G[i] = species[i].GetFreeEnthalpy(T);
    }
@@ -424,18 +424,30 @@ inline void Mix::Getdpdrhoi(VecNSp &dpdrhoi, const double gamma, const double Tn
    // Use unscaled primitive variables
    const double T = Tn*TRef;
    double e = 0.0;
-   VecNSp ei;
    __UNROLL__
    for (int i = 0; i<nSpec; i++) {
-      ei[i] = (species[i].GetEnthalpy(T) - RGAS*T/species[i].W);
-      e += Yi[i]*ei[i];
+      // temporary store ei in dpdrhoi
+      dpdrhoi[i] = species[i].GetEnthalpy(T) - RGAS*T/species[i].W;
+      e += Yi[i]*dpdrhoi[i];
    }
    __UNROLL__
    for (int i = 0; i<nSpec; i++)
-      dpdrhoi[i] = (RGAS*T/species[i].W + (gamma - 1)*(e - ei[i]))*ieRef;
+      dpdrhoi[i] = (RGAS*T/species[i].W + (gamma - 1)*(e - dpdrhoi[i]))*ieRef;
 };
 
 inline void Mix::StoreReferenceQuantities(const double PRef, const double TRef, const double LRef, const Mixture &XiRef) {
+   // Check input reference quantities
+   // ... reference pressure must be positive
+   assert(PRef > 0);
+   // ... reference length scale must be positive
+   assert(LRef > 0);
+   // ... reference temperature must be in the acceptable range
+   // Some Tmin are very restrictive so ask for TRef > 0, for now
+   assert(TRef > 0);
+//   for (int i = 0; i < nSpec; i++) {
+//      assert(TRef < species[i].cpCoeff.TMax);
+//      assert(TRef > species[i].cpCoeff.TMin);
+//   }
    // Store reference quantities...
    // ... form the input file
    this->PRef = PRef;
@@ -448,7 +460,7 @@ inline void Mix::StoreReferenceQuantities(const double PRef, const double TRef, 
       this->XiRef[FindSpecies((char*)(s.Name))] = s.MolarFrac;
       check += s.MolarFrac;
    }
-   // check that the specified mixture is correctly specified
+   // check that the specified mixture is physical
    assert(fabs(check - 1.0) < 1e-3);
    // ... and the derived once
    MixWRef = GetMolarWeightFromXi(this->XiRef);

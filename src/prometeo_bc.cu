@@ -28,7 +28,6 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "prometeo_bc.hpp"
-#include "prometeo_variables.hpp"
 #include "cuda_utils.hpp"
 
 // Declare a constant memory that will hold the Mixture struct (initialized in prometeo_mixture.cu)
@@ -39,7 +38,9 @@ extern __device__ __constant__ Mix mix;
 //-----------------------------------------------------------------------------
 
 __global__
-void AddRecycleAverageTask_kernel(const AccessorRO<  Vec3, 3> cellWidth,
+void AddRecycleAverageTask_kernel(const AccessorRO<double, 3> dcsi_d,
+                                  const AccessorRO<double, 3> deta_d,
+                                  const AccessorRO<double, 3> dzet_d,
                                   const AccessorRO<VecNSp, 3> MolarFracs_profile,
                                   const AccessorRO<double, 3> temperature_profile,
                                   const AccessorRO<  Vec3, 3> velocity_profile,
@@ -61,7 +62,7 @@ void AddRecycleAverageTask_kernel(const AccessorRO<  Vec3, 3> cellWidth,
       const Point<3> p = Point<3>(x + my_bounds.lo.x,
                                   y + my_bounds.lo.y,
                                   z + my_bounds.lo.z);
-      AddRecycleAverageTask::collectAverages(cellWidth,
+      AddRecycleAverageTask::collectAverages(dcsi_d, deta_d, dzet_d,
                      MolarFracs_profile, temperature_profile, velocity_profile,
                      avg_MolarFracs, avg_velocity, avg_temperature,
                      avg_rho, Pbc, p, mix);
@@ -78,8 +79,10 @@ void AddRecycleAverageTask::gpu_base_impl(
    assert(regions.size() == 4);
    assert(futures.size() == 0);
 
-   // Accessors for cellWidth
-   const AccessorRO<  Vec3, 3> acc_cellWidth           (regions[0], FID_cellWidth);
+   // Accessors for metrics
+   const AccessorRO<double, 3> acc_dcsi_d              (regions[0], FID_dcsi_d);
+   const AccessorRO<double, 3> acc_deta_d              (regions[0], FID_deta_d);
+   const AccessorRO<double, 3> acc_dzet_d              (regions[0], FID_dzet_d);
 
    // Accessors for profile variables
    const AccessorRO<VecNSp, 3> acc_MolarFracs_profile  (regions[0], FID_MolarFracs_profile);
@@ -93,7 +96,8 @@ void AddRecycleAverageTask::gpu_base_impl(
    const AccessorSumRD<  Vec3, 1> acc_avg_velocity     (regions[3], RA_FID_velocity,    REGENT_REDOP_SUM_VEC3);
 
    // Extract execution domain
-   Rect<3> r_plane = runtime->get_index_space_domain(ctx, args.plane.get_index_space());
+   const Rect<3> r_plane = runtime->get_index_space_domain(ctx,
+                                    regions[0].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
@@ -101,7 +105,7 @@ void AddRecycleAverageTask::gpu_base_impl(
    const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_plane) + (TPB_3d.x - 1)) / TPB_3d.x,
                                    (getSize<Ydir>(r_plane) + (TPB_3d.y - 1)) / TPB_3d.y,
                                    (getSize<Zdir>(r_plane) + (TPB_3d.z - 1)) / TPB_3d.z);
-   AddRecycleAverageTask_kernel<<<num_blocks_3d, TPB_3d>>>(acc_cellWidth,
+   AddRecycleAverageTask_kernel<<<num_blocks_3d, TPB_3d>>>(acc_dcsi_d, acc_deta_d, acc_dzet_d,
                             acc_MolarFracs_profile, acc_temperature_profile, acc_velocity_profile,
                             acc_avg_MolarFracs, acc_avg_velocity, acc_avg_temperature, acc_avg_rho,
                             args.Pbc, r_plane,
@@ -183,8 +187,8 @@ void SetNSCBC_InflowBCTask<dir>::gpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_velocity            (regions[1], FID_velocity);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
@@ -261,7 +265,7 @@ void SetNSCBC_OutflowBCTask::gpu_base_impl(
    // Accessors for conserved variables
    const AccessorRO<VecNEq, 3> acc_Conserved        (regions[0], FID_Conserved);
 
-   // Accessors for temperature variables
+   // Accessors for temperature
    const AccessorRW<double, 3> acc_temperature      (regions[1], FID_temperature);
 
    // Accessors for primitive variables
@@ -270,8 +274,8 @@ void SetNSCBC_OutflowBCTask::gpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_velocity         (regions[1], FID_velocity);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
@@ -291,8 +295,7 @@ void SetNSCBC_OutflowBCTask::gpu_base_impl(
 
 __global__
 void SetIncomingShockBC_kernel(const AccessorRO<VecNEq, 3> Conserved,
-                               const AccessorRO<double, 3> SoS,
-                               const AccessorWO<double, 3> temperature,
+                               const AccessorRW<double, 3> temperature,
                                const AccessorWO<double, 3> pressure,
                                const AccessorWO<VecNSp, 3> MolarFracs,
                                const AccessorWO<  Vec3, 3> velocity,
@@ -303,7 +306,6 @@ void SetIncomingShockBC_kernel(const AccessorRO<VecNEq, 3> Conserved,
                                const double temperature1,
                                const double pressure1,
                                const VecNSp MolarFracs0,
-                               const double MixW,
                                const int iShock,
                                const Rect<3> my_bounds,
                                const coord_t  size_x,
@@ -318,32 +320,29 @@ void SetIncomingShockBC_kernel(const AccessorRO<VecNEq, 3> Conserved,
       const Point<3> p = Point<3>(x + my_bounds.lo.x,
                                   y + my_bounds.lo.y,
                                   z + my_bounds.lo.z);
-      if (p.x < iShock) {
-         // Set to upstream values
+      if ((p.x < iShock - 1) or
+          (p.x > iShock + 1)) {
+         // Threat as an outflow
+         UpdatePrimitiveFromConservedTask::UpdatePrimitive(
+                         Conserved, temperature, pressure,
+                         MolarFracs, velocity,
+                         p, mix);
+      // Inject the shock over four points
+      } else if (p.x == iShock - 1) {
          MolarFracs[p]  = MolarFracs0;
-         velocity[p]    = velocity0;
-         temperature[p] = temperature0;
-         pressure[p]    = pressure0;
-
-      } else if (p.x > iShock) {
-         // Treat this point as an NSCBCInflow
+         velocity[p]    = 0.75*velocity0    + 0.25*velocity1;
+         temperature[p] = 0.75*temperature0 + 0.25*temperature1;
+         pressure[p]    = 0.75*pressure0    + 0.25*pressure1;
+      } else if (p.x == iShock) {
          MolarFracs[p]  = MolarFracs0;
-         velocity[p]    = velocity1;
-         temperature[p] = temperature1;
-         if (fabs(velocity1[1]) >= SoS[p])
-            // It is supersonic, everything is imposed by the BC
-            pressure[p] = pressure1;
-         else
-            // Compute pressure from NSCBC conservation equations
-            pressure[p] = SetIncomingShockBCTask::setPressure(Conserved, temperature1, MixW, p, mix);
-
-      } else {
-         // Set to downstream values
+         velocity[p]    = 0.25*velocity0    + 0.75*velocity1;
+         temperature[p] = 0.25*temperature0 + 0.75*temperature1;
+         pressure[p]    = 0.25*pressure0    + 0.75*pressure1;
+      } else if (p.x == iShock + 1) {
          MolarFracs[p]  = MolarFracs0;
          velocity[p]    = velocity1;
          temperature[p] = temperature1;
          pressure[p]    = pressure1;
-
       }
    }
 }
@@ -361,22 +360,17 @@ void SetIncomingShockBCTask::gpu_base_impl(
    // Accessor for conserved variables
    const AccessorRO<VecNEq, 3> acc_Conserved           (regions[0], FID_Conserved);
 
-   // Accessor for speed of sound
-   const AccessorRO<double, 3> acc_SoS                 (regions[0], FID_SoS);
+   // Accessors for temperature
+   const AccessorRW<double, 3> acc_temperature         (regions[1], FID_temperature);
 
    // Accessors for primitive variables
    const AccessorWO<double, 3> acc_pressure            (regions[1], FID_pressure);
-   const AccessorWO<double, 3> acc_temperature         (regions[1], FID_temperature);
    const AccessorWO<VecNSp, 3> acc_MolarFracs          (regions[1], FID_MolarFracs);
    const AccessorWO<  Vec3, 3> acc_velocity            (regions[1], FID_velocity);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
-
-   // Precompute the mixture averaged molecular weight
-   VecNSp MolarFracs(args.params.MolarFracs);
-   const double MixW = args.mix.GetMolarWeightFromXi(MolarFracs);
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
@@ -385,11 +379,11 @@ void SetIncomingShockBCTask::gpu_base_impl(
                                    (getSize<Ydir>(r_BC) + (TPB_3d.y - 1)) / TPB_3d.y,
                                    (getSize<Zdir>(r_BC) + (TPB_3d.z - 1)) / TPB_3d.z);
    SetIncomingShockBC_kernel<<<num_blocks_3d, TPB_3d>>>(
-                        acc_Conserved, acc_SoS,
+                        acc_Conserved,
                         acc_temperature, acc_pressure, acc_MolarFracs, acc_velocity,
                         Vec3(args.params.velocity0), args.params.temperature0, args.params.pressure0,
                         Vec3(args.params.velocity1), args.params.temperature1, args.params.pressure1,
-                        MolarFracs, MixW, args.params.iShock,
+                        VecNSp(args.params.MolarFracs), args.params.iShock,
                         r_BC, getSize<Xdir>(r_BC), getSize<Ydir>(r_BC), getSize<Zdir>(r_BC));
 }
 
@@ -397,27 +391,29 @@ void SetIncomingShockBCTask::gpu_base_impl(
 // KERNELS FOR SetRecycleRescalingBCTask
 //-----------------------------------------------------------------------------
 
-#ifdef BOUNDS_CHECKS
-   // See Legion issue #879 for more info
-   #warning "CUDA variant of RecycleRescalingBC is not available with BOUNDS_CHECKS"
-#else
+// Workaroud for Legion issue #879
+struct SetRecycleRescalingBC_kernelArgs {
+   const AccessorRO<  Vec3, 3> centerCoordinates;
+   const AccessorRO<VecNEq, 3> Conserved;
+   const AccessorRO<double, 3> SoS;
+   const AccessorWO<double, 3> temperature;
+   const AccessorWO<double, 3> pressure;
+   const AccessorWO<VecNSp, 3> MolarFracs;
+   const AccessorWO<  Vec3, 3> velocity;
+   const AccessorRO<double, 3> temperature_recycle;
+   const AccessorRO<  Vec3, 3> velocity_recycle;
+   const AccessorRO<VecNSp, 3> MolarFracs_recycle;
+   const AccessorRO<double, 3> temperature_profile;
+   const AccessorRO<  Vec3, 3> velocity_profile;
+   const AccessorRO<VecNSp, 3> MolarFracs_profile;
+   const AccessorRO<double, 1> avg_y;
+   const AccessorRO< float, 1> FI_xloc;
+   const AccessorRO< float, 1> FI_iloc;
+};
+
 __global__
-void SetRecycleRescalingBC_kernel(const AccessorRO<  Vec3, 3> centerCoordinates,
-                                  const AccessorRO<VecNEq, 3> Conserved,
-                                  const AccessorRO<double, 3> SoS,
-                                  const AccessorWO<double, 3> temperature,
-                                  const AccessorWO<double, 3> pressure,
-                                  const AccessorWO<VecNSp, 3> MolarFracs,
-                                  const AccessorWO<  Vec3, 3> velocity,
-                                  const AccessorRO<double, 3> temperature_recycle,
-                                  const AccessorRO<  Vec3, 3> velocity_recycle,
-                                  const AccessorRO<VecNSp, 3> MolarFracs_recycle,
-                                  const AccessorRO<double, 3> temperature_profile,
-                                  const AccessorRO<  Vec3, 3> velocity_profile,
-                                  const AccessorRO<VecNSp, 3> MolarFracs_profile,
-                                  const AccessorRO<double, 1> avg_y,
-                                  const AccessorRO< float, 1> FI_xloc,
-                                  const AccessorRO< float, 1> FI_iloc,
+#ifdef LEGION_BOUNDS_CHECKS
+void SetRecycleRescalingBC_kernel(const DeferredBuffer<SetRecycleRescalingBC_kernelArgs, 1> buffer,
                                   const FastInterpData FIdata,
                                   const double Pbc,
                                   const double yInnFact,
@@ -429,10 +425,29 @@ void SetRecycleRescalingBC_kernel(const AccessorRO<  Vec3, 3> centerCoordinates,
                                   const coord_t  size_x,
                                   const coord_t  size_y,
                                   const coord_t  size_z)
+
+#else
+void SetRecycleRescalingBC_kernel(const SetRecycleRescalingBC_kernelArgs a,
+                                  const FastInterpData FIdata,
+                                  const double Pbc,
+                                  const double yInnFact,
+                                  const double yOutFact,
+                                  const double uInnFact,
+                                  const double uOutFact,
+                                  const double idelta99Inl,
+                                  const Rect<3> my_bounds,
+                                  const coord_t  size_x,
+                                  const coord_t  size_y,
+                                  const coord_t  size_z)
+#endif
 {
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
    int z = blockIdx.z * blockDim.z + threadIdx.z;
+
+#ifdef LEGION_BOUNDS_CHECKS
+   SetRecycleRescalingBC_kernelArgs a = buffer[0];
+#endif
 
    if ((x < size_x) && (y < size_y) && (z < size_z)) {
       const Point<3> p = Point<3>(x + my_bounds.lo.x,
@@ -442,24 +457,23 @@ void SetRecycleRescalingBC_kernel(const AccessorRO<  Vec3, 3> centerCoordinates,
       // Compute the rescaled primitive quantities
       double temperatureR; Vec3 velocityR; VecNSp MolarFracsR;
       SetRecycleRescalingBCTask::GetRescaled(
-                  temperatureR, velocityR, MolarFracsR, centerCoordinates,
-                  temperature_recycle, velocity_recycle, MolarFracs_recycle,
-                  temperature_profile, velocity_profile, MolarFracs_profile,
-                  avg_y, FI_xloc, FI_iloc, FIdata, p,
+                  temperatureR, velocityR, MolarFracsR, a.centerCoordinates,
+                  a.temperature_recycle, a.velocity_recycle, a.MolarFracs_recycle,
+                  a.temperature_profile, a.velocity_profile, a.MolarFracs_profile,
+                  a.avg_y, a.FI_xloc, a.FI_iloc, FIdata, p,
                   yInnFact, yOutFact, uInnFact, uOutFact, idelta99Inl);
 
-      MolarFracs[p] = MolarFracsR;
-      temperature[p] = temperatureR;
-      velocity[p] = velocityR;
-      if (fabs(velocityR[0]) >= SoS[p])
+      a.MolarFracs[p] = MolarFracsR;
+      a.temperature[p] = temperatureR;
+      a.velocity[p] = velocityR;
+      if (fabs(velocityR[0]) >= a.SoS[p])
          // It is supersonic, everything is imposed by the BC
-         pressure[p] = Pbc;
+         a.pressure[p] = Pbc;
       else
          // Compute pressure from NSCBC conservation equations
-         pressure[p] = SetRecycleRescalingBCTask::setPressure(Conserved, temperatureR, MolarFracsR, p, mix);
+         a.pressure[p] = SetRecycleRescalingBCTask::setPressure(a.Conserved, temperatureR, MolarFracsR, p, mix);
    }
 }
-#endif
 
 __host__
 void SetRecycleRescalingBCTask::gpu_base_impl(
@@ -468,10 +482,6 @@ void SetRecycleRescalingBCTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-#ifdef BOUNDS_CHECKS
-   // See Legion issue #879 for more info
-   #warning "CUDA variant of RecycleRescalingBC is not available with BOUNDS_CHECKS"
-#else
    assert(regions.size() == 5);
    assert(futures.size() == 1);
 
@@ -508,8 +518,8 @@ void SetRecycleRescalingBCTask::gpu_base_impl(
    const AccessorRO< float, 1> acc_FI_iloc             (regions[4], FI_FID_iloc);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Compute rescaling coefficients
    const RescalingDataType RdataRe = futures[0].get_result<RescalingDataType>();
@@ -526,12 +536,36 @@ void SetRecycleRescalingBCTask::gpu_base_impl(
    const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_BC) + (TPB_3d.x - 1)) / TPB_3d.x,
                                    (getSize<Ydir>(r_BC) + (TPB_3d.y - 1)) / TPB_3d.y,
                                    (getSize<Zdir>(r_BC) + (TPB_3d.z - 1)) / TPB_3d.z);
+   struct SetRecycleRescalingBC_kernelArgs kArgs = {
+      .centerCoordinates   = acc_centerCoordinates,
+      .Conserved           = acc_Conserved,
+      .SoS                 = acc_SoS,
+      .temperature         = acc_temperature,
+      .pressure            = acc_pressure,
+      .MolarFracs          = acc_MolarFracs,
+      .velocity            = acc_velocity,
+      .temperature_recycle = acc_temperature_recycle,
+      .velocity_recycle    = acc_velocity_recycle,
+      .MolarFracs_recycle  = acc_MolarFracs_recycle,
+      .temperature_profile = acc_temperature_profile,
+      .velocity_profile    = acc_velocity_profile,
+      .MolarFracs_profile  = acc_MolarFracs_profile,
+      .avg_y               = acc_avg_y,
+      .FI_xloc             = acc_FI_xloc,
+      .FI_iloc             = acc_FI_iloc,
+   };
+#ifdef LEGION_BOUNDS_CHECKS
+   DeferredBuffer<SetRecycleRescalingBC_kernelArgs, 1>
+      buffer(Rect<1>(Point<1>(0), Point<1>(1)), Memory::Z_COPY_MEM, &kArgs);
    SetRecycleRescalingBC_kernel<<<num_blocks_3d, TPB_3d>>>(
-                        acc_centerCoordinates, acc_Conserved, acc_SoS,
-                        acc_temperature, acc_pressure, acc_MolarFracs, acc_velocity,
-                        acc_temperature_recycle, acc_velocity_recycle, acc_MolarFracs_recycle,
-                        acc_temperature_profile, acc_velocity_profile, acc_MolarFracs_profile,
-                        acc_avg_y, acc_FI_xloc, acc_FI_iloc, args.FIdata, args.Pbc,
+                        buffer,
+                        args.FIdata, args.Pbc,
+                        yInnFact, yOutFact, uInnFact, uOutFact, idelta99Inl,
+                        r_BC, getSize<Xdir>(r_BC), getSize<Ydir>(r_BC), getSize<Zdir>(r_BC));
+#else
+   SetRecycleRescalingBC_kernel<<<num_blocks_3d, TPB_3d>>>(
+                        kArgs,
+                        args.FIdata, args.Pbc,
                         yInnFact, yOutFact, uInnFact, uOutFact, idelta99Inl,
                         r_BC, getSize<Xdir>(r_BC), getSize<Ydir>(r_BC), getSize<Zdir>(r_BC));
 #endif
@@ -544,8 +578,10 @@ void SetRecycleRescalingBCTask::gpu_base_impl(
 
 template<direction dir, side s>
 __global__
-void CorrectIonsBC_kernel(const AccessorRO<double, 3> ePot,
-                          const AccessorRW<VecNSp, 3> MolarFracs,
+void CorrectIonsBC_kernel(const AccessorRO<double, 3> ePotInt,
+                          const AccessorRO<double, 3> ePot,
+                          const AccessorRO<VecNSp, 3> MolarFracsInt,
+                          const AccessorWO<VecNSp, 3> MolarFracs,
                           const Rect<3> my_bounds,
                           const coord_t  size_x,
                           const coord_t  size_y,
@@ -560,13 +596,13 @@ void CorrectIonsBC_kernel(const AccessorRO<double, 3> ePot,
                                   y + my_bounds.lo.y,
                                   z + my_bounds.lo.z);
       const Point<3> pInt = getPIntBC<dir, s>(p);
-      const double dPhi = ePot[pInt] - ePot[p];
+      const double dPhi = ePotInt[pInt] - ePot[p];
       __UNROLL__
       for (int i = 0; i < nIons; i++) {
          int ind = mix.ions[i];
          if (mix.GetSpeciesChargeNumber(ind)*dPhi > 0)
             // the ion is flowing into the BC
-            MolarFracs[p][ind] = MolarFracs[pInt][ind];
+            MolarFracs[p][ind] = MolarFracsInt[pInt][ind];
          else
             // the ion is repelled by the BC
             MolarFracs[p][ind] = 1e-60;
@@ -582,18 +618,22 @@ void CorrectIonsBCTask<dir, s>::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 2);
+   assert(regions.size() == 3);
    assert(futures.size() == 0);
 
-   // Accessor for electric potential
-   const AccessorRO<double, 3> acc_ePot       (regions[0], FID_electricPotential);
+   // Accessor for BC electric potential
+   const AccessorRO<double, 3> acc_ePot         (regions[0], FID_electricPotential);
 
    // Accessors for primitive variables
-   const AccessorRW<VecNSp, 3> acc_MolarFracs (regions[1], FID_MolarFracs);
+   const AccessorWO<VecNSp, 3> acc_MolarFracs   (regions[1], FID_MolarFracs);
+
+   // Accessor for internal electric potential and molar fractions
+   const AccessorRO<double, 3> acc_ePotInt      (regions[2], FID_electricPotential);
+   const AccessorRO<VecNSp, 3> acc_MolarFracsInt(regions[2], FID_MolarFracs);
 
    // Extract execution domain
-   Rect<3> r_BC = runtime->get_index_space_domain(ctx,
-      runtime->get_logical_subregion_by_color(args.Fluid_BC, 0).get_index_space());
+   const Rect<3> r_BC = runtime->get_index_space_domain(ctx,
+                                 regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
@@ -602,7 +642,7 @@ void CorrectIonsBCTask<dir, s>::gpu_base_impl(
                                    (getSize<Ydir>(r_BC) + (TPB_3d.y - 1)) / TPB_3d.y,
                                    (getSize<Zdir>(r_BC) + (TPB_3d.z - 1)) / TPB_3d.z);
    CorrectIonsBC_kernel<dir, s><<<num_blocks_3d, TPB_3d>>>(
-                        acc_ePot, acc_MolarFracs,
+                        acc_ePotInt, acc_ePot, acc_MolarFracsInt, acc_MolarFracs,
                         r_BC, getSize<Xdir>(r_BC), getSize<Ydir>(r_BC), getSize<Zdir>(r_BC));
 };
 

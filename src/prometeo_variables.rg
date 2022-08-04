@@ -59,10 +59,8 @@ if (ELECTRIC_FIELD and (MIX.nIons > 0)) then
 end
 
 extern task Exports.UpdatePropertiesFromPrimitive(Fluid    : region(ispace(int3d), Fluid_columns),
-                                                  ModCells : region(ispace(int3d), Fluid_columns),
                                                   mix : MIX.Mixture)
 where
-   ModCells <= Fluid,
    reads(Fluid.[Primitives]),
    writes(Fluid.MassFracs),
    writes(Fluid.[Properties])
@@ -75,7 +73,6 @@ Exports.UpdatePropertiesFromPrimitive:set_task_id(TYPES.TID_UpdatePropertiesFrom
 -------------------------------------------------------------------------------
 
 extern task Exports.UpdateConservedFromPrimitive(Fluid    : region(ispace(int3d), Fluid_columns),
-                                                 ModCells : region(ispace(int3d), Fluid_columns),
                                                  mix : MIX.Mixture)
 where
    reads(Fluid.{MassFracs, temperature, velocity}),
@@ -85,7 +82,6 @@ end
 Exports.UpdateConservedFromPrimitive:set_task_id(TYPES.TID_UpdateConservedFromPrimitive)
 
 extern task Exports.UpdatePrimitiveFromConserved(Fluid    : region(ispace(int3d), Fluid_columns),
-                                                 ModCells : region(ispace(int3d), Fluid_columns),
                                                  mix : MIX.Mixture)
 where
    reads(Fluid.Conserved),
@@ -93,32 +89,6 @@ where
    writes(Fluid.[Primitives])
 end
 Exports.UpdatePrimitiveFromConserved:set_task_id(TYPES.TID_UpdatePrimitiveFromConserved)
-
--------------------------------------------------------------------------------
--- GRADIENT ROUTINES
--------------------------------------------------------------------------------
-
-extern task Exports.GetVelocityGradients(Ghost : region(ispace(int3d), Fluid_columns),
-                                         Fluid : region(ispace(int3d), Fluid_columns),
-                                         Fluid_bounds : rect3d)
-where
-   reads(Ghost.velocity),
-   reads(Fluid.{nType_x, nType_y, nType_z}),
-   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
-   writes(Fluid.{velocityGradientX, velocityGradientY, velocityGradientZ})
-end
-Exports.GetVelocityGradients:set_task_id(TYPES.TID_GetVelocityGradients)
-
---extern task Exports.GetTemperatureGradients(Ghost : region(ispace(int3d), Fluid_columns),
---                                            Fluid : region(ispace(int3d), Fluid_columns),
---                                            Fluid_bounds : rect3d)
---where
---   reads(Ghost.temperature),
---   reads(Fluid.{nType_x, nType_y, nType_z}),
---   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
---   writes(Fluid.temperatureGradient)
---end
---Exports.GetTemperatureGradients:set_task_id(TYPES.TID_GetTemperatureGradient)
 
 return Exports end
 

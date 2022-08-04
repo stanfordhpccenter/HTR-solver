@@ -89,14 +89,12 @@ public:
       LogicalRegion DiffGhost;
       LogicalRegion FluxGhost;
       LogicalRegion Fluid;
-      LogicalRegion ModCells;
       Rect<3> Fluid_bounds;
       Mix mix;
       FieldID EulerGhost_fields[FID_last - 101];
       FieldID DiffGhost_fields [FID_last - 101];
       FieldID DivgGhost_fields [FID_last - 101];
       FieldID Fluid_fields     [FID_last - 101];
-      FieldID ModCells_fields  [FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;
@@ -162,12 +160,10 @@ public:
       uint64_t arg_mask[1];
       LogicalRegion    GradGhost;
       LogicalRegion    Fluid;
-      LogicalRegion    ModCells;
       Rect<3> Fluid_bounds;
       Mix mix;
       FieldID GradGhost_fields  [FID_last - 101];
       FieldID Fluid_fields      [FID_last - 101];
-      FieldID ModCells_fields   [FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;

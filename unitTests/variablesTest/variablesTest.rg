@@ -7,8 +7,8 @@ local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
-local REGISTRAR = terralib.includec("prometeo_variables.h")
-local UTIL = require 'util-desugared'
+local REGISTRAR = terralib.includec("registrar.h")
+local UTIL = require 'util'
 
 local Config = SCHEMA.Config
 
@@ -41,7 +41,9 @@ local nSpec = MIX.nSpec
 local nEq = CONST.GetnEq(MIX) -- Total number of unknowns for the implicit solver
 
 --External modules
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
 local VARS = (require 'prometeo_variables')(SCHEMA, MIX, METRIC, TYPES, ELECTRIC_FIELD)
 
 -- Test parameters
@@ -89,7 +91,6 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, 0)
    fill(Fluid.nType_y, 0)
    fill(Fluid.nType_z, 0)
@@ -112,10 +113,6 @@ do
    fill(Fluid.lam, 0.0)
    fill(Fluid.Di , [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
    fill(Fluid.SoS, 0.0)
-   fill(Fluid.velocityGradientX,   array(0.0, 0.0, 0.0))
-   fill(Fluid.velocityGradientY,   array(0.0, 0.0, 0.0))
-   fill(Fluid.velocityGradientZ,   array(0.0, 0.0, 0.0))
---   fill(Fluid.temperatureGradient, array(0.0, 0.0, 0.0))
    fill(Fluid.Conserved, [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
 end
 
@@ -204,19 +201,6 @@ end
 
 
 task main()
-   -- Init the mixture
-   var config : Config
-   config.Flow.mixture.type = SCHEMA.MixtureModel_AirMix
-   config.Flow.mixture.u.AirMix.LRef = [LRef]
-   config.Flow.mixture.u.AirMix.TRef = [TRef]
-   config.Flow.mixture.u.AirMix.PRef = [PRef]
-   config.Flow.mixture.u.AirMix.XiRef.Species.length = 2
-   C.snprintf([&int8](config.Flow.mixture.u.AirMix.XiRef.Species.values[0].Name), 10, "O2")
-   C.snprintf([&int8](config.Flow.mixture.u.AirMix.XiRef.Species.values[1].Name), 10, "N2")
-   config.Flow.mixture.u.AirMix.XiRef.Species.values[0].MolarFrac = [MixWRef]*[YO2Ref]/(2*15.999e-3)
-   config.Flow.mixture.u.AirMix.XiRef.Species.values[1].MolarFrac = [MixWRef]*[YN2Ref]/28.0134e-3
-   var Mix = MIX.InitMixtureStruct(config)
-
    -- Define the domain
    var xBnum = 1
    var yBnum = 1
@@ -240,6 +224,20 @@ task main()
       [UTIL.mkPartitionIsInteriorOrGhost(int3d, Fluid_columns, "Fluid_regions")]
       (Fluid, int3d{xBnum,yBnum,zBnum})
 
+   -- Init the mixture
+   var config : Config
+   config.Flow.mixture.type = SCHEMA.MixtureModel_AirMix
+   config.Flow.mixture.u.AirMix.LRef = [LRef]
+   config.Flow.mixture.u.AirMix.TRef = [TRef]
+   config.Flow.mixture.u.AirMix.PRef = [PRef]
+   config.Flow.mixture.u.AirMix.XiRef.Species.length = 2
+   C.snprintf([&int8](config.Flow.mixture.u.AirMix.XiRef.Species.values[0].Name), 10, "O2")
+   C.snprintf([&int8](config.Flow.mixture.u.AirMix.XiRef.Species.values[1].Name), 10, "N2")
+   config.Flow.mixture.u.AirMix.XiRef.Species.values[0].MolarFrac = [MixWRef]*[YO2Ref]/(2*15.999e-3)
+   config.Flow.mixture.u.AirMix.XiRef.Species.values[1].MolarFrac = [MixWRef]*[YN2Ref]/28.0134e-3
+
+   var Mix = MIX.InitMixture(Fluid, tiles, p_Fluid, config)
+
    -- Interior points
    var p_Interior = static_cast(partition(disjoint, Fluid, tiles), cross_product(Fluid_regions, p_Fluid)[0])
 
@@ -251,7 +249,7 @@ task main()
    -- Test UpdatePropertiesFromPrimitive
    __demand(__index_launch)
    for c in tiles do
-      VARS.UpdatePropertiesFromPrimitive(p_Fluid[c], p_Fluid[c], Mix)
+      VARS.UpdatePropertiesFromPrimitive(p_Fluid[c], Mix)
    end
 
    CheckUpdatePropertiesFromPrimitive(Fluid)
@@ -259,7 +257,7 @@ task main()
    -- Test UpdateConservedFromPrimitive for ghosts
    __demand(__index_launch)
    for c in tiles do
-      VARS.UpdateConservedFromPrimitive(p_Fluid[c], p_AllGhost[c], Mix)
+      VARS.UpdateConservedFromPrimitive(p_AllGhost[c], Mix)
    end
 
    CheckUpdateGhostConservedFromPrimitive(Fluid)
@@ -268,7 +266,7 @@ task main()
    fill(Fluid.Conserved, [UTIL.mkArrayConstant(nEq, rexpr 0.0 end)])
    __demand(__index_launch)
    for c in tiles do
-      VARS.UpdateConservedFromPrimitive(p_Fluid[c], p_Interior[c], Mix)
+      VARS.UpdateConservedFromPrimitive(p_Interior[c], Mix)
    end
 
    CheckUpdateConservedFromPrimitive(Fluid)
@@ -280,7 +278,7 @@ task main()
    fill(Fluid.velocity, array(0.0, 0.0, 0.0))
    __demand(__index_launch)
    for c in tiles do
-      VARS.UpdatePrimitiveFromConserved(p_Fluid[c], p_Interior[c], Mix)
+      VARS.UpdatePrimitiveFromConserved(p_Interior[c], Mix)
    end
 
    CheckUpdatePrimitiveFromConserved(Fluid)
@@ -294,4 +292,4 @@ end
 -- COMPILATION CALL
 -------------------------------------------------------------------------------
 
-regentlib.saveobj(main, "variablesTest.o", "object", REGISTRAR.register_variables_tasks)
+regentlib.saveobj(main, "variablesTest.o", "object", REGISTRAR.register_tasks)

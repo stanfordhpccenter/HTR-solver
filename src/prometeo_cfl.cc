@@ -39,11 +39,13 @@ double CalculateMaxSpectralRadiusTask::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 2);
+   assert(regions.size() == 1);
    assert(futures.size() == 0);
 
-   // Accessor for cellWidth
-   const AccessorRO<  Vec3, 3> acc_cellWidth        (regions[0], FID_cellWidth);
+   // Accessor for metrics
+   const AccessorRO<double, 3> acc_dcsi_d           (regions[0], FID_dcsi_d);
+   const AccessorRO<double, 3> acc_deta_d           (regions[0], FID_deta_d);
+   const AccessorRO<double, 3> acc_dzet_d           (regions[0], FID_dzet_d);
 
    // Accessors for primitive variables
    const AccessorRO<VecNSp, 3> acc_MassFracs        (regions[0], FID_MassFracs);
@@ -64,7 +66,7 @@ double CalculateMaxSpectralRadiusTask::cpu_base_impl(
 #endif
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[0].get_logical_region().get_index_space());
 
    // Reduce spectral redii into r
    double r = 0.0;
@@ -77,7 +79,8 @@ double CalculateMaxSpectralRadiusTask::cpu_base_impl(
       for (int j = r_MyFluid.lo.y; j <= r_MyFluid.hi.y; j++)
          for (int i = r_MyFluid.lo.x; i <= r_MyFluid.hi.x; i++) {
             const Point<3> p = Point<3>{i,j,k};
-            const double my_r = CalculateMaxSpectralRadius(acc_cellWidth,
+            const double my_r = CalculateMaxSpectralRadius(
+                                                       acc_dcsi_d, acc_deta_d, acc_dzet_d,
                                                        acc_temperature, acc_MassFracs, acc_velocity,
                                                        acc_rho, acc_mu, acc_lam, acc_Di, acc_SoS,
 #if (defined(ELECTRIC_FIELD) && (nIons > 0))

@@ -13,7 +13,7 @@ default: averageTest.exec average1DTest.exec
 ######################################################
 # Objects
 ######################################################
-MODULES= $(HTR_DIR)/src/hdf_helper.rg \
+MODULES= $(HTR_DIR)/src/Utils/hdf_helper.rg \
 			$(HTR_DIR)/src/prometeo_IO.rg \
 			$(HTR_DIR)/src/prometeo_const.rg \
 			$(HTR_DIR)/src/prometeo_macro.rg \
@@ -27,29 +27,37 @@ MODULES= $(HTR_DIR)/src/hdf_helper.rg \
 # Recipes
 ######################################################
 clean:
-	$(RM) -r *.exec *.o *Averages
+	$(RM) -r *.exec *.o *.a *Averages
 
-average1DTest.exec: average1DTest.o $(HTR_DIR)/src/prometeo_AirMix_cpu.a
+average1DTest.exec: average1DTest.o registrar.o libtest.a
 	$(CXX) -o $@ $^ $(LINK_FLAGS)
 
-average1DTest.o: average1DTest.rg $(HTR_DIR)/src/config_schema.h $(HTR_DIR)/src/util-desugared.rg $(MODULES)
-	EOS="AirMix" $(REGENT) average1DTest.rg $(REGENT_FLAGS)
+average1DTest.o: average1DTest.rg $(HTR_DIR)/src/config_schema.h $(HTR_DIR)/src/Utils/util.rg $(MODULES)
+	EOS="AirMix" $(REGENT) $(REGENT_OPTS) average1DTest.rg $(REGENT_FLAGS)
 
-averageTest.exec: averageTest.o $(HTR_DIR)/src/prometeo_AirMix_cpu.a
+averageTest.exec: averageTest.o registrar.o libtest.a
 	$(CXX) -o $@ $^ $(LINK_FLAGS)
 
-averageTest.o: averageTest.rg $(HTR_DIR)/src/config_schema.h $(HTR_DIR)/src/util-desugared.rg $(MODULES)
-	EOS="AirMix" $(REGENT) averageTest.rg $(REGENT_FLAGS)
+averageTest.o: averageTest.rg $(HTR_DIR)/src/config_schema.h $(HTR_DIR)/src/Utils/util.rg $(MODULES)
+	EOS="AirMix" $(REGENT) $(REGENT_OPTS) averageTest.rg $(REGENT_FLAGS)
+
+libtest.a: $(HTR_DIR)/src/prometeo_AirMix_cpu.a \
+			  $(if $(filter $(strip $(USE_CUDA)), 1),  $(HTR_DIR)/src/prometeo_AirMix_gpu.a)
+	$(AR) rcT $@ $^
+
+registrar.o: registrar.cc registrar.h $(HTR_DIR)/src/prometeo_average.h $(HTR_DIR)/src/prometeo_mixture.h
+	$(call getRecipe)
+	$(CXX) $(CXX_FLAGS) -c -o $@ $<
 
 $(HTR_DIR)/src/prometeo_AirMix_cpu.a: force
 	$(MAKE) -C $(HTR_DIR)/src prometeo_AirMix_cpu.a
 
-$(HTR_DIR)/src/config_schema.o $(HTR_DIR)/src/config_schema.h: $(HTR_DIR)/src/process_schema.rg $(HTR_DIR)/src/config_schema.lua
+$(HTR_DIR)/src/prometeo_AirMix_gpu.a: force
+	$(MAKE) -C $(HTR_DIR)/src prometeo_AirMix_gpu.a
+
+$(HTR_DIR)/src/config_schema.o $(HTR_DIR)/src/config_schema.h: $(HTR_DIR)/src/Utils/process_schema.rg $(HTR_DIR)/src/config_schema.lua
 	$(MAKE) -C $(HTR_DIR)/src config_schema.o
 
 json.o json.h: $(HTR_DIR)/src/json.c $(HTR_DIR)/src/json.h
 	$(MAKE) -C $(HTR_DIR)/src json.o
-
-$(HTR_DIR)/src/util-desugared.rg: $(HTR_DIR)/src/util.rg
-	$(MAKE) -C $(HTR_DIR)/src util-desugared.rg
 

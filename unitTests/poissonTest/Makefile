@@ -13,7 +13,8 @@ default: poissonTest.exec
 ######################################################
 # Objects
 ######################################################
-MODULES= $(HTR_DIR)/src/prometeo_const.rg \
+MODULES= $(HTR_DIR)/src/version.rg \
+			$(HTR_DIR)/src/prometeo_const.rg \
 			$(HTR_DIR)/src/prometeo_macro.rg \
 			$(HTR_DIR)/src/prometeo_partitioner.rg \
 			$(HTR_DIR)/src/prometeo_grid.rg \
@@ -25,13 +26,13 @@ MODULES= $(HTR_DIR)/src/prometeo_const.rg \
 ######################################################
 clean:
 	$(RM) *.exec *.o *.a
+	$(RM) -rf PoissonDir
 
 poissonTest.exec: poissonTest.o registrar.o libtest.a
 	$(CXX) -o $@ $^ $(LINK_FLAGS)
 
-poissonTest.o: poissonTest.rg $(HTR_DIR)/src/config_schema.h $(HTR_DIR)/src/util-desugared.rg \
-					$(MODULES)
-	EOS="IsentropicMix" $(REGENT) $< $(REGENT_FLAGS)
+poissonTest.o: poissonTest.rg $(HTR_DIR)/src/config_schema.h $(HTR_DIR)/src/Utils/util.rg $(MODULES)
+	EOS="IsentropicMix" $(REGENT) $(REGENT_OPTS) $< $(REGENT_FLAGS)
 
 libtest.a: $(HTR_DIR)/src/prometeo_IsentropicMix_cpu.a \
 			  $(if $(filter $(strip $(USE_CUDA)), 1),  $(HTR_DIR)/src/prometeo_IsentropicMix_gpu.a)
@@ -48,12 +49,12 @@ $(HTR_DIR)/src/prometeo_IsentropicMix_cpu.a: force
 $(HTR_DIR)/src/prometeo_IsentropicMix_gpu.a: force
 	$(MAKE) -C $(HTR_DIR)/src prometeo_IsentropicMix_gpu.a
 
-$(HTR_DIR)/src/config_schema.o $(HTR_DIR)/src/config_schema.h: $(HTR_DIR)/src/process_schema.rg $(HTR_DIR)/src/config_schema.lua
+$(HTR_DIR)/src/version.rg:
+	 $(MAKE) -C $(HTR_DIR)/src version.rg
+
+$(HTR_DIR)/src/config_schema.o $(HTR_DIR)/src/config_schema.h: $(HTR_DIR)/src/Utils/process_schema.rg $(HTR_DIR)/src/config_schema.lua
 	$(MAKE) -C $(HTR_DIR)/src config_schema.o
 
 json.o json.h: $(HTR_DIR)/src/json.c $(HTR_DIR)/src/json.h
 	$(MAKE) -C $(HTR_DIR)/src json.o
-
-$(HTR_DIR)/src/util-desugared.rg: $(HTR_DIR)/src/util.rg
-	$(MAKE) -C $(HTR_DIR)/src util-desugared.rg
 

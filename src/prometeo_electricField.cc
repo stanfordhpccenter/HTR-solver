@@ -58,7 +58,7 @@ void GetElectricFieldTask::cpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_eField  (regions[2], FID_electricField);
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // Here we are assuming C layout of the instance
@@ -94,7 +94,7 @@ void UpdateUsingIonDriftFluxTask<Xdir>::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 6);
+   assert(regions.size() == 5);
    assert(futures.size() == 0);
 
    // Accessors for EulerGhost region
@@ -115,7 +115,7 @@ void UpdateUsingIonDriftFluxTask<Xdir>::cpu_base_impl(
    const AccessorRW<VecNEq, 3> acc_Conserved_t(regions[4], FID_Conserved_t);
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[4].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // update RHS using Euler and Diffision fluxes
@@ -123,14 +123,14 @@ void UpdateUsingIonDriftFluxTask<Xdir>::cpu_base_impl(
 #ifdef REALM_USE_OPENMP
    #pragma omp parallel for collapse(2)
 #endif
-   for (int k = r_ModCells.lo.z; k <= r_ModCells.hi.z; k++)
-      for (int j = r_ModCells.lo.y; j <= r_ModCells.hi.y; j++) {
+   for (int k = r_MyFluid.lo.z; k <= r_MyFluid.hi.z; k++)
+      for (int j = r_MyFluid.lo.y; j <= r_MyFluid.hi.y; j++) {
          // Launch the loop for the span
          updateRHSSpan(acc_Conserved_t, acc_m_e, acc_nType,
                   acc_Conserved, acc_MassFracs, acc_Ki, acc_eField,
-                  0, getSize<Xdir>(r_ModCells),
-                  0, j-r_ModCells.lo.y, k-r_ModCells.lo.z,
-                  r_ModCells, Fluid_bounds, args.mix);
+                  0, getSize<Xdir>(r_MyFluid),
+                  0, j-r_MyFluid.lo.y, k-r_MyFluid.lo.z,
+                  r_MyFluid, Fluid_bounds, args.mix);
       }
 }
 
@@ -151,7 +151,7 @@ void UpdateUsingIonDriftFluxTask<Ydir>::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 6);
+   assert(regions.size() == 5);
    assert(futures.size() == 0);
 
    // Accessors for EulerGhost region
@@ -172,7 +172,7 @@ void UpdateUsingIonDriftFluxTask<Ydir>::cpu_base_impl(
    const AccessorRW<VecNEq, 3> acc_Conserved_t(regions[4], FID_Conserved_t);
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[4].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // update RHS using Euler and Diffision fluxes
@@ -180,14 +180,14 @@ void UpdateUsingIonDriftFluxTask<Ydir>::cpu_base_impl(
 #ifdef REALM_USE_OPENMP
    #pragma omp parallel for collapse(2)
 #endif
-   for (int k = r_ModCells.lo.z; k <= r_ModCells.hi.z; k++)
-      for (int i = r_ModCells.lo.x; i <= r_ModCells.hi.x; i++) {
+   for (int k = r_MyFluid.lo.z; k <= r_MyFluid.hi.z; k++)
+      for (int i = r_MyFluid.lo.x; i <= r_MyFluid.hi.x; i++) {
          // Launch the loop for the span
          updateRHSSpan(acc_Conserved_t, acc_m_e, acc_nType,
                   acc_Conserved, acc_MassFracs, acc_Ki, acc_eField,
-                  0, getSize<Ydir>(r_ModCells),
-                  i-r_ModCells.lo.x, 0, k-r_ModCells.lo.z,
-                  r_ModCells, Fluid_bounds, args.mix);
+                  0, getSize<Ydir>(r_MyFluid),
+                  i-r_MyFluid.lo.x, 0, k-r_MyFluid.lo.z,
+                  r_MyFluid, Fluid_bounds, args.mix);
       }
 }
 
@@ -208,7 +208,7 @@ void UpdateUsingIonDriftFluxTask<Zdir>::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 6);
+   assert(regions.size() == 5);
    assert(futures.size() == 0);
 
    // Accessors for EulerGhost region
@@ -229,7 +229,7 @@ void UpdateUsingIonDriftFluxTask<Zdir>::cpu_base_impl(
    const AccessorRW<VecNEq, 3> acc_Conserved_t(regions[4], FID_Conserved_t);
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[4].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // update RHS using Euler and Diffision fluxes
@@ -237,14 +237,14 @@ void UpdateUsingIonDriftFluxTask<Zdir>::cpu_base_impl(
 #ifdef REALM_USE_OPENMP
    #pragma omp parallel for collapse(2)
 #endif
-   for (int j = r_ModCells.lo.y; j <= r_ModCells.hi.y; j++)
-      for (int i = r_ModCells.lo.x; i <= r_ModCells.hi.x; i++) {
+   for (int j = r_MyFluid.lo.y; j <= r_MyFluid.hi.y; j++)
+      for (int i = r_MyFluid.lo.x; i <= r_MyFluid.hi.x; i++) {
          // Launch the loop for the span
          updateRHSSpan(acc_Conserved_t, acc_m_e, acc_nType,
                   acc_Conserved, acc_MassFracs, acc_Ki, acc_eField,
-                  0, getSize<Zdir>(r_ModCells),
-                  i-r_ModCells.lo.x, j-r_ModCells.lo.y, 0,
-                  r_ModCells, Fluid_bounds, args.mix);
+                  0, getSize<Zdir>(r_MyFluid),
+                  i-r_MyFluid.lo.x, j-r_MyFluid.lo.y, 0,
+                  r_MyFluid, Fluid_bounds, args.mix);
       }
 }
 #endif
@@ -259,7 +259,7 @@ void AddIonWindSourcesTask::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 4);
+   assert(regions.size() == 3);
    assert(futures.size() == 0);
 
    // Accessors for stencil variables
@@ -288,16 +288,16 @@ void AddIonWindSourcesTask::cpu_base_impl(
    const AccessorRW<VecNEq, 3> acc_Conserved_t      (regions[2], FID_Conserved_t);
 
    // Extract execution domain
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
    #pragma omp parallel for collapse(3)
 #endif
-   for (int k = r_ModCells.lo.z; k <= r_ModCells.hi.z; k++)
-      for (int j = r_ModCells.lo.y; j <= r_ModCells.hi.y; j++)
-         for (int i = r_ModCells.lo.x; i <= r_ModCells.hi.x; i++) {
+   for (int k = r_MyFluid.lo.z; k <= r_MyFluid.hi.z; k++)
+      for (int j = r_MyFluid.lo.y; j <= r_MyFluid.hi.y; j++)
+         for (int i = r_MyFluid.lo.x; i <= r_MyFluid.hi.x; i++) {
             const Point<3> p = Point<3>(i,j,k);
             addIonWindSources(acc_Conserved_t[p],
                acc_rho, acc_Di,

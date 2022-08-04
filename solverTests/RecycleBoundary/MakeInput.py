@@ -13,6 +13,7 @@ from scipy.optimize import fsolve
 sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
 import gridGen
 import ConstPropMix
+import HTRrestart
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--np', nargs='?', default=1, type=int,
@@ -175,11 +176,6 @@ yBL, uBL, TBL, rhoBL = GetProfile(Cf)
 theta = getTheta(yBL, uBL, rhoBL, UInf)
 vBL = getVBL(Cf, theta, yBL, uBL, rhoBL)
 
-# Rescale quantities
-config["Grid"]["xWidth"] *= delta99In
-config["Grid"]["yWidth"] *= delta99In
-config["Grid"]["zWidth"] *= delta99In
-
 ##############################################################################
 #                            Boundary conditions                             #
 ##############################################################################
@@ -204,163 +200,80 @@ config["BC"]["yBCRight"]["P"] = PInf
 #                              Generate Grid                                 #
 ##############################################################################
 
-def objective(yStretching):
-   yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
-                               config["Grid"]["yWidth"],
-                               config["Grid"]["yNum"], 
-                               config["Grid"]["yType"],
-                               yStretching,
-                               False)
-   return dy[1]/deltaNu - yPlus
+width = [10.0*delta99In, 2.5*delta99In, 1.0*delta99In]
+T = dict()
+T["type"] = "Uniform"
+xN = gridGen.GetNodes(0.0, width[0], config["Grid"]["xNum"], T)
 
-config["Grid"]["yStretching"], = fsolve(objective, 1.0)
+T["type"] = "SinhMinus"
+T["Stretching"] = 1
+def objective(s):
+   T["Stretching"] = s[0]
+   x = gridGen.GetNodes(0.0, width[1], config["Grid"]["yNum"], T)
+   return (x[1] - x[0]) - yPlus*deltaNu
+T["Stretching"], = fsolve(objective, 1.0)
+yN = gridGen.GetNodes(0.0, width[1], config["Grid"]["yNum"], T)
 
-xGrid, dx = gridGen.GetGrid(config["Grid"]["origin"][0],
-                            config["Grid"]["xWidth"],
-                            config["Grid"]["xNum"], 
-                            config["Grid"]["xType"],
-                            config["Grid"]["zStretching"],
-                            False)
+T["type"] = "Uniform"
+zN = gridGen.GetNodes(0.0, width[2], config["Grid"]["zNum"], T)
 
+def xNodes(i):
+   return xN[i]
 
-yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
-                            config["Grid"]["yWidth"],
-                            config["Grid"]["yNum"], 
-                            config["Grid"]["yType"],
-                            config["Grid"]["yStretching"],
-                            False)#,
-                            #deltaNu*yPlus)
+def yNodes(j):
+   return yN[j]
 
-zGrid, dz = gridGen.GetGrid(config["Grid"]["origin"][2],
-                            config["Grid"]["zWidth"],
-                            config["Grid"]["zNum"], 
-                            config["Grid"]["zType"],
-                            config["Grid"]["zStretching"],
-                            True)
+def zNodes(k):
+   return zN[k]
 
-# Write config file
-json.dump(config, args.out_json, indent=3)
+xGrid, yGrid, zGrid, dx, dy, dz = gridGen.getCellCenters(config, xNodes=xNodes, yNodes=yNodes, zNodes=zNodes)
 
 print("        L_x        x          L_y        x          L_z")
 
-print(config["Grid"]["xWidth"]/deltaNu, " x ",
-      config["Grid"]["yWidth"]/deltaNu, " x ",
-      config["Grid"]["zWidth"]/deltaNu)
+print(width[0]/deltaNu, " x ",
+      width[1]/deltaNu, " x ",
+      width[2]/deltaNu)
 
 print(dx[0]/deltaNu, " x ",
-      dy[0]/deltaNu, " x ",
+      dy[1]/deltaNu, " x ",
       dz[0]/deltaNu)
 
-# Load mapping
-assert config["Mapping"]["tiles"][0] % config["Mapping"]["tilesPerRank"][0] == 0
-assert config["Mapping"]["tiles"][1] % config["Mapping"]["tilesPerRank"][1] == 0
-assert config["Mapping"]["tiles"][2] % config["Mapping"]["tilesPerRank"][2] == 0
-Ntiles = config["Mapping"]["tiles"]
-Ntiles[0] = int(Ntiles[0]/config["Mapping"]["tilesPerRank"][0])
-Ntiles[1] = int(Ntiles[1]/config["Mapping"]["tilesPerRank"][1])
-Ntiles[2] = int(Ntiles[2]/config["Mapping"]["tilesPerRank"][2])
-
-assert config["Grid"]["xNum"] % Ntiles[0] == 0 
-assert config["Grid"]["yNum"] % Ntiles[1] == 0
-assert config["Grid"]["zNum"] % Ntiles[2] == 0
-
-NxTile = int(config["Grid"]["xNum"]/Ntiles[0])
-NyTile = int(config["Grid"]["yNum"]/Ntiles[1])
-NzTile = int(config["Grid"]["zNum"]/Ntiles[2])
-
-halo = [1, 1, 0]
+##############################################################################
+# Write config file                                                          #
+##############################################################################
+json.dump(config, args.out_json, indent=3)
 
 ##############################################################################
 #                     Produce restart and profile files                      #
 ##############################################################################
-if not os.path.exists(restartDir):
-   os.makedirs(restartDir)
+def pressure(i, j, k):
+   return PInf
 
-def writeTile(xt, yt, zt):
-   lo_bound = [(xt  )*NxTile  +halo[0], (yt  )*NyTile  +halo[1], (zt  )*NzTile  +halo[2]]
-   hi_bound = [(xt+1)*NxTile-1+halo[0], (yt+1)*NyTile-1+halo[1], (zt+1)*NzTile-1+halo[2]]
-   if (xt == 0): lo_bound[0] -= halo[0]
-   if (yt == 0): lo_bound[1] -= halo[1]
-   if (zt == 0): lo_bound[2] -= halo[2]
-   if (xt == Ntiles[0]-1): hi_bound[0] += halo[0]
-   if (yt == Ntiles[1]-1): hi_bound[1] += halo[1]
-   if (zt == Ntiles[2]-1): hi_bound[2] += halo[2]
-   filename = ('%s,%s,%s-%s,%s,%s.hdf'
-      % (lo_bound[0],  lo_bound[1],  lo_bound[2],
-         hi_bound[0],  hi_bound[1],  hi_bound[2]))
-   print("Working on: ", filename)
+T = np.interp(yGrid, yBL, TBL)
+def temperature(i, j, k):
+   return T[j]
 
-   shape = [hi_bound[2] - lo_bound[2] +1,
-            hi_bound[1] - lo_bound[1] +1,
-            hi_bound[0] - lo_bound[0] +1]
+def MolarFracs(i, j, k):
+   return 1.0
 
-   centerCoordinates = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   cellWidth         = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   rho               = np.ndarray(shape)
-   pressure          = np.ndarray(shape)
-   temperature       = np.ndarray(shape)
-   MolarFracs        = np.ndarray(shape, dtype=np.dtype('(1,)f8'))
-   velocity_profile  = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   velocity          = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   dudtBoundary      = np.ndarray(shape, dtype=np.dtype('(3,)f8'))
-   dTdtBoundary      = np.ndarray(shape)
-   pressure[:] = PInf
-   dudtBoundary[:] = [0.0, 0.0, 0.0]
-   dTdtBoundary[:] = 0.0
-   for (k,kc) in enumerate(centerCoordinates):
-      for (j,jc) in enumerate(kc):
-         for (i,ic) in enumerate(jc):
+u = np.interp(yGrid, yBL, uBL)
+v = np.interp(yGrid, yBL, vBL)
+def velocity(i, j, k):
+   U = [u[j], v[j], 0.0]
+   if yGrid[j] < delta99In:
+      U[1] += SineAmp*UInf*np.sin(2.0*np.pi*zGrid[k]/width[2]*8)
+   return U
 
-            u = np.interp(yGrid[j+lo_bound[1]], yBL, uBL)
-            v = np.interp(yGrid[j+lo_bound[1]], yBL, vBL)
-            w = 0.0
-            T = np.interp(yGrid[j+lo_bound[1]], yBL, TBL)
+def velocity_profile(i, j, k):
+   return [u[j], v[j], 0.0]
 
-            centerCoordinates[k,j,i] = [xGrid[i+lo_bound[0]], yGrid[j+lo_bound[1]], zGrid[k+lo_bound[2]]]
-            cellWidth        [k,j,i] = [   dx[i+lo_bound[0]],    dy[j+lo_bound[1]],    dz[k+lo_bound[2]]]
-            temperature      [k,j,i] = T
-            rho              [k,j,i] = ConstPropMix.GetDensity(T, PInf, config)
-            MolarFracs       [k,j,i] = [1.0,]
-            velocity_profile [k,j,i] = [ u, v, w]
-            velocity         [k,j,i] = [ u, v, w]
-
-            if yGrid[j+lo_bound[1]] < delta99In:
-               velocity[k,j,i][1] += SineAmp*UInf*np.sin(2.0*np.pi*zGrid[k+lo_bound[2]]/config["Grid"]["zWidth"]*8)
-
-
-   with h5py.File(os.path.join(restartDir, filename), 'w') as fout:
-      fout.attrs.create("SpeciesNames", ["MIX".encode()], dtype="S20")
-      fout.attrs.create("timeStep", 0)
-      fout.attrs.create("simTime", 0.0)
-      fout.attrs.create("channelForcing", 0.0)
-
-      fout.create_dataset("centerCoordinates",     shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("cellWidth",             shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("rho",                   shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("pressure",              shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("temperature",           shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("MolarFracs",            shape=shape, dtype = np.dtype("(1,)f8"))
-      fout.create_dataset("velocity",              shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dudtBoundary",          shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("dTdtBoundary",          shape=shape, dtype = np.dtype("f8"))
-      fout.create_dataset("MolarFracs_profile",    shape=shape, dtype = np.dtype("(1,)f8"))
-      fout.create_dataset("velocity_profile",      shape=shape, dtype = np.dtype("(3,)f8"))
-      fout.create_dataset("temperature_profile",   shape=shape, dtype = np.dtype("f8"))
-      if (os.path.expandvars("$ELECTRIC_FIELD") == "1"):
-         fout.create_dataset("electricPotential",  shape=shape, dtype = np.dtype("f8"))
-
-      fout["centerCoordinates"][:] = centerCoordinates
-      fout["cellWidth"][:] = cellWidth
-      fout["rho"][:] = rho
-      fout["pressure"][:] = pressure
-      fout["temperature"][:] = temperature
-      fout["MolarFracs"][:] = MolarFracs
-      fout["velocity"][:] = velocity
-      fout["dudtBoundary"][:] = dudtBoundary
-      fout["dTdtBoundary"][:] = dTdtBoundary
-      fout["MolarFracs_profile"][:] = MolarFracs
-      fout["velocity_profile"][:] = velocity_profile
-      fout["temperature_profile"][:] = temperature
-
-for x, y, z in np.ndindex((Ntiles[0], Ntiles[1], Ntiles[2])): writeTile(x, y, z)
+restart = HTRrestart.HTRrestart(config)
+restart.write(restartDir, 1,
+              pressure,
+              temperature,
+              MolarFracs,
+              velocity,
+              T_p = temperature,
+              Xi_p = MolarFracs,
+              U_p = velocity_profile)
 

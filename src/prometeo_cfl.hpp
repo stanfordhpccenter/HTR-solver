@@ -57,10 +57,8 @@ public:
    struct Args {
       uint64_t arg_mask[1];
       LogicalRegion Fluid;
-      LogicalRegion ModCells;
       Mix mix;
       FieldID Fluid_fields      [FID_last - 101];
-      FieldID ModCells_fields   [FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;
@@ -70,54 +68,60 @@ public:
    static const int MAPPER_ID = 0;
 private:
    __CUDA_H__
-   static inline double CalculateConvectiveSpectralRadius(const   Vec3 &cellWidth,
-                                                          const   Vec3 &velocity,
-                                                          const double SoS) {
-      double r = 0.0; // Spectral radius cannot be lower than 0
-      __UNROLL__
-      for (int i = 0; i < 3; i++)
-         r = max(r, (fabs(velocity[i]) + SoS)/cellWidth[i]);
+   static inline double CalculateConvectiveSpectralRadius(const   Vec3 &velocity,
+                                                          const double SoS,
+                                                          const double dcsi,
+                                                          const double deta,
+                                                          const double dzet) {
+      double r = (fabs(velocity[0]) + SoS)*dcsi;
+      r = max(r, (fabs(velocity[1]) + SoS)*deta);
+      r = max(r, (fabs(velocity[2]) + SoS)*dzet);
       return r;
    };
 
    __CUDA_H__
-   static inline double CalculateViscousSpectralRadius(const   Vec3 &cellWidth,
-                                                       const double rho,
-                                                       const double mu) {
+   static inline double CalculateViscousSpectralRadius(const double rho,
+                                                       const double mu,
+                                                       const double dcsi,
+                                                       const double deta,
+                                                       const double dzet) {
       const double nu = mu/rho;
-      double r = 0.0; // Spectral radius cannot be lower than 0
-      __UNROLL__
-      for (int i = 0; i < 3; i++)
-         r = max(r, nu/(cellWidth[i]*cellWidth[i]));
+      double r = nu*dcsi*dcsi;
+      r = max(r, nu*deta*deta);
+      r = max(r, nu*dzet*dzet);
       r *= 4;
       return r;
    };
 
    __CUDA_H__
-   static inline double CalculateHeatConductionSpectralRadius(const   Vec3 &cellWidth,
-                                                              const double temperature,
+   static inline double CalculateHeatConductionSpectralRadius(const double temperature,
                                                               const VecNSp &MassFracs,
                                                               const double rho,
                                                               const double lam,
+                                                              const double dcsi,
+                                                              const double deta,
+                                                              const double dzet,
                                                               const    Mix &mix) {
       const double cp = mix.GetHeatCapacity(temperature, MassFracs);
       const double DifT = lam/(cp*rho);
-      double r = 0.0; // Spectral radius cannot be lower than 0
-      __UNROLL__
-      for (int i = 0; i < 3; i++)
-         r = max(r, DifT/(cellWidth[i]*cellWidth[i]));
+      double r = DifT*dcsi*dcsi;
+      r = max(r, DifT*deta*deta);
+      r = max(r, DifT*dzet*dzet);
       r *= 4;
       return r;
    };
 
    __CUDA_H__
-   static inline double CalculateSpeciesDiffusionSpectralRadius(const   Vec3 &cellWidth,
-                                                                const VecNSp &Di) {
+   static inline double CalculateSpeciesDiffusionSpectralRadius(const VecNSp &Di,
+                                                                const double dcsi,
+                                                                const double deta,
+                                                                const double dzet) {
       double r = 0.0; // Spectral radius cannot be lower than 0
-      for (int s = 0; s < nSpec; s++)
-         __UNROLL__
-         for (int i = 0; i < 3; i++)
-            r = max(r, Di[s]/(cellWidth[i]*cellWidth[i]));
+      for (int s = 0; s < nSpec; s++) {
+         r = max(r, Di[s]*dcsi*dcsi);
+         r = max(r, Di[s]*deta*deta);
+         r = max(r, Di[s]*dzet*dzet);
+      }
       r *= 4;
       return r;
    };
@@ -125,12 +129,13 @@ private:
 #if (defined(ELECTRIC_FIELD) && (nIons > 0))
    __CUDA_H__
    static inline double CalculateSpeciesDriftSpectralRadius(const   Vec3 &eField,
-                                                            const   Vec3 &cellWidth,
-                                                            const VecNIo &Ki) {
-      double r = 0.0; // Spectral radius cannot be lower than 0
-      __UNROLL__
-      for (int i = 0; i < 3; i++)
-         r = max(r, fabs(eField[i])/cellWidth[i]);
+                                                            const VecNIo &Ki,
+                                                            const double dcsi,
+                                                            const double deta,
+                                                            const double dzet) {
+      double r = fabs(eField[0])*dcsi;
+      r = max(r, fabs(eField[1])*deta);
+      r = max(r, fabs(eField[2])*dzet);
       // Compute the maximum electric mobility
       double Kimax = 0.0;
       __UNROLL__
@@ -143,7 +148,9 @@ private:
 
 public:
    __CUDA_H__
-   static inline double CalculateMaxSpectralRadius(const AccessorRO<  Vec3, 3> &cellWidth,
+   static inline double CalculateMaxSpectralRadius(const AccessorRO<double, 3> &dcsi,
+                                                   const AccessorRO<double, 3> &deta,
+                                                   const AccessorRO<double, 3> &dzet,
                                                    const AccessorRO<double, 3> &temperature,
                                                    const AccessorRO<VecNSp, 3> &MassFracs,
                                                    const AccessorRO<  Vec3, 3> &velocity,
@@ -158,15 +165,14 @@ public:
 #endif
                                                    const Point<3> &p,
                                                    const      Mix &mix) {
-      double r = 0.0; // Spectral radius cannot be lower than 0
-      r = max(r, CalculateConvectiveSpectralRadius(cellWidth[p], velocity[p], SoS[p]));
-      r = max(r, CalculateViscousSpectralRadius(cellWidth[p], rho[p], mu[p]));
-      r = max(r, CalculateHeatConductionSpectralRadius(cellWidth[p],
-                                                       temperature[p], MassFracs[p],
-                                                       rho[p], lam[p], mix));
-      r = max(r, CalculateSpeciesDiffusionSpectralRadius(cellWidth[p], Di[p]));
+      double r = CalculateConvectiveSpectralRadius(velocity[p], SoS[p], dcsi[p], deta[p], dzet[p]);
+      r = max(r, CalculateViscousSpectralRadius(rho[p], mu[p], dcsi[p], deta[p], dzet[p]));
+      r = max(r, CalculateHeatConductionSpectralRadius(temperature[p], MassFracs[p],
+                                                       rho[p], lam[p],
+                                                       dcsi[p], deta[p], dzet[p], mix));
+      r = max(r, CalculateSpeciesDiffusionSpectralRadius(Di[p], dcsi[p], deta[p], dzet[p]));
 #if (defined(ELECTRIC_FIELD) && (nIons > 0))
-      r = max(r, CalculateSpeciesDriftSpectralRadius(eField[p], cellWidth[p], Ki[p]));
+      r = max(r, CalculateSpeciesDriftSpectralRadius(eField[p], Ki[p], dcsi[p], deta[p], dzet[p]));
 #endif
       return r;
    }

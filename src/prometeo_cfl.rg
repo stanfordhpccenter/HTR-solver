@@ -49,10 +49,9 @@ if (ELECTRIC_FIELD and (MIX.nIons > 0)) then
    Vars:insert("electricField")
 end
 extern task Exports.CalculateMaxSpectralRadius(Fluid : region(ispace(int3d), Fluid_columns),
-                                               ModCells : region(ispace(int3d), Fluid_columns),
                                                mix : MIX.Mixture) : double
 where
-   reads(Fluid.cellWidth),
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
    reads(Fluid.[Prop]),
    reads(Fluid.[Vars])
 end

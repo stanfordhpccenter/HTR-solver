@@ -85,8 +85,8 @@ inline void UpdateUsingIonDriftFluxTask<dir>::GetIonDriftFlux(
       }
       // Reconstruct with TENO-A and combine
       Flux[ind] = -0.5*(
-            TENOA_Op::reconstructPlus( FluxP[0], FluxP[1], FluxP[2], FluxP[3], FluxP[4], FluxP[5], nType) +
-            TENOA_Op::reconstructMinus(FluxM[0], FluxM[1], FluxM[2], FluxM[3], FluxM[4], FluxM[5], nType));
+            TENO_Op<-60>::reconstructPlus( FluxP[0], FluxP[1], FluxP[2], FluxP[3], FluxP[4], FluxP[5], nType) +
+            TENO_Op<-60>::reconstructMinus(FluxM[0], FluxM[1], FluxM[2], FluxM[3], FluxM[4], FluxM[5], nType));
       // Store correction
       rhoYiViCorr += Flux[ind];
    }

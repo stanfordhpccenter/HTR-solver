@@ -84,7 +84,7 @@ void UpdatePropertiesFromPrimitiveTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for primitive variables
@@ -106,14 +106,14 @@ void UpdatePropertiesFromPrimitiveTask::gpu_base_impl(
 #endif
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_Fluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_ModCells);
-   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_ModCells) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                   (getSize<Ydir>(r_ModCells) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                   (getSize<Zdir>(r_ModCells) + (TPB_3d.z - 1)) / TPB_3d.z);
+   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_Fluid);
+   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_Fluid) + (TPB_3d.x - 1)) / TPB_3d.x,
+                                   (getSize<Ydir>(r_Fluid) + (TPB_3d.y - 1)) / TPB_3d.y,
+                                   (getSize<Zdir>(r_Fluid) + (TPB_3d.z - 1)) / TPB_3d.z);
    UpdatePropertiesFromPrimitive_kernel<<<num_blocks_3d, TPB_3d>>>(
                         acc_pressure, acc_temperature, acc_MolarFracs,
                         acc_velocity, acc_MassFracs,
@@ -121,7 +121,7 @@ void UpdatePropertiesFromPrimitiveTask::gpu_base_impl(
 #if (defined(ELECTRIC_FIELD) && (nIons > 0))
                         acc_Ki,
 #endif
-                        r_ModCells, getSize<Xdir>(r_ModCells), getSize<Ydir>(r_ModCells), getSize<Zdir>(r_ModCells));
+                        r_Fluid, getSize<Xdir>(r_Fluid), getSize<Ydir>(r_Fluid), getSize<Zdir>(r_Fluid));
 }
 
 //-----------------------------------------------------------------------------
@@ -163,7 +163,7 @@ void UpdateConservedFromPrimitiveTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for primitive variables
@@ -178,10 +178,10 @@ void UpdateConservedFromPrimitiveTask::gpu_base_impl(
    const AccessorWO<VecNEq, 3> acc_Conserved        (regions[1], FID_Conserved);
 
    // Extract execution domains
-   Domain r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Domain r_Fluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel (launch domain might be composed by multiple rectangles)
-   for (RectInDomainIterator<3> Rit(r_ModCells); Rit(); Rit++) {
+   for (RectInDomainIterator<3> Rit(r_Fluid); Rit(); Rit++) {
       const int threads_per_block = 256;
       const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, (*Rit));
       const dim3 num_blocks_3d = dim3((getSize<Xdir>(*Rit) + (TPB_3d.x - 1)) / TPB_3d.x,
@@ -231,7 +231,7 @@ void UpdatePrimitiveFromConservedTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for conserved variables
@@ -246,193 +246,17 @@ void UpdatePrimitiveFromConservedTask::gpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_velocity         (regions[1], FID_velocity);
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_Fluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_ModCells);
-   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_ModCells) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                   (getSize<Ydir>(r_ModCells) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                   (getSize<Zdir>(r_ModCells) + (TPB_3d.z - 1)) / TPB_3d.z);
+   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_Fluid);
+   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_Fluid) + (TPB_3d.x - 1)) / TPB_3d.x,
+                                   (getSize<Ydir>(r_Fluid) + (TPB_3d.y - 1)) / TPB_3d.y,
+                                   (getSize<Zdir>(r_Fluid) + (TPB_3d.z - 1)) / TPB_3d.z);
    UpdatePrimitiveFromConserved_kernel<<<num_blocks_3d, TPB_3d>>>(
                         acc_Conserved, acc_temperature, acc_pressure,
-                        acc_MolarFracs, acc_velocity, r_ModCells,
-                        getSize<Xdir>(r_ModCells), getSize<Ydir>(r_ModCells), getSize<Zdir>(r_ModCells));
+                        acc_MolarFracs, acc_velocity, r_Fluid,
+                        getSize<Xdir>(r_Fluid), getSize<Ydir>(r_Fluid), getSize<Zdir>(r_Fluid));
 }
 
-//-----------------------------------------------------------------------------
-// KERNELS FOR GetVelocityGradientsTask
-//-----------------------------------------------------------------------------
-
-__global__
-void GetVelocityGradients_kernel(const AccessorWO<  Vec3, 3>   vGradX,
-                                 const AccessorWO<  Vec3, 3>   vGradY,
-                                 const AccessorWO<  Vec3, 3>   vGradZ,
-                                 const AccessorRO<  Vec3, 3> velocity,
-                                 const AccessorRO<   int, 3>  nType_x,
-                                 const AccessorRO<   int, 3>  nType_y,
-                                 const AccessorRO<   int, 3>  nType_z,
-                                 const AccessorRO<double, 3>   dcsi_d,
-                                 const AccessorRO<double, 3>   deta_d,
-                                 const AccessorRO<double, 3>   dzet_d,
-                                 const Rect<3> my_bounds,
-                                 const Rect<3> Fluid_bounds,
-                                 const coord_t  size_x,
-                                 const coord_t  size_y,
-                                 const coord_t  size_z,
-                                 const coord_t dsize_x,
-                                 const coord_t dsize_y,
-                                 const coord_t dsize_z)
-{
-   int x = blockIdx.x * blockDim.x + threadIdx.x;
-   int y = blockIdx.y * blockDim.y + threadIdx.y;
-   int z = blockIdx.z * blockDim.z + threadIdx.z;
-
-   if ((x < size_x) && (y < size_y) && (z < size_z)) {
-      const Point<3> p = Point<3>(x + my_bounds.lo.x,
-                                  y + my_bounds.lo.y,
-                                  z + my_bounds.lo.z);
-      // X gradient
-      GetVelocityGradientsTask::computeDerivatives<Xdir>(vGradX, velocity, p, nType_x[p], dcsi_d[p], dsize_x, Fluid_bounds);
-      // Y gradient
-      GetVelocityGradientsTask::computeDerivatives<Ydir>(vGradY, velocity, p, nType_y[p], deta_d[p], dsize_y, Fluid_bounds);
-      // Z gradient
-      GetVelocityGradientsTask::computeDerivatives<Zdir>(vGradZ, velocity, p, nType_z[p], dzet_d[p], dsize_z, Fluid_bounds);
-   }
-}
-
-__host__
-void GetVelocityGradientsTask::gpu_base_impl(
-                      const Args &args,
-                      const std::vector<PhysicalRegion> &regions,
-                      const std::vector<Future>         &futures,
-                      Context ctx, Runtime *runtime)
-{
-   assert(regions.size() == 3);
-   assert(futures.size() == 0);
-
-   // Accessors for variables in the Ghost regions
-   const AccessorRO<  Vec3, 3> acc_velocity         (regions[0], FID_velocity);
-
-   // Accessors for metrics
-   const AccessorRO<   int, 3> acc_nType_x          (regions[1], FID_nType_x);
-   const AccessorRO<   int, 3> acc_nType_y          (regions[1], FID_nType_y);
-   const AccessorRO<   int, 3> acc_nType_z          (regions[1], FID_nType_z);
-   const AccessorRO<double, 3> acc_dcsi_d           (regions[1], FID_dcsi_d);
-   const AccessorRO<double, 3> acc_deta_d           (regions[1], FID_deta_d);
-   const AccessorRO<double, 3> acc_dzet_d           (regions[1], FID_dzet_d);
-
-   // Accessors for gradients
-   const AccessorWO<  Vec3, 3> acc_vGradX           (regions[2], FID_velocityGradientX);
-   const AccessorWO<  Vec3, 3> acc_vGradY           (regions[2], FID_velocityGradientY);
-   const AccessorWO<  Vec3, 3> acc_vGradZ           (regions[2], FID_velocityGradientZ);
-
-   // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
-   Rect<3> Fluid_bounds = args.Fluid_bounds;
-
-   // Get domain sizes
-   const coord_t xsize = getSize<Xdir>(Fluid_bounds);
-   const coord_t ysize = getSize<Ydir>(Fluid_bounds);
-   const coord_t zsize = getSize<Zdir>(Fluid_bounds);
-
-   // Launch the kernel
-   const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
-   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                   (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                   (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
-   GetVelocityGradients_kernel<<<num_blocks_3d, TPB_3d>>>(
-                        acc_vGradX, acc_vGradY, acc_vGradZ, acc_velocity,
-                        acc_nType_x, acc_nType_y, acc_nType_z,
-                        acc_dcsi_d, acc_deta_d, acc_dzet_d,
-                        r_MyFluid, Fluid_bounds,
-                        getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid),
-                        xsize, ysize, zsize);
-}
-
-#if 0
-//-----------------------------------------------------------------------------
-// KERNELS FOR GetTemperatureGradientTask
-//-----------------------------------------------------------------------------
-
-__global__
-void GetTemperatureGradient_kernel(const AccessorWO<  Vec3, 3>       tGrad,
-                                   const AccessorRO<double, 3> temperature,
-                                   const AccessorRO<   int, 3>     nType_x,
-                                   const AccessorRO<   int, 3>     nType_y,
-                                   const AccessorRO<   int, 3>     nType_z,
-                                   const AccessorRO<double, 3>      dcsi_d,
-                                   const AccessorRO<double, 3>      deta_d,
-                                   const AccessorRO<double, 3>      dzet_d,
-                                   const Rect<3> my_bounds,
-                                   const Rect<3> Fluid_bounds,
-                                   const coord_t  size_x,
-                                   const coord_t  size_y,
-                                   const coord_t  size_z,
-                                   const coord_t dsize_x,
-                                   const coord_t dsize_y,
-                                   const coord_t dsize_z)
-{
-   int x = blockIdx.x * blockDim.x + threadIdx.x;
-   int y = blockIdx.y * blockDim.y + threadIdx.y;
-   int z = blockIdx.z * blockDim.z + threadIdx.z;
-
-   if ((x < size_x) && (y < size_y) && (z < size_z)) {
-      const Point<3> p = Point<3>(x + my_bounds.lo.x,
-                                  y + my_bounds.lo.y,
-                                  z + my_bounds.lo.z);
-      tGrad[p][0] = GetTemperatureGradientTask::computeDerivative<Xdir>(temperature, p, nType_x[p], dcsi_d[p], dsize_x, Fluid_bounds);
-      tGrad[p][1] = GetTemperatureGradientTask::computeDerivative<Ydir>(temperature, p, nType_y[p], deta_d[p], dsize_y, Fluid_bounds);
-      tGrad[p][2] = GetTemperatureGradientTask::computeDerivative<Zdir>(temperature, p, nType_z[p], dzet_d[p], dsize_z, Fluid_bounds);
-   }
-}
-
-__host__
-void GetTemperatureGradientTask::gpu_base_impl(
-                      const Args &args,
-                      const std::vector<PhysicalRegion> &regions,
-                      const std::vector<Future>         &futures,
-                      Context ctx, Runtime *runtime)
-{
-   assert(regions.size() == 3);
-   assert(futures.size() == 0);
-
-   // Accessors for variables in the Ghost regions
-   const AccessorRO<double, 3> acc_temperature      (regions[0], FID_temperature);
-
-   // Accessors for metrics
-   const AccessorRO<   int, 3> acc_nType_x          (regions[1], FID_nType_x);
-   const AccessorRO<   int, 3> acc_nType_y          (regions[1], FID_nType_y);
-   const AccessorRO<   int, 3> acc_nType_z          (regions[1], FID_nType_z);
-   const AccessorRO<double, 3> acc_dcsi_d           (regions[1], FID_dcsi_d);
-   const AccessorRO<double, 3> acc_deta_d           (regions[1], FID_deta_d);
-   const AccessorRO<double, 3> acc_dzet_d           (regions[1], FID_dzet_d);
-
-   // Accessors for gradients
-   const AccessorWO<  Vec3, 3> acc_tGrad            (regions[2], FID_temperatureGradient);
-
-   // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
-   Rect<3> Fluid_bounds = args.Fluid_bounds;
-
-   // Get domain sizes
-   const coord_t xsize = getSize<Xdir>(Fluid_bounds);
-   const coord_t ysize = getSize<Ydir>(Fluid_bounds);
-   const coord_t zsize = getSize<Zdir>(Fluid_bounds);
-
-   // Launch the kernel
-   const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
-   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                   (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                   (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
-   GetTemperatureGradient_kernel<<<num_blocks_3d, TPB_3d>>>(
-                        acc_tGrad, acc_temperature,
-                        acc_nType_x, acc_nType_y, acc_nType_z,
-                        acc_dcsi_d, acc_deta_d, acc_dzet_d,
-                        r_MyFluid, Fluid_bounds,
-                        getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid),
-                        xsize, ysize, zsize);
-}
-#endif

@@ -69,7 +69,7 @@ void UpdateChemistryTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 1);
 
    // Accessors for RHS
@@ -81,20 +81,20 @@ void UpdateChemistryTask::gpu_base_impl(
    const AccessorRW<double, 3> acc_temperature      (regions[1], FID_temperature);
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Wait for the Integrator_deltaTime
    const double Integrator_deltaTime = futures[0].get_result<double>();
 
    // Launch the kernel
    const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_ModCells);
-   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_ModCells) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                   (getSize<Ydir>(r_ModCells) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                   (getSize<Zdir>(r_ModCells) + (TPB_3d.z - 1)) / TPB_3d.z);
+   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
+   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
+                                   (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
+                                   (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
    UpdateChemistry_kernel<<<num_blocks_3d, TPB_3d>>>(
                         acc_Conserved_t, acc_Conserved, acc_Conserved_t_old, acc_temperature, Integrator_deltaTime,
-                        r_ModCells, getSize<Xdir>(r_ModCells), getSize<Ydir>(r_ModCells), getSize<Zdir>(r_ModCells));
+                        r_MyFluid, getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
 }
 
 
@@ -135,7 +135,7 @@ void AddChemistrySourcesTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for primitive variables and properites
@@ -148,16 +148,16 @@ void AddChemistrySourcesTask::gpu_base_impl(
    const AccessorRW<VecNEq, 3> acc_Conserved_t      (regions[1], FID_Conserved_t);
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel
    const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_ModCells);
-   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_ModCells) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                   (getSize<Ydir>(r_ModCells) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                   (getSize<Zdir>(r_ModCells) + (TPB_3d.z - 1)) / TPB_3d.z);
+   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
+   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
+                                   (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
+                                   (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
    AddChemistrySources_kernel<<<num_blocks_3d, TPB_3d>>>(
                         acc_rho, acc_pressure, acc_temperature, acc_MassFracs, acc_Conserved_t,
-                        r_ModCells, getSize<Xdir>(r_ModCells), getSize<Ydir>(r_ModCells), getSize<Zdir>(r_ModCells));
+                        r_MyFluid, getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
 }
 

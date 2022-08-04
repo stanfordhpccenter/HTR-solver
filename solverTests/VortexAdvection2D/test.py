@@ -14,4 +14,7 @@ class unitTest(unittest.TestCase, testAll.Test2DTiledBase):
       return subprocess.check_output([testAll.executable, "-i", name+".json", "-o", name])
 
 if __name__ == "__main__":
+   # Get reference data
+   testAll.downloadRefData()
+   # Run the test
    unittest.main()

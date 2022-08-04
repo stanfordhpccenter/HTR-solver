@@ -6,8 +6,8 @@ import "regent"
 local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local SCHEMA = terralib.includec("config_schema.h")
-local REGISTRAR = terralib.includec("prometeo_cfl.h")
-local UTIL = require 'util-desugared'
+local REGISTRAR = terralib.includec("registrar.h")
+local UTIL = require 'util'
 
 local Config = SCHEMA.Config
 
@@ -40,7 +40,9 @@ task InitializeCell(Fluid : region(ispace(int3d), Fluid_columns))
 where
    writes(Fluid)
 do
-   fill(Fluid.cellWidth, array(1.0, 1.0, 1.0))
+   fill(Fluid.dcsi_d, 1.0)
+   fill(Fluid.deta_d, 1.0)
+   fill(Fluid.dzet_d, 1.0)
    fill(Fluid.temperature, 0.0)
    fill(Fluid.MassFracs,  [UTIL.mkArrayConstant(nSpec, rexpr 1.0 end)])
    fill(Fluid.MolarFracs, [UTIL.mkArrayConstant(nSpec, rexpr 1.0 end)])
@@ -54,19 +56,19 @@ end
 
 task main()
 
+   -- Define the domain
+   var is_Fluid = ispace(int3d, {2, 2, 2})
+   var Fluid = region(is_Fluid, Fluid_columns)
+   var tiles = ispace(int3d, {2, 2, 2})
+   var p_All = partition(equal, Fluid, tiles)
+
    -- Init the mixture
    var config : Config
    config.Flow.mixture.type = SCHEMA.MixtureModel_ConstPropMix
    config.Flow.mixture.u.ConstPropMix.gasConstant = 1.0
    config.Flow.mixture.u.ConstPropMix.gamma = 1.4
 
-   var Mix = MIX.InitMixtureStruct(config)
-
-   -- Define the domain
-   var is_Fluid = ispace(int3d, {2, 2, 2})
-   var Fluid = region(is_Fluid, Fluid_columns)
-   var tiles = ispace(int3d, {2, 2, 2})
-   var p_All = partition(equal, Fluid, tiles)
+   var Mix = MIX.InitMixture(Fluid, tiles, p_All, config)
 
    InitializeCell(Fluid)
 
@@ -76,7 +78,7 @@ task main()
    var s = 0.0
    __demand(__index_launch)
    for c in tiles do
-      s max= CFL.CalculateMaxSpectralRadius(p_All[c], p_All[c], Mix)
+      s max= CFL.CalculateMaxSpectralRadius(p_All[c], Mix)
    end
    regentlib.assert(fabs(s/11.0 - 1.0) < 1e-3, "cflTest: ERROR in acustic cfl calculation")
    fill(Fluid.velocity,  array(0.0, 0.0, 0.0))
@@ -86,7 +88,7 @@ task main()
    s = 0.0
    __demand(__index_launch)
    for c in tiles do
-      s max= CFL.CalculateMaxSpectralRadius(p_All[c], p_All[c], Mix)
+      s max= CFL.CalculateMaxSpectralRadius(p_All[c], Mix)
    end
    regentlib.assert(fabs(s/40.0 - 1.0) < 1e-3, "cflTest: ERROR in momentum diffusion cfl calculation")
    fill(Fluid.mu, 0.0)
@@ -96,7 +98,7 @@ task main()
    s = 0.0
    __demand(__index_launch)
    for c in tiles do
-      s max= CFL.CalculateMaxSpectralRadius(p_All[c], p_All[c], Mix)
+      s max= CFL.CalculateMaxSpectralRadius(p_All[c], Mix)
    end
    regentlib.assert(fabs(s/11.42857 - 1.0) < 1e-3, "cflTest: ERROR in energy diffusion cfl calculation")
    fill(Fluid.lam, 0.0)
@@ -106,7 +108,7 @@ task main()
    s = 0.0
    __demand(__index_launch)
    for c in tiles do
-      s max= CFL.CalculateMaxSpectralRadius(p_All[c], p_All[c], Mix)
+      s max= CFL.CalculateMaxSpectralRadius(p_All[c], Mix)
    end
    regentlib.assert(fabs(s/40.0 - 1.0) < 1e-3, "cflTest: ERROR in species diffusion cfl calculation")
    fill(Fluid.Di, [UTIL.mkArrayConstant(nSpec, rexpr 0.0 end)])
@@ -122,4 +124,4 @@ end
 -- COMPILATION CALL
 -------------------------------------------------------------------------------
 
-regentlib.saveobj(main, "cflTest.o", "object", REGISTRAR.register_cfl_tasks)
+regentlib.saveobj(main, "cflTest.o", "object", REGISTRAR.register_tasks)

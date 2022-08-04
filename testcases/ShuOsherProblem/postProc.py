@@ -57,11 +57,9 @@ def process(case, i):
       data = json.load(f)
 
    xNum = data["Grid"]["xNum"]
-   xWidth  = data["Grid"]["xWidth"]
+   xWidth  = data["Grid"]["GridInput"]["width"][0]
 
-   dt    = data["Integrator"]["fixedDeltaTime"]
    nstep = data["Integrator"]["maxIter"]
-   time = dt*nstep
 
    filename = os.path.join(dir_name, str(case)+'/sample0/fluid_iter'+str(nstep).zfill(10)+'/0,0,0-'+str(case+1)+',0,0.hdf')
    hdf_filename = filename
@@ -74,7 +72,6 @@ def process(case, i):
 
    # Get the data
    x   = f['centerCoordinates'][0,0,:][:,0]
-   dx  = f['cellWidth'        ][0,0,:][:,0]
    u   = f['velocity'         ][0,0,:][:,0]
    p   = f['pressure'         ][0,0,:]
    rho = f['rho'              ][0,0,:]
@@ -85,7 +82,7 @@ def process(case, i):
    ##############################################################################
    #                                     Plot                                   #
    ##############################################################################
-   
+
    plt.figure(1+i*4)
    plt.plot(xExact, uExact,  '-k', label='Reference solution')
    plt.plot(     x,      u, '-ob', label='HTR solver', markersize=4.5)
@@ -101,7 +98,7 @@ def process(case, i):
    plt.ylabel(r'$P$', fontsize = 20)
    plt.legend()
    plt.savefig('Pressure_'+str(case)+'.eps', bbox_inches='tight')
-   
+
    plt.figure(3+i*4)
    plt.plot(xExact, rhoExact, '-k', label='Reference solution')
    plt.plot(     x,     rho, '-ob', label='HTR solver', markersize=4.5)
@@ -109,7 +106,7 @@ def process(case, i):
    plt.ylabel(r'$\rho$', fontsize = 20)
    plt.legend()
    plt.savefig('Density_'+str(case)+'.eps', bbox_inches='tight')
-   
+
    plt.figure(4+i*4)
    plt.plot(xExact, rhoExact, '-k', label='Reference solution')
    plt.plot(     x,     rho, '-ob', label='HTR solver', markersize=4.5)

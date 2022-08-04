@@ -70,8 +70,8 @@ with open('out_fluid.xmf', 'w') as xmf_out:
    SpeciesNames = avg.SpeciesNames
 
    # Extract domain size.
-   nx = avg.shape[0]
-   ny = avg.shape[1]
+   nx = avg.centerCoordinates.shape[0]
+   ny = avg.centerCoordinates.shape[1]
 
    # Generate grid file if it does not exist
    gridfile = os.path.join(out_dir, "grid.hdf")

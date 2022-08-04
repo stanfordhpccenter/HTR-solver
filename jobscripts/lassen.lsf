@@ -1,16 +1,21 @@
 #!/bin/bash -eu
 #BSUB -J prometeo
-##BSUB -alloc_flags smt1
+#BSUB -alloc_flags atsdisable
 
 CORES_PER_NODE=40
 NUMA_PER_RANK=4
 RAM_PER_NODE=200000
 GPUS_PER_NODE=4
 FB_PER_GPU=14000
+
+# Use hyperthreading for the runtime
+IO_THREADS="${IO_THREADS:-4}"
+UTIL_THREADS="${UTIL_THREADS:-4}"
+BGWORK_THREADS="${BGWORK_THREADS:-16}"
+
 source "$HTR_DIR"/jobscripts/jobscript_shared.sh
 GPUS_PER_RANK="${GPUS_PER_RANK:-0}"
 
-export GASNET_NUM_QPS=1
 jsrun -n "$NUM_RANKS" -r "$RANKS_PER_NODE" -a 1 -c "$CORES_PER_RANK" -g "$GPUS_PER_RANK" -b rs \
     $COMMAND
 

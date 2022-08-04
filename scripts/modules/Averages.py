@@ -93,27 +93,22 @@ class avg2D:
 
       self.SpeciesNames = f.attrs.get("SpeciesNames")
 
-      if symmetric : self.avgYSymmetric()
+      if symmetric: self.avgYSymmetric()
+
+      # Divide by the average weight
+      for a in vars(self):
+         attr = getattr(self, a)
+         if ((type(attr)==np.ndarray) and (attr.dtype == "float64")):
+            if   len(attr.shape) == 1:
+               attr /= weight
+            elif len(attr.shape) == 2:
+               for i in range(attr.shape[-1]):
+                  attr[:,i] /= weight
+            else:
+               # We should never get here
+               assert False
 
       # Complete average process
-      for i in range(3):
-         self.centerCoordinates[:,i] /= weight
-
-      self.pressure_avg         /= weight
-      self.pressure_rms         /= weight
-      self.temperature_avg      /= weight
-      self.temperature_rms      /= weight
-      for i in range(3):
-         self.velocity_avg[:,i] /= weight
-         self.velocity_rms[:,i] /= weight
-         self.velocity_rey[:,i] /= weight
-
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.MolarFracs_avg[:,isp] /= weight
-         self.MolarFracs_rms[:,isp] /= weight
-         self.MassFracs_avg[ :,isp] /= weight
-         self.MassFracs_rms[ :,isp] /= weight
-
       self.pressure_rms    -=    self.pressure_avg**2
       self.temperature_rms -= self.temperature_avg**2
       self.MolarFracs_rms  -=  self.MolarFracs_avg**2
@@ -123,41 +118,10 @@ class avg2D:
       self.velocity_rey[:,1] -=  self.velocity_avg[:,0]*self.velocity_avg[:,2]
       self.velocity_rey[:,2] -=  self.velocity_avg[:,1]*self.velocity_avg[:,2]
 
-      self.rho_avg  /= weight
-      self.rho_rms  /= weight
-      self.mu_avg   /= weight
-      self.lam_avg  /= weight
-      self.SoS_avg  /= weight
-      self.cp_avg   /= weight
-      self.Ent_avg  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.Di_avg[:,isp] /= weight
-
       self.rho_rms = self.rho_rms - self.rho_avg**2
-
-      self.HeatReleaseRate_avg /= weight
-      self.HeatReleaseRate_rms /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.ProductionRates_avg[:,isp] /= weight
-         self.ProductionRates_rms[:,isp] /= weight
 
       self.ProductionRates_rms -= self.ProductionRates_avg**2
       self.HeatReleaseRate_rms -= self.HeatReleaseRate_avg**2
-
-      self.pressure_favg      /= weight
-      self.pressure_frms      /= weight
-      self.temperature_favg   /= weight
-      self.temperature_frms   /= weight
-      for i in range(3):
-         self.velocity_favg[:,i] /= weight
-         self.velocity_frms[:,i] /= weight
-         self.velocity_frey[:,i] /= weight
-
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.MolarFracs_favg[:,isp] /= weight
-         self.MolarFracs_frms[:,isp] /= weight
-         self.MassFracs_favg[ :,isp] /= weight
-         self.MassFracs_frms[ :,isp] /= weight
 
       self.pressure_frms    -=    self.pressure_favg**2/self.rho_avg[:]
       self.temperature_frms -= self.temperature_favg**2/self.rho_avg[:]
@@ -170,55 +134,8 @@ class avg2D:
       self.velocity_frey[:,1] -= self.velocity_favg[:,0]*self.velocity_favg[:,2]/self.rho_avg[:]
       self.velocity_frey[:,2] -= self.velocity_favg[:,1]*self.velocity_favg[:,2]/self.rho_avg[:]
 
-      self.mu_favg   /= weight
-      self.lam_favg  /= weight
-      self.SoS_favg  /= weight
-      self.cp_favg   /= weight
-      self.Ent_favg  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.Di_favg[:,isp] /= weight
-
-      for i in range(3):
-         self.rhoUUv[:,i]   /= weight
-         self.Up[:,i]       /= weight
-         self.utau_y[:,i]   /= weight
-         self.tauGradU[:,i] /= weight
-         self.pGradU[:,i]   /= weight
-
-      for i in range(6):
-         self.tau[:,i]      /= weight
-
-      for i in range(3):
-         self.q[:,i] /= weight
-
-      self.Pr     /= weight
-      self.Pr_rms /= weight
-      self.Ec     /= weight
-      self.Ec_rms /= weight
-      self.Ma     /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.Sc[:,isp] /= weight
-
       self.Pr_rms -= self.Pr**2
       self.Ec_rms -= self.Ec**2
-
-      for i in range(3):
-         self.uT_avg[:,i]  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.uYi_avg[:,isp] /= weight
-         self.vYi_avg[:,isp] /= weight
-         self.wYi_avg[:,isp] /= weight
-
-      for i in range(3):
-         self.uT_favg[:,i]  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.uYi_favg[:,isp] /= weight
-         self.vYi_favg[:,isp] /= weight
-         self.wYi_favg[:,isp] /= weight
-
-      if hasattr(self, "electricPotential_avg"):
-         self.electricPotential_avg /= weight
-         self.chargeDensity_avg     /= weight
 
    def avgYSymmetric(self):
       self.pressure_avg    = 0.5*(self.pressure_avg + self.pressure_avg[::-1])
@@ -329,52 +246,59 @@ class avg2D:
          self.chargeDensity_avg     = 0.5*(self.chargeDensity_avg     + self.chargeDensity_avg    [::-1])
 
 class avg1D:
+
+   # Utility that recombines the separate files into a single instance
    def parseTiles(self, dirname, plane):
-      # read tiles and join them
-      self.tiles = glob.glob(os.path.join(dirname,"*,"+str(plane)+".hdf"))
-      assert(self.tiles != 0)
-      self.lo_bound = [] # array(len(tiles), array(2,int))
-      self.hi_bound = [] # array(len(tiles), array(2,int))
-      for i, t in enumerate(self.tiles):
-         base = os.path.basename(t)
-         m = re.match(r'([0-9]+),([0-9]+),([0-9]+)-([0-9]+),([0-9]+),([0-9]+).hdf',
-                      base)
-         assert(m is not None)
-         assert(int(m.group(3)) == plane)
-         assert(int(m.group(6)) == plane)
-         self.lo_bound.append([int(m.group(1)), int(m.group(2))])
-         self.hi_bound.append([int(m.group(4)), int(m.group(5))])
+      # Check if we have a master file
+      self.masterFile = os.path.join(dirname, "master.hdf")
+      self.has_masterFile = os.path.exists(self.masterFile)
 
-      # Sanity checks
-      all_lo = [None, None] # array(2, array(len(tiles),int))
-      all_hi = [None, None] # array(2, array(len(tiles),int))
-      # bounds must be contiguous
-      for k in range(2):
-         all_lo[k] = sorted(set([c[k] for c in self.lo_bound]))
-         all_hi[k] = sorted(set([c[k] for c in self.hi_bound]))
-         assert len(all_lo[k]) == len(all_hi[k])
-         for (prev_hi,next_lo) in zip(all_hi[k][:-1],all_lo[k][1:]):
-            assert prev_hi == next_lo - 1
-      # Check that we have the files for each combination of bounds
-      for (x_lo,x_hi) in zip(all_lo[0],all_hi[0]):
-         for (y_lo,y_hi) in zip(all_lo[1],all_hi[1]):
-            found = False
-            for i in range(len(self.tiles)):
-               if (self.lo_bound[i][0] == x_lo and self.hi_bound[i][0] == x_hi and
-                   self.lo_bound[i][1] == y_lo and self.hi_bound[i][1] == y_hi):
-                  found = True
-                  break
-            assert found
+      if not self.has_masterFile:
+         # KEEP THIS CODE FOR BACKWARD COMPATIBILITY
+         # TODO: Eventually it will be removed
+         # read tiles and join them
+         self.tiles = glob.glob(os.path.join(dirname,"*,"+str(plane)+".hdf"))
+         assert(self.tiles != 0)
 
-      # combine data in a single data structure
-      self.shape = (all_hi[1][-1] - all_lo[1][0] + 1,
-                    all_hi[0][-1] - all_lo[0][0] + 1)
+         self.lo_bound = [] # array(len(tiles), array(2,int))
+         self.hi_bound = [] # array(len(tiles), array(2,int))
+         for i, t in enumerate(self.tiles):
+            base = os.path.basename(t)
+            m = re.match(r'([0-9]+),([0-9]+),([0-9]+)-([0-9]+),([0-9]+),([0-9]+).hdf',
+                         base)
+            assert(m is not None)
+            assert(int(m.group(3)) == plane)
+            assert(int(m.group(6)) == plane)
+            self.lo_bound.append([int(m.group(1)), int(m.group(2))])
+            self.hi_bound.append([int(m.group(4)), int(m.group(5))])
 
-   def __init__(self, dirname, plane):
+         # Sanity checks
+         all_lo = [None, None] # array(2, array(len(tiles),int))
+         all_hi = [None, None] # array(2, array(len(tiles),int))
+         # bounds must be contiguous
+         for k in range(2):
+            all_lo[k] = sorted(set([c[k] for c in self.lo_bound]))
+            all_hi[k] = sorted(set([c[k] for c in self.hi_bound]))
+            assert len(all_lo[k]) == len(all_hi[k])
+            for (prev_hi,next_lo) in zip(all_hi[k][:-1],all_lo[k][1:]):
+               assert prev_hi == next_lo - 1
+         # Check that we have the files for each combination of bounds
+         for (x_lo,x_hi) in zip(all_lo[0],all_hi[0]):
+            for (y_lo,y_hi) in zip(all_lo[1],all_hi[1]):
+               found = False
+               for i in range(len(self.tiles)):
+                  if (self.lo_bound[i][0] == x_lo and self.hi_bound[i][0] == x_hi and
+                      self.lo_bound[i][1] == y_lo and self.hi_bound[i][1] == y_hi):
+                     found = True
+                     break
+               assert found
 
-      # Parse input files
-      self.parseTiles(dirname, plane)
+         # combine data in a single data structure
+         self.shape = (all_hi[1][-1] - all_lo[1][0] + 1,
+                       all_hi[0][-1] - all_lo[0][0] + 1)
 
+   # Loads the average plane using the old restart format
+   def loadOldRestart(self):
       # Get the data
       with h5py.File(self.tiles[0], "r") as fin:
          self.SpeciesNames = fin.attrs.get("SpeciesNames")
@@ -547,25 +471,133 @@ class avg1D:
             self.electricPotential_avg[ind] = f["electricPotential_avg"][:][0,:,:]
             self.chargeDensity_avg[ind]     = f["chargeDensity_avg"    ][:][0,:,:]
 
+      # Divide by the average weight
+      for a in vars(self):
+         attr = getattr(self, a)
+         if ((type(attr)==np.ndarray) and (attr.dtype == "float64")):
+            if   len(attr.shape) == 2:
+               attr /= weight
+            elif len(attr.shape) == 3:
+               for i in range(attr.shape[-1]):
+                  attr[:,:,i] /= weight
+            else:
+               # We should never get here
+               assert False
+
+   # Loads the average plane using the new restart format
+   def loadNewRestart(self, plane):
+
+      # Get the data
+      with h5py.File(self.masterFile, "r") as f:
+         self.SpeciesNames = f.attrs.get("SpeciesNames")
+         self.nSpec = len(self.SpeciesNames)
+         hasElectric = ("electricPotential_avg" in f)
+
+         weight = f["weight"][:][plane,:,:]
+
+         self.centerCoordinates = f["centerCoordinates"][:][plane,:,:]
+
+         self.pressure_avg    = f["pressure_avg"][:][plane,:,:]
+         self.pressure_rms    = f["pressure_rms"][:][plane,:,:]
+         self.temperature_avg = f["temperature_avg"][:][plane,:,:]
+         self.temperature_rms = f["temperature_rms"][:][plane,:,:]
+         self.MolarFracs_avg  = f["MolarFracs_avg"][:][plane,:,:,:]
+         self.MolarFracs_rms  = f["MolarFracs_rms"][:][plane,:,:,:]
+         self.MassFracs_avg   = f["MassFracs_avg"][:][plane,:,:,:]
+         self.MassFracs_rms   = f["MassFracs_rms"][:][plane,:,:,:]
+         self.velocity_avg    = f["velocity_avg"][:][plane,:,:,:]
+         self.velocity_rms    = f["velocity_rms"][:][plane,:,:,:]
+         self.velocity_rey    = f["velocity_rey"][:][plane,:,:,:]
+
+         self.rho_avg = f["rho_avg"][:][plane,:,:]
+         self.rho_rms = f["rho_rms"][:][plane,:,:]
+         self.mu_avg  = f["mu_avg"][:][plane,:,:]
+         self.lam_avg = f["lam_avg"][:][plane,:,:]
+         self.Di_avg  = f["Di_avg"][:][plane,:,:,:]
+         self.SoS_avg = f["SoS_avg"][:][plane,:,:]
+         self.cp_avg  = f["cp_avg"][:][plane,:,:]
+         self.Ent_avg = f["Ent_avg"][:][plane,:,:]
+
+         self.ProductionRates_avg = f["ProductionRates_avg"][:][plane,:,:,:]
+         self.ProductionRates_rms = f["ProductionRates_rms"][:][plane,:,:,:]
+         self.HeatReleaseRate_avg = f["HeatReleaseRate_avg"][:][plane,:,:]
+         self.HeatReleaseRate_rms = f["HeatReleaseRate_rms"][:][plane,:,:]
+
+         self.pressure_favg    = f["pressure_favg"][:][plane,:,:]
+         self.pressure_frms    = f["pressure_frms"][:][plane,:,:]
+         self.temperature_favg = f["temperature_favg"][:][plane,:,:]
+         self.temperature_frms = f["temperature_frms"][:][plane,:,:]
+         self.MolarFracs_favg  = f["MolarFracs_favg"][:][plane,:,:,:]
+         self.MolarFracs_frms  = f["MolarFracs_frms"][:][plane,:,:,:]
+         self.MassFracs_favg   = f["MassFracs_favg"][:][plane,:,:,:]
+         self.MassFracs_frms   = f["MassFracs_frms"][:][plane,:,:,:]
+         self.velocity_favg    = f["velocity_favg"][:][plane,:,:,:]
+         self.velocity_frms    = f["velocity_frms"][:][plane,:,:,:]
+         self.velocity_frey    = f["velocity_frey"][:][plane,:,:,:]
+
+         self.mu_favg  = f["mu_favg"][:][plane,:,:]
+         self.lam_favg = f["lam_favg"][:][plane,:,:]
+         self.Di_favg  = f["Di_favg"][:][plane,:,:,:]
+         self.SoS_favg = f["SoS_favg"][:][plane,:,:]
+         self.cp_favg  = f["cp_favg"][:][plane,:,:]
+         self.Ent_favg = f["Ent_favg"][:][plane,:,:]
+
+         self.rhoUUv   = f["rhoUUv"][:][plane,:,:,:]
+         self.Up       = f["Up"][:][plane,:,:,:]
+         self.tau      = f["tau"][:][plane,:,:,:]
+         self.utau_y   = f["utau_y"][:][plane,:,:,:]
+         self.tauGradU = f["tauGradU"][:][plane,:,:,:]
+         self.pGradU   = f["pGradU"][:][plane,:,:,:]
+
+         self.q = f["q"][:][plane,:,:,:]
+
+         self.Pr     = f["Pr"][:][plane,:,:]
+         self.Pr_rms = f["Pr_rms"][:][plane,:,:]
+         self.Ec     = f["Ec"][:][plane,:,:]
+         self.Ec_rms = f["Ec_rms"][:][plane,:,:]
+         self.Ma     = f["Ma"][:][plane,:,:]
+         self.Sc     = f["Sc"][:][plane,:,:,:]
+
+         self.uT_avg   = f["uT_avg"][:][plane,:,:]
+         self.uYi_avg  = f["uYi_avg"][:][plane,:,:]
+         self.vYi_avg  = f["vYi_avg"][:][plane,:,:]
+         self.wYi_avg  = f["wYi_avg"][:][plane,:,:]
+
+         self.uT_favg  = f["uT_favg"][:][plane,:,:]
+         self.uYi_favg = f["uYi_favg"][:][plane,:,:]
+         self.vYi_favg = f["vYi_favg"][:][plane,:,:]
+         self.wYi_favg = f["wYi_favg"][:][plane,:,:]
+
+         if hasElectric:
+            self.electricPotential_avg = f["electricPotential_avg"][:][plane,:,:]
+            self.chargeDensity_avg     = f["chargeDensity_avg"    ][:][plane,:,:]
+
+      # Divide by the average weight
+      for a in vars(self):
+         attr = getattr(self, a)
+         if ((type(attr)==np.ndarray) and (attr.dtype == "float64")):
+            if   len(attr.shape) == 2:
+               attr /= weight
+            elif len(attr.shape) == 3:
+               for i in range(attr.shape[-1]):
+                  attr[:,:,i] /= weight
+            else:
+               # We should never get here
+               assert False
+
+   # Initialization method
+   def __init__(self, dirname, plane):
+
+      # Parse input files
+      self.parseTiles(dirname, plane)
+
+      # Load data from file
+      if self.has_masterFile:
+         self.loadNewRestart(plane)
+      else:
+         self.loadOldRestart()
+
       # Complete average process
-      for i in range(3):
-         self.centerCoordinates[:,:,i] /= weight[:,:]
-
-      self.pressure_avg         /= weight
-      self.pressure_rms         /= weight
-      self.temperature_avg      /= weight
-      self.temperature_rms      /= weight
-      for i in range(3):
-         self.velocity_avg[:,:,i] /= weight
-         self.velocity_rms[:,:,i] /= weight
-         self.velocity_rey[:,:,i] /= weight
-
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.MolarFracs_avg[:,:,isp] /= weight
-         self.MolarFracs_rms[:,:,isp] /= weight
-         self.MassFracs_avg[ :,:,isp] /= weight
-         self.MassFracs_rms[ :,:,isp] /= weight
-
       self.pressure_rms    -=    self.pressure_avg**2
       self.temperature_rms -= self.temperature_avg**2
       self.MolarFracs_rms  -=  self.MolarFracs_avg**2
@@ -575,41 +607,10 @@ class avg1D:
       self.velocity_rey[:,:,1] -=  self.velocity_avg[:,:,0]*self.velocity_avg[:,:,2]
       self.velocity_rey[:,:,2] -=  self.velocity_avg[:,:,1]*self.velocity_avg[:,:,2]
 
-      self.rho_avg  /= weight
-      self.rho_rms  /= weight
-      self.mu_avg   /= weight
-      self.lam_avg  /= weight
-      self.SoS_avg  /= weight
-      self.cp_avg   /= weight
-      self.Ent_avg  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.Di_avg[:,:,isp] /= weight
-
       self.rho_rms = self.rho_rms - self.rho_avg**2
-
-      self.HeatReleaseRate_avg /= weight
-      self.HeatReleaseRate_rms /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.ProductionRates_avg[:,:,isp] /= weight
-         self.ProductionRates_rms[:,:,isp] /= weight
 
       self.ProductionRates_rms -= self.ProductionRates_avg**2
       self.HeatReleaseRate_rms -= self.HeatReleaseRate_avg**2
-
-      self.pressure_favg      /= weight
-      self.pressure_frms      /= weight
-      self.temperature_favg   /= weight
-      self.temperature_frms   /= weight
-      for i in range(3):
-         self.velocity_favg[:,:,i] /= weight
-         self.velocity_frms[:,:,i] /= weight
-         self.velocity_frey[:,:,i] /= weight
-
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.MolarFracs_favg[:,:,isp] /= weight
-         self.MolarFracs_frms[:,:,isp] /= weight
-         self.MassFracs_favg[ :,:,isp] /= weight
-         self.MassFracs_frms[ :,:,isp] /= weight
 
       self.pressure_frms    -=    self.pressure_favg**2/self.rho_avg[:,:]
       self.temperature_frms -= self.temperature_favg**2/self.rho_avg[:,:]
@@ -622,52 +623,5 @@ class avg1D:
       self.velocity_frey[:,:,1] -= self.velocity_favg[:,:,0]*self.velocity_favg[:,:,2]/self.rho_avg[:,:]
       self.velocity_frey[:,:,2] -= self.velocity_favg[:,:,1]*self.velocity_favg[:,:,2]/self.rho_avg[:,:]
 
-      self.mu_favg   /= weight
-      self.lam_favg  /= weight
-      self.SoS_favg  /= weight
-      self.cp_favg   /= weight
-      self.Ent_favg  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.Di_favg[:,:,isp] /= weight
-
-      for i in range(3):
-         self.rhoUUv[:,:,i]   /= weight
-         self.Up[:,:,i]       /= weight
-         self.utau_y[:,:,i]   /= weight
-         self.tauGradU[:,:,i] /= weight
-         self.pGradU[:,:,i]   /= weight
-
-      for i in range(6):
-         self.tau[:,:,i]      /= weight
-
-      for i in range(3):
-         self.q[:,:,i] /= weight
-
-      self.Pr     /= weight
-      self.Pr_rms /= weight
-      self.Ec     /= weight
-      self.Ec_rms /= weight
-      self.Ma     /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.Sc[:,:,isp] /= weight
-
       self.Pr_rms -= self.Pr**2
       self.Ec_rms -= self.Ec**2
-
-      for i in range(3):
-         self.uT_avg[:,:,i]  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.uYi_avg[:,:,isp] /= weight
-         self.vYi_avg[:,:,isp] /= weight
-         self.wYi_avg[:,:,isp] /= weight
-
-      for i in range(3):
-         self.uT_favg[:,:,i]  /= weight
-      for isp, sp in enumerate(self.SpeciesNames):
-         self.uYi_favg[:,:,isp] /= weight
-         self.vYi_favg[:,:,isp] /= weight
-         self.wYi_favg[:,:,isp] /= weight
-
-      if hasElectric:
-         self.electricPotential_avg /= weight
-         self.chargeDensity_avg     /= weight

@@ -1,0 +1,4 @@
+[submodule "solverTests/referenceData"]
+	path = solverTests/referenceData
+	url = https://gitlab.com/mario.direnzo/htr-referencedata.git
+   branch = master

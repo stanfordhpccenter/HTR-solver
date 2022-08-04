@@ -19,8 +19,6 @@ clean:
 hdfTest.exec: hdfTest.o
 	$(CXX) -o $@ $^ $(LINK_FLAGS)
 
-hdfTest.o: hdfTest.rg $(HTR_DIR)/src/hdf_helper.rg $(HTR_DIR)/src/util-desugared.rg
-	$(REGENT) hdfTest.rg $(REGENT_FLAGS)
+hdfTest.o: hdfTest.rg $(HTR_DIR)/src/Utils/hdf_helper.rg $(HTR_DIR)/src/Utils/util.rg
+	$(REGENT) $(REGENT_OPTS) hdfTest.rg $(REGENT_FLAGS)
 
-$(HTR_DIR)/src/util-desugared.rg: $(HTR_DIR)/src/util.rg
-	make -C $(HTR_DIR)/src util-desugared.rg

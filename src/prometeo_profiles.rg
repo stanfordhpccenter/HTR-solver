@@ -35,7 +35,7 @@ return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
 -- IMPORTS
 -------------------------------------------------------------------------------
 local C = regentlib.c
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
 
@@ -89,6 +89,19 @@ function Exports.mkInitializeProfilesField(Side)
          end
          if NSCBC_Inflow.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
             fill(BC.temperature_profile, NSCBC_Inflow.TemperatureProfile.u.Constant.temperature)
+         end
+
+     elseif (config.BC.[Side].type == SCHEMA.FlowBC_NSCBC_FarField) then
+         var NSCBC_FarField = config.BC.[Side].u.NSCBC_FarField
+         if NSCBC_FarField.MixtureProfile.type == SCHEMA.MixtureProfile_Constant then
+            var BC_Mixture = MIX.ParseConfigMixture(NSCBC_FarField.MixtureProfile.u.Constant.Mixture,  mix)
+            fill(BC.MolarFracs_profile, BC_Mixture)
+         end
+         if NSCBC_FarField.VelocityProfile.type == SCHEMA.InflowProfile_Constant then
+            fill(BC.velocity_profile, NSCBC_FarField.VelocityProfile.u.Constant.velocity)
+         end
+         if NSCBC_FarField.TemperatureProfile.type == SCHEMA.TempProfile_Constant then
+            fill(BC.temperature_profile, NSCBC_FarField.TemperatureProfile.u.Constant.temperature)
          end
 
       elseif (config.BC.[Side].type == SCHEMA.FlowBC_IsothermalWall) then

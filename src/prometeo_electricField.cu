@@ -93,7 +93,7 @@ void GetElectricFieldTask::gpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_eField  (regions[2], FID_electricField);
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // Launch the kernel
@@ -158,7 +158,7 @@ void UpdateUsingIonDriftFluxTask<dir>::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 6);
+   assert(regions.size() == 5);
    assert(futures.size() == 0);
 
    // Accessors for EulerGhost region
@@ -179,19 +179,19 @@ void UpdateUsingIonDriftFluxTask<dir>::gpu_base_impl(
    const AccessorRW<VecNEq, 3> acc_Conserved_t(regions[4], FID_Conserved_t);
 
    // Extract execution domains
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[4].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // Launch the kernel to update the RHS using the diffusion fluxes
    const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlockSpan<dir>(threads_per_block, r_ModCells);
-   const dim3 num_blocks_3d = numBlocksSpan<dir>(TPB_3d, r_ModCells);
+   const dim3 TPB_3d = splitThreadsPerBlockSpan<dir>(threads_per_block, r_MyFluid);
+   const dim3 num_blocks_3d = numBlocksSpan<dir>(TPB_3d, r_MyFluid);
    UpdateRHSUsingIonDriftFlux_kernel<dir><<<num_blocks_3d, TPB_3d>>>(
                               acc_Conserved_t,
                               acc_nType, acc_m_e,
                               acc_Conserved, acc_MassFracs, acc_Ki, acc_eField,
-                              r_ModCells, Fluid_bounds,
-                              getSize<Xdir>(r_ModCells), getSize<Ydir>(r_ModCells), getSize<Zdir>(r_ModCells));
+                              r_MyFluid, Fluid_bounds,
+                              getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
 }
 
 template void UpdateUsingIonDriftFluxTask<Xdir>::gpu_base_impl(
@@ -267,7 +267,7 @@ void AddIonWindSourcesTask::gpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 4);
+   assert(regions.size() == 3);
    assert(futures.size() == 0);
 
    // Accessors for stencil variables
@@ -296,15 +296,15 @@ void AddIonWindSourcesTask::gpu_base_impl(
    const AccessorRW<VecNEq, 3> acc_Conserved_t      (regions[2], FID_Conserved_t);
 
    // Extract execution domain
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[2].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
 
    // Launch the kernel to update the RHS using ion wind source terms
    const int threads_per_block = 256;
-   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_ModCells);
-   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_ModCells) + (TPB_3d.x - 1)) / TPB_3d.x,
-                                   (getSize<Ydir>(r_ModCells) + (TPB_3d.y - 1)) / TPB_3d.y,
-                                   (getSize<Zdir>(r_ModCells) + (TPB_3d.z - 1)) / TPB_3d.z);
+   const dim3 TPB_3d = splitThreadsPerBlock<Xdir>(threads_per_block, r_MyFluid);
+   const dim3 num_blocks_3d = dim3((getSize<Xdir>(r_MyFluid) + (TPB_3d.x - 1)) / TPB_3d.x,
+                                   (getSize<Ydir>(r_MyFluid) + (TPB_3d.y - 1)) / TPB_3d.y,
+                                   (getSize<Zdir>(r_MyFluid) + (TPB_3d.z - 1)) / TPB_3d.z);
    AddIonWindSourcesTask_kernel<<<num_blocks_3d, TPB_3d>>>(
                               acc_Conserved_t,
                               acc_rho, acc_Di,
@@ -314,7 +314,7 @@ void AddIonWindSourcesTask::gpu_base_impl(
                               acc_velocity, acc_eField, acc_MolarFracs,
                               acc_nType_x, acc_nType_y, acc_nType_z,
                               acc_dcsi, acc_deta, acc_dzet,
-                              r_ModCells, Fluid_bounds,
-                              getSize<Xdir>(r_ModCells), getSize<Ydir>(r_ModCells), getSize<Zdir>(r_ModCells));
+                              r_MyFluid, Fluid_bounds,
+                              getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
 }
 

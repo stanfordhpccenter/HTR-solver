@@ -77,7 +77,7 @@ public:
 
    __CUDA_HD__
    inline T& operator[](const int index)       {
-#ifdef BOUNDS_CHECKS
+#ifdef LEGION_BOUNDS_CHECKS
       assert(index >=   0);
       assert(index < SIZE);
 #endif
@@ -86,7 +86,7 @@ public:
 
    __CUDA_HD__
    inline T  operator[](const int index) const {
-#ifdef BOUNDS_CHECKS
+#ifdef LEGION_BOUNDS_CHECKS
       assert(index >=   0);
       assert(index < SIZE);
 #endif
@@ -107,6 +107,12 @@ public:
       for (int i=0; i<SIZE; i++)
          (*this)[i] += rhs[i];
       return *this;
+   }
+
+   __CUDA_HD__
+   friend inline MyArray<T, SIZE> operator+(MyArray<T, SIZE> lhs, const  MyArray<T, SIZE> &rhs) {
+      lhs += rhs;
+      return lhs;
    }
 
    __CUDA_HD__
@@ -223,7 +229,7 @@ public:
 
    __CUDA_HD__
    inline T& operator()(const int i, const int j)       {
-#ifdef BOUNDS_CHECKS
+#ifdef LEGION_BOUNDS_CHECKS
       assert(i >=     0);
       assert(i < SIZE_I);
       assert(j >=     0);
@@ -234,7 +240,7 @@ public:
 
    __CUDA_HD__
    inline T  operator()(const int i, const int j) const {
-#ifdef BOUNDS_CHECKS
+#ifdef LEGION_BOUNDS_CHECKS
       assert(i >=     0);
       assert(i < SIZE_I);
       assert(j >=     0);
@@ -274,7 +280,7 @@ struct MySymMatrix {
 public:
    __CUDA_HD__
    inline T& operator()(const int i, const int j)       {
-#ifdef BOUNDS_CHECKS
+#ifdef LEGION_BOUNDS_CHECKS
       assert(i >=   0);
       assert(i < SIZE);
       assert(j >=   0);
@@ -286,7 +292,7 @@ public:
 
    __CUDA_HD__
    inline T  operator()(const int i, const int j) const {
-#ifdef BOUNDS_CHECKS
+#ifdef LEGION_BOUNDS_CHECKS
       assert(i >=   0);
       assert(i < SIZE);
       assert(j >=   0);

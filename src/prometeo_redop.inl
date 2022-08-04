@@ -64,29 +64,44 @@ void SumReduction<Vec3>::apply<false>(LHS &lhs, RHS rhs) {
       for (int i=0; i<3; i++)
          atomicAdd(&lhs[i], rhs[i]);
    #else
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+      // Type punning like this is illegal in C++ but the
+      // CUDA manual has an example just like it so fuck it
       __UNROLL__
       for (int i=0; i<3; i++) {
-         unsigned long long *target = (unsigned long long *)&lhs[i];
-         newval.as_int = *target;
+         double newval = lhs[i], oldval;
+         unsigned long long int *ptr = (unsigned long long int*)&lhs[i];
          do {
-            oldval.as_int = newval.as_int;
-            newval.as_float += rhs[i];
-            newval.as_int = atomicCAS(target, oldval.as_int, newval.as_int);
-         } while (oldval.as_int != newval.as_int);
+            oldval = newval;
+            newval += rhs[i];
+            newval = __ulonglong_as_double(atomicCAS(ptr,
+                                           __double_as_ulonglong(oldval), __double_as_ulonglong(newval)));
+         } while (oldval != newval);
       }
    #endif
    #else
-      // No atomic floating point operations so use compare and swap
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+   #if __cplusplus >= 202002L
       __UNROLL__
       for (int i=0; i<3; i++) {
-         volatile unsigned long long *target = (unsigned long long *)&lhs[i];
+         std::atomic_ref<double> atomic(lhs[i]);
+         double oldval = atomic.load();
+         double newval;
          do {
-            oldval.as_int = *target;
-            newval.as_float = oldval.as_float + rhs[i];
-         } while (!__sync_bool_compare_and_swap(target, oldval.as_int, newval.as_int));
+            newval = oldval + rhs[i];
+         } while (!atomic.compare_exchange_weak(oldval, newval));
       }
+   #else
+      // No atomic floating point operations so use compare and swap
+      TypePunning::Alias<int64_t,double> oldval, newval;
+      __UNROLL__
+      for (int i=0; i<3; i++) {
+         TypePunning::Pointer<int64_t> pointer((void*)&lhs[i]);
+         do {
+            oldval.load(pointer);
+            newval = oldval.as_two() + rhs[i];
+         } while (!__sync_bool_compare_and_swap((int64_t*)pointer,
+                                                oldval.as_one(), newval.as_one()));
+      }
+   #endif
    #endif
 }
 
@@ -103,35 +118,50 @@ void SumReduction<Vec3>::fold<false>(RHS &rhs1, RHS rhs2) {
       for (int i=0; i<3; i++)
          atomicAdd(&rhs1[i], rhs2[i]);
    #else
-      union { unsigned long long as_int; double as_float; } oldval, newval;
       __UNROLL__
       for (int i=0; i<3; i++) {
-         unsigned long long *target = (unsigned long long *)&rhs1[i];
-         newval.as_int = *target;
+         double newval = rhs1[i], oldval;
+         unsigned long long int *ptr = (unsigned long long int*)&rhs1[i];
          do {
-            oldval.as_int = newval.as_int;
-            newval.as_float += rhs2[i];
-            newval.as_int = atomicCAS(target, oldval.as_int, newval.as_int);
-         } while (oldval.as_int != newval.as_int);
+            oldval = newval;
+            newval += rhs2[i];
+            newval = __ulonglong_as_double(atomicCAS(ptr,
+                     __double_as_ulonglong(oldval), __double_as_ulonglong(newval)));
+         } while (oldval != newval);
       }
    #endif
    #else
-      // No atomic floating point operations so use compare and swap
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+   #if __cplusplus >= 202002L
       __UNROLL__
       for (int i=0; i<3; i++) {
-         volatile unsigned long long *target = (unsigned long long *)&rhs1[i];
+         std::atomic_ref<double> atomic(rhs1[i]);
+         double oldval = atomic.load();
+         double newval;
          do {
-            oldval.as_int = *target;
-            newval.as_float = oldval.as_float + rhs2[i];
-         } while (!__sync_bool_compare_and_swap(target, oldval.as_int, newval.as_int));
+            newval = oldval + rhs2[i];
+         } while (!atomic.compare_exchange_weak(oldval, newval));
       }
+   #else
+      // No atomic floating point operations so use compare and swap
+      TypePunning::Alias<int64_t,double> oldval, newval;
+      __UNROLL__
+      for (int i=0; i<3; i++) {
+         TypePunning::Pointer<int64_t> pointer((void*)&rhs1[i]);
+         do {
+            oldval.load(pointer);
+            newval = oldval.as_two() + rhs2[i];
+         } while (!__sync_bool_compare_and_swap((int64_t*)pointer,
+                                                oldval.as_one(), newval.as_one()));
+      }
+   #endif
    #endif
 }
 
 //-----------------------------------------------------------------------------
 // SumReduction for VecNSp
 //-----------------------------------------------------------------------------
+
+#if nSpec != 3
 
 template<> template<> __CUDA_HD__ inline
 void SumReduction<VecNSp>::apply<true>(LHS &lhs, RHS rhs) {
@@ -146,29 +176,44 @@ void SumReduction<VecNSp>::apply<false>(LHS &lhs, RHS rhs) {
       for (int i=0; i<nSpec; i++)
          atomicAdd(&lhs[i], rhs[i]);
    #else
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+      // Type punning like this is illegal in C++ but the
+      // CUDA manual has an example just like it so fuck it
       __UNROLL__
       for (int i=0; i<nSpec; i++) {
-         unsigned long long *target = (unsigned long long *)&lhs[i];
-         newval.as_int = *target;
+         double newval = lhs[i], oldval;
+         unsigned long long int *ptr = (unsigned long long int*)&lhs[i];
          do {
-            oldval.as_int = newval.as_int;
-            newval.as_float += rhs[i];
-            newval.as_int = atomicCAS(target, oldval.as_int, newval.as_int);
-         } while (oldval.as_int != newval.as_int);
+            oldval = newval;
+            newval += rhs[i];
+            newval = __ulonglong_as_double(atomicCAS(ptr,
+                     __double_as_ulonglong(oldval), __double_as_ulonglong(newval)));
+         } while (oldval != newval);
       }
    #endif
    #else
-      // No atomic floating point operations so use compare and swap
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+   #if __cplusplus >= 202002L
       __UNROLL__
       for (int i=0; i<nSpec; i++) {
-         volatile unsigned long long *target = (unsigned long long *)&lhs[i];
+         std::atomic_ref<double> atomic(lhs[i]);
+         double oldval = atomic.load();
+         double newval;
          do {
-            oldval.as_int = *target;
-            newval.as_float = oldval.as_float + rhs[i];
-         } while (!__sync_bool_compare_and_swap(target, oldval.as_int, newval.as_int));
+            newval = oldval + rhs[i];
+         } while (!atomic.compare_exchange_weak(oldval, newval));
       }
+   #else
+      // No atomic floating point operations so use compare and swap
+      TypePunning::Alias<int64_t,double> oldval, newval;
+      __UNROLL__
+      for (int i=0; i<nSpec; i++) {
+         TypePunning::Pointer<int64_t> pointer((void*)&lhs[i]);
+         do {
+            oldval.load(pointer);
+            newval = oldval.as_two() + rhs[i];
+         } while (!__sync_bool_compare_and_swap((int64_t*)pointer,
+                                                oldval.as_one(), newval.as_one()));
+      }
+   #endif
    #endif
 }
 
@@ -185,31 +230,48 @@ void SumReduction<VecNSp>::fold<false>(RHS &rhs1, RHS rhs2) {
       for (int i=0; i<nSpec; i++)
          atomicAdd(&rhs1[i], rhs2[i]);
    #else
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+      // Type punning like this is illegal in C++ but the
+      // CUDA manual has an example just like it so fuck it
       __UNROLL__
       for (int i=0; i<nSpec; i++) {
-         unsigned long long *target = (unsigned long long *)&rhs1[i];
-         newval.as_int = *target;
+         double newval = rhs1[i], oldval;
+         unsigned long long int *ptr = (unsigned long long int*)&rhs1[i];
          do {
-            oldval.as_int = newval.as_int;
-            newval.as_float += rhs2[i];
-            newval.as_int = atomicCAS(target, oldval.as_int, newval.as_int);
-         } while (oldval.as_int != newval.as_int);
+            oldval = newval;
+            newval += rhs2[i];
+            newval = __ulonglong_as_double(atomicCAS(ptr,
+                     __double_as_ulonglong(oldval), __double_as_ulonglong(newval)));
+         } while (oldval != newval);
       }
    #endif
    #else
-      // No atomic floating point operations so use compare and swap
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+   #if __cplusplus >= 202002L
       __UNROLL__
       for (int i=0; i<nSpec; i++) {
-         volatile unsigned long long *target = (unsigned long long *)&rhs1[i];
+         std::atomic_ref<double> atomic(rhs1[i]);
+         double oldval = atomic.load();
+         double newval;
          do {
-            oldval.as_int = *target;
-            newval.as_float = oldval.as_float + rhs2[i];
-         } while (!__sync_bool_compare_and_swap(target, oldval.as_int, newval.as_int));
+            newval = oldval + rhs2[i];
+         } while (!atomic.compare_exchange_weak(oldval, newval));
+      }
+   #else
+      // No atomic floating point operations so use compare and swap
+      TypePunning::Alias<int64_t,double> oldval, newval;
+      __UNROLL__
+      for (int i=0; i<nSpec; i++) {
+         TypePunning::Pointer<int64_t> pointer((void*)&rhs1[i]);
+         do {
+            oldval.load(pointer);
+            newval = oldval.as_two() + rhs2[i];
+         } while (!__sync_bool_compare_and_swap((int64_t*)pointer,
+                                                oldval.as_one(), newval.as_one()));
       }
    #endif
+   #endif
 }
+
+#endif
 
 //-----------------------------------------------------------------------------
 // SumReduction for MySymMatrix<double, 3>
@@ -230,33 +292,50 @@ void SumReduction<MySymMatrix<double, 3>>::apply<false>(LHS &lhs, RHS rhs) {
          for (int j=i; j<3; j++)
             atomicAdd(&lhs(i,j), rhs(i,j));
    #else
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+      // Type punning like this is illegal in C++ but the
+      // CUDA manual has an example just like it so fuck it
       __UNROLL__
       for (int i=0; i<3; i++)
          __UNROLL__
          for (int j=i; j<3; j++) {
-            unsigned long long *target = (unsigned long long *)&lhs(i,j);
-            newval.as_int = *target;
+            double newval = lhs(i,j), oldval;
+            unsigned long long int *ptr = (unsigned long long int*)&lhs(i,j);
             do {
-               oldval.as_int = newval.as_int;
-               newval.as_float += rhs(i,j);
-               newval.as_int = atomicCAS(target, oldval.as_int, newval.as_int);
-            } while (oldval.as_int != newval.as_int);
+               oldval = newval;
+               newval += rhs(i,j);
+               newval = __ulonglong_as_double(atomicCAS(ptr,
+                        __double_as_ulonglong(oldval), __double_as_ulonglong(newval)));
+            } while (oldval != newval);
          }
    #endif
    #else
-      // No atomic floating point operations so use compare and swap
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+   #if __cplusplus >= 202002L
       __UNROLL__
       for (int i=0; i<3; i++)
          __UNROLL__
          for (int j=i; j<3; j++) {
-            volatile unsigned long long *target = (unsigned long long *)&lhs(i,j);
+         std::atomic_ref<double> atomic(lhs(i,j));
+         double oldval = atomic.load();
+         double newval;
+         do {
+            newval = oldval + rhs(i,j);
+         } while (!atomic.compare_exchange_weak(oldval, newval));
+      }
+   #else
+      // No atomic floating point operations so use compare and swap
+      TypePunning::Alias<int64_t,double> oldval, newval;
+      __UNROLL__
+      for (int i=0; i<3; i++)
+         __UNROLL__
+         for (int j=i; j<3; j++) {
+            TypePunning::Pointer<int64_t> pointer((void*)&lhs(i,j));
             do {
-               oldval.as_int = *target;
-               newval.as_float = oldval.as_float + rhs(i,j);
-            } while (!__sync_bool_compare_and_swap(target, oldval.as_int, newval.as_int));
+               oldval.load(pointer);
+               newval = oldval.as_two() + rhs(i,j);
+            } while (!__sync_bool_compare_and_swap((int64_t*)pointer,
+                                                   oldval.as_one(), newval.as_one()));
          }
+   #endif
    #endif
 }
 
@@ -275,33 +354,50 @@ void SumReduction<MySymMatrix<double, 3>>::fold<false>(RHS &rhs1, RHS rhs2) {
          for (int j=i; j<3; j++)
             atomicAdd(&rhs1(i,j), rhs2(i,j));
    #else
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+      // Type punning like this is illegal in C++ but the
+      // CUDA manual has an example just like it so fuck it
       __UNROLL__
       for (int i=0; i<3; i++)
          __UNROLL__
          for (int j=i; j<3; j++) {
-            unsigned long long *target = (unsigned long long *)&rhs1(i,j);
-            newval.as_int = *target;
+            double newval = rhs1(i,j), oldval;
+            unsigned long long int *ptr = (unsigned long long int*)&rhs1(i,j);
             do {
-               oldval.as_int = newval.as_int;
-               newval.as_float += rhs2(i,j);
-               newval.as_int = atomicCAS(target, oldval.as_int, newval.as_int);
-            } while (oldval.as_int != newval.as_int);
+               oldval = newval;
+               newval += rhs2(i,j);
+               newval = __ulonglong_as_double(atomicCAS(ptr,
+                        __double_as_ulonglong(oldval), __double_as_ulonglong(newval)));
+            } while (oldval != newval);
          }
    #endif
    #else
-      // No atomic floating point operations so use compare and swap
-      union { unsigned long long as_int; double as_float; } oldval, newval;
+   #if __cplusplus >= 202002L
       __UNROLL__
       for (int i=0; i<3; i++)
          __UNROLL__
          for (int j=i; j<3; j++) {
-            volatile unsigned long long *target = (unsigned long long *)&rhs1(i,j);
+            std::atomic_ref<double> atomic(rhs1(i,j));
+            double oldval = atomic.load();
+            double newval;
             do {
-               oldval.as_int = *target;
-               newval.as_float = oldval.as_float + rhs2(i,j);
-            } while (!__sync_bool_compare_and_swap(target, oldval.as_int, newval.as_int));
+               newval = oldval + rhs2(i,j);
+            } while (!atomic.compare_exchange_weak(oldval, newval));
          }
+   #else
+      // No atomic floating point operations so use compare and swap
+      TypePunning::Alias<int64_t,double> oldval, newval;
+      __UNROLL__
+      for (int i=0; i<3; i++)
+         __UNROLL__
+         for (int j=i; j<3; j++) {
+            TypePunning::Pointer<int64_t> pointer((void*)&rhs1(i,j));
+            do {
+               oldval.load(pointer);
+               newval = oldval.as_two() + rhs2(i,j);
+            } while (!__sync_bool_compare_and_swap((int64_t*)pointer,
+                                                   oldval.as_one(), newval.as_one()));
+         }
+   #endif
    #endif
 }
 

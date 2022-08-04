@@ -271,8 +271,8 @@ public:
          const bool Neumann = (Robin_bc && ((i != 0) || (k != 0)));
          // solve the tridiagonal system with Thomas
          const Point<3> p = Point<3>(i, lo_j, k);
-         complex<double> beta = k2X + k2Z + complex<double>((Neumann) ?  1.0 : acc_b[lo_j], 0.0);
-         complex<double> cm1              = complex<double>((Neumann) ? -1.0 : acc_c[lo_j], 0.0);
+         complex<double> beta = complex<double>((Neumann) ?  1.0 : acc_b[lo_j], 0.0);
+         complex<double> cm1  = complex<double>((Neumann) ? -1.0 : acc_c[lo_j], 0.0);
          acc_fft[p] /= beta;
          // Forward pass
          __UNROLL__
@@ -293,9 +293,8 @@ public:
             const double a = (Neumann) ? -1.0 : acc_a[j];
             const double b = (Neumann) ?  1.0 : acc_b[j];
             aux[j] = cm1/beta;
-            beta = k2X + k2Z
-                   + complex<double>(b, 0.0)
-                   - complex<double>(a, 0.0)*aux[j];
+            beta = complex<double>(b, 0.0)
+                 - complex<double>(a, 0.0)*aux[j];
             acc_fft[p] = (acc_fft[p] - complex<double>(a, 0.0)*acc_fft[pm1])/beta;
          }
          // Back substitution

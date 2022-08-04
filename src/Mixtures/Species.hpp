@@ -107,7 +107,7 @@ struct DiffCoefficients {
 
 // Species structure
 struct Spec {
-   __CONST__ char*         Name;  // Name of the species
+   __CONST__ char      Name[10];  // Name of the species
    __CONST__ double           W;  // Molar weight [kg/mol]
    __CONST__ uint8_t        inx;  // Index in the species vector
 #if (nIons > 0)

@@ -1,0 +1,104 @@
+{
+   "Mapping" : {
+      "tiles" : [1,2,3],
+      "tilesPerRank" : [1,2,3],
+      "sampleId" : -1,
+      "outDir" : "",
+      "wallTime" : 10000
+   },
+
+   "Grid" : {
+      "xNum" : 400,
+      "yNum" : 100,
+      "zNum" : 1,
+      "GridInput" : {
+         "type" : "Cartesian",
+         "origin" : [0.0, 4.0, 8.0],
+         "width" : [1.0, 0.5, 0.1],
+         "xType" : {
+            "type" : "TanhMinus",
+            "Stretching" : 0.9
+         },
+         "yType" : {
+            "type" : "TanhMinus",
+            "Stretching" : 0.9
+         },
+         "zType" : { "type" : "Uniform" }
+      }
+   },
+
+   "Integrator" : {
+      "startIter" : 0,
+      "startTime" : 0.0,
+      "resetTime" : false,
+      "maxIter" : 200000,
+      "maxTime" : 20.0,
+      "TimeStep" : {
+         "type" : "ConstantCFL",
+         "cfl" : 0.9
+      },
+      "implicitChemistry" : false,
+      "EulerScheme" : { "type" : "SkewSymmetric" }
+   },
+
+   "BC" : {
+      "xBCLeft" :  { "type" : "Periodic" },
+      "xBCRight" : { "type" : "Periodic" },
+      "yBCLeft" :  { "type" : "Periodic" },
+      "yBCRight" : { "type" : "Periodic" },
+      "zBCLeft" :  { "type" : "Periodic" },
+      "zBCRight" : { "type" : "Periodic" },
+      "bufferZone" : { "type" : "Off" }
+   },
+
+   "Flow" : {
+      "mixture": {
+         "type" : "H2_UCSDMix",
+         "LRef" : 1.0,
+         "TRef" : 300.0,
+         "PRef" : 1.01325e5,
+         "XiRef" : {
+            "Species" : [{"Name" : "O2", "MolarFrac" : 1.0 }]
+         }
+      },
+      "initCase" : {
+         "type" : "Uniform",
+         "pressure" : 1.01325e5,
+         "temperature" : 300.0,
+         "velocity" : [10.0, 20.0, 30.0],
+         "molarFracs" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         }
+      },
+      "resetMixture" : false,
+      "initMixture" : {
+         "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+      },
+      "bodyForce" : [1.0, 2.0, 3.0],
+      "turbForcing" : {
+         "type" : "CHANNEL",
+         "Forcing" : 1000.0,
+         "RhoUbulk" : 20.0
+
+      },
+      "laser" : { "type" : "Off" }
+   },
+
+   "IO" : {
+      "wrtRestart" : true,
+      "restartEveryTimeSteps" : 10000,
+      "probesSamplingInterval" : 1,
+      "probes" : [],
+      "AveragesSamplingInterval" : 10,
+      "ResetAverages" : false,
+      "YZAverages" : [],
+      "XZAverages" : [],
+      "XYAverages" : [],
+      "XAverages" : [],
+      "YAverages" : [],
+      "ZAverages" : [],
+      "volumeProbes" : []
+   },
+
+   "Efield" : { "type" : "Off" }
+}

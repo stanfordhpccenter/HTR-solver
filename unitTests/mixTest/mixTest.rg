@@ -269,12 +269,12 @@ function mktestMixture()
                          0, 0, 0, 0, 0,
                          0, 0, 0, 0, 0,
                          0, 0, 0, 0, 0) end
-      Eprod = rexpr array(-2.619665e-04, 8.087728e-04, 7.719551e-05,-3.682853e-03, 2.440982e-03,
-                          -7.018117e-04,-4.101689e-02, 4.255061e-02,-1.594798e-53,-3.276723e-53,
-                           1.364118e-53, 1.622366e-05, 3.088778e-02,-2.795221e-02,-2.962707e-03,
-                           4.701255e-03, 3.466719e-03,-3.706367e-03, 9.079769e-05, 3.080949e-08,
-                          -8.255169e-05, 2.713261e-05, 4.723409e-08,-3.162484e-05, 1.908141e-05,
-                          -4.687643e-03,-8.071670e-55, 1.091095e-54, 2.449082e-55, 0.000000e+00) end
+      Eprod = rexpr array(-2.619665e-04, 8.087741e-04, 7.719548e-05,-3.614274e-03, 2.444384e-03,
+                          -7.054158e-04,-4.116491e-02, 4.263025e-02,-1.594798e-53,-3.279458e-53,
+                           1.364118e-53, 1.622365e-05, 3.088778e-02,-2.795221e-02,-2.962706e-03,
+                           4.701254e-03, 3.466765e-03,-3.706480e-03, 9.079769e-05, 9.819966e-08,
+                          -8.255164e-05, 2.713259e-05, 4.723412e-08,-3.162481e-05, 1.908141e-05,
+                          -4.687640e-03,-8.071670e-55, 1.316211e-54, 2.042675e-56, 0.000000e+00) end
       Edpde = rexpr [Erho]*([Egamma] - 1.0) end
       Edpdrho = rexpr array( 3.310111e+06,-4.697869e+07,-3.284257e+06, 3.610331e+05,-4.207291e+04,
                              3.871137e+06, 1.469175e+05, 1.159114e+06,-1.457004e+07,-1.130521e+07,
@@ -394,15 +394,15 @@ function mktestMixture()
 								           0,           0,           0,           0,           0,
 								           0,           1,           1,           1,           1,
 								          -1,          -1,          -1) end
-      Eprod = rexpr array( 0.000000e+00,-6.386433e+00, 4.321756e+00, 1.820241e+01, 2.207037e+01,
-								   9.280903e+01,-1.412370e+02, 7.461174e-01, 1.680463e-01,-1.630321e+01,
-								   2.559621e+01,-1.812313e-13, 6.962300e-15, 3.815141e-12,-7.151828e-12,
-								  -8.280009e-12,-3.509156e-12, 1.754485e-14, 1.681078e-12, 1.347153e-10,
-								   8.504105e-10,-1.651398e-06, 1.267184e-02, 5.119513e-26, 2.917562e-24,
-								  -1.039674e-22, 8.265570e-20,-4.668084e-18,-2.273024e-18, 5.750472e-19,
-								   3.487055e-16, 1.107550e-17, 7.137457e-14,-1.555412e-14, 2.547253e-35,
-								  -5.293791e-36,-2.894192e-11,-2.447041e-26, 2.378219e-24, 1.943284e-11,
-								  -5.760147e-07, 1.563686e-06,-8.228268e-12) end
+      Eprod = rexpr array( 0.000000e+00,-6.386433e+00, 4.385057e+00, 1.821845e+01, 2.207037e+01,
+                           9.281806e+01,-1.423135e+02, 7.461175e-01, 1.515058e-01,-1.806219e+01,
+                           2.835990e+01,-1.811037e-13,-8.204296e-14, 3.815141e-12,-7.151828e-12,
+                          -8.280009e-12,-3.509156e-12, 1.754485e-14, 1.599034e-12, 1.345945e-10,
+                           8.504860e-10,-2.197352e-06, 1.267237e-02, 5.119513e-26, 2.917556e-24,
+                          -1.039674e-22, 8.265544e-20,-4.668084e-18,-2.273024e-18, 5.741335e-19,
+                           3.487064e-16, 1.107550e-17, 7.089766e-14,-1.558485e-14, 2.547250e-35,
+                          -5.293791e-36,-2.894192e-11,-2.447041e-26, 2.378219e-24, 1.943284e-11,
+                          -5.760147e-07, 1.563686e-06,-8.228268e-12) end
       Edpde = rexpr [Erho]*([Egamma] - 1.0) end
       Edpdrho = rexpr array(-2.846256e+05, 2.506754e+06,-5.007171e+07,-3.278145e+05,-4.138104e+06,
 									  3.313571e+06,-7.320436e+05, 4.966088e+05,-5.534242e+05, 7.803281e+05,
@@ -433,6 +433,105 @@ function mktestMixture()
       dpdrhoiRef = rexpr [eRef] end
       Eps0 = rexpr [PRef]*[MixWRef]*[MixWRef]/([rhoRef]*[rhoRef]*[Na]*[Na]*[eCrg]*[eCrg]*[LRef]*[LRef]) end
 
+   elseif (os.getenv("EOS") == "CH4_26SpIonsMix") then
+      name = "CH4_26SpIonsMix"
+      local R = 8.3144598
+      T = 1500
+      ENames = rexpr  array(      "N2",         "H2",          "H",         "O2",          "O",
+                                 "H2O",         "OH",       "H2O2",        "HO2",         "CO",
+                                 "CO2",        "CH4",        "CH3",        "CH2",     "CH2(S)",
+                                   "C",         "CH",      "CH3OH",       "CH3O",      "CH2OH",
+                                "CH2O",        "HCO",       "CHO+",       "H3O+",        "O2-",
+                                   "E") end
+
+      EYi = rexpr  array( 7.247482e-01, 2.873951e-04, 1.856406e-05, 7.026078e-03, 1.762206e-04,
+                          1.201430e-01, 2.318436e-03, 8.314211e-08, 7.900423e-07, 9.834666e-03,
+                          1.354466e-01, 1.795259e-17, 4.100397e-17, 5.867168e-18, 3.613851e-19,
+                          1.006555e-17, 2.050666e-18, 8.261078e-23, 4.987982e-18, 3.400659e-18,
+                          7.269760e-17, 1.677910e-11, 1.264227e-09, 7.743355e-33, 3.302831e-32,
+                          3.662615e-27) end
+      EXi = rexpr  array( 7.088564e-01, 3.906026e-03, 5.046133e-04, 6.016396e-03, 3.017936e-04,
+                          1.827303e-01, 3.735198e-03, 6.697452e-08, 6.558487e-07, 9.620392e-03,
+                          8.432820e-02, 3.066110e-17, 7.472548e-17, 1.146067e-17, 7.059138e-19,
+                          2.296173e-17, 4.315822e-18, 7.064206e-23, 4.403859e-18, 3.002421e-18,
+                          6.633899e-17, 1.584337e-11, 1.193746e-09, 1.115344e-32, 2.828149e-32,
+                          1.829353e-22) end
+      EMixW = rexpr 2.739973e-02 end
+      Erho = rexpr [P]*[EMixW]/([R]*[T]) end
+      Ecp = rexpr 1.423258e+03 end
+      Eh = rexpr -1.313672e+06 end
+      Ehsp = rexpr array( 1.369611e+06, 1.799586e+07, 2.410452e+08, 1.269012e+06, 1.715846e+07,
+                         -1.075009e+07, 4.372157e+06,-1.881761e+06, 2.045765e+06,-2.560159e+06,
+                         -7.540188e+06, 3.376548e+05, 1.417744e+07, 3.155339e+07, 3.418885e+07,
+                          6.174649e+07, 4.873545e+07,-3.247268e+06, 3.583998e+06, 2.231564e+06,
+                         -1.362676e+06, 3.347733e+06, 3.065696e+07, 3.471418e+07,-1.683196e+05,
+                          4.553796e+10) end
+      EWi = rexpr  array( 2.801400e-02, 2.016000e-03, 1.008000e-03, 3.199800e-02, 1.599900e-02,
+                          1.801500e-02, 1.700700e-02, 3.401400e-02, 3.300600e-02, 2.801000e-02,
+                          4.400900e-02, 1.604300e-02, 1.503500e-02, 1.402700e-02, 1.402700e-02,
+                          1.201100e-02, 1.301900e-02, 3.204200e-02, 3.103400e-02, 3.103400e-02,
+                          3.002600e-02, 2.901800e-02, 2.901745e-02, 1.902245e-02, 3.199855e-02,
+                          5.485799e-07) end
+      Ee = rexpr Eh - [P]/[Erho] end
+      Emu    = rexpr 5.519658e-05 end
+      Elam   = rexpr 1.137426e-01 end
+      Egamma = rexpr 1.270976e+00 end
+      Esos   = rexpr 7.605937e+02 end
+	if ELECTRIC_FIELD then
+      Edif = rexpr array( 3.328026e-04,  1.179778e-03,  1.967375e-03,  3.289734e-04,  5.061709e-04,
+                          4.414854e-04,  4.967148e-04,  3.247798e-04,  3.269961e-04,  3.243026e-04,
+                          2.557088e-04,  3.581979e-04,  3.598466e-04,  3.680755e-04,  3.680755e-04,
+                          4.743545e-04,  5.414407e-04,  2.745194e-04,  2.753915e-04,  2.753915e-04,
+                          2.806731e-04,  2.829947e-04,  1.793319e-04,  2.014434e-04,  1.648010e-04,
+                          2.585167e-02) end
+	else
+      Edif = rexpr array( 3.328026e-04,  1.179778e-03,  1.967375e-03,  3.289734e-04,  5.061709e-04,
+                          4.414854e-04,  4.967148e-04,  3.247798e-04,  3.269961e-04,  3.243026e-04,
+                          2.557088e-04,  3.581979e-04,  3.598466e-04,  3.680755e-04,  3.680755e-04,
+                          4.743545e-04,  5.414407e-04,  2.745194e-04,  2.753915e-04,  2.753915e-04,
+                          2.806731e-04,  2.829947e-04,  4.282862e-04,  4.139949e-04,  3.349915e-04,
+                          1.140070e-05) end
+	end
+      Emob = rexpr array( 1.387374e-03,  1.558436e-03,  1.274958e-03,  1.999975e-01) end
+      Erhoq = rexpr 9.357604e-04 end
+      ESi = rexpr array(           0,           0,           0,           0,           0,
+                                   0,           0,           0,           0,           0,
+                                   0,           0,           0,           0,           0,
+                                   0,           0,           0,           0,           0,
+                                   0,           0,           1,           1,          -1,
+                                  -1) end
+      Eprod = rexpr array( 0.000000e+00,-6.386798e+00, 4.385342e+00, 1.821774e+01, 2.207120e+01,
+                           9.264324e+01,-1.423134e+02, 7.461175e-01, 1.514038e-01,-1.779316e+01,
+                           2.835986e+01,-1.811061e-13,-4.232749e-12, 3.441144e-12,-7.153679e-12,
+                          -8.280009e-12,-1.650227e-11, 1.997021e-12,-2.211041e-11,-4.023372e-13,
+                           2.077287e-09, 1.533321e-02,-2.813402e-01, 1.844332e-01, 1.777643e-17,
+                           2.684284e-18) end
+      Edpde = rexpr [Erho]*([Egamma] - 1.0) end
+      Edpdrho = rexpr array(-2.846256e+05, 2.506754e+06,-5.007171e+07,-3.278144e+05,-4.138104e+06,
+                             3.313571e+06,-7.320435e+05, 4.966088e+05,-5.534242e+05, 7.803282e+05,
+                             1.924069e+06, 4.172128e+05,-3.266794e+06,-7.899497e+06,-8.613643e+06,
+                            -1.589143e+07,-1.246793e+07, 8.953083e+05,-9.397323e+05,-5.732552e+05,
+                             4.178437e+05,-8.402259e+05,-8.240358e+06,-9.052749e+06, 6.165927e+04,
+                             1.655411e+10) end
+
+      -- Normalization quantities
+      LRef = rexpr 1.0 end
+      PRef = rexpr 101325.0 end
+      TRef = rexpr 300.0 end
+      MixWRef = rexpr 3.1998800000000e-02 end
+      rhoRef = rexpr [PRef]*[MixWRef]/([R]*[TRef]) end
+      eRef = rexpr [PRef]/[rhoRef] end
+      uRef = rexpr sqrt([PRef]/[rhoRef]) end
+      CpRef = rexpr [R]/[MixWRef] end
+      muRef = rexpr sqrt([PRef]*[rhoRef])*[LRef] end
+      lamRef = rexpr sqrt([PRef]*[rhoRef])*[LRef]*[R]/[MixWRef] end
+      DiRef = rexpr sqrt([PRef]/[rhoRef])*[LRef] end
+      KiRef = rexpr sqrt([rhoRef]/[PRef])*[Na]*[eCrg]*[LRef]/[MixWRef] end
+      rhoqRef = rexpr Na*eCrg*[rhoRef]/[MixWRef] end
+      wiRef = rexpr sqrt([PRef]*[rhoRef])/[LRef] end
+      dpdeRef = rexpr [rhoRef] end
+      dpdrhoiRef = rexpr [eRef] end
+      Eps0 = rexpr [PRef]*[MixWRef]*[MixWRef]/([rhoRef]*[rhoRef]*[Na]*[Na]*[eCrg]*[eCrg]*[LRef]*[LRef]) end
    elseif (os.getenv("EOS") == "FFCM1Mix") then
       name = "FFCM1Mix"
       local R = 8.3144598
@@ -497,13 +596,13 @@ function mktestMixture()
                                    0,           0,           0,           0,           0,
                                    0,           0,           0,           0,           0,
                                    0,           0,           0) end
-      Eprod = rexpr array(-5.472850e+02, 2.758325e+02, 9.735398e+02,-1.950592e+03,-1.523697e+02,
-                           1.357990e+02,-2.340542e+01, 2.368916e+00, 1.786184e+03,-2.702424e-02,
-                          -3.934252e+03, 3.434207e+03, 1.276174e-09,-8.077703e-11, 3.925789e-10,
-                           3.075621e-15, 7.910172e-08, 2.818611e-12,-1.409102e-13,-2.310325e-12,
-                           1.364451e-13,-1.021105e-04, 1.061451e-04, 4.230531e-08, 8.855515e-15,
-                          -8.237674e-22, 4.559531e-23, 1.497008e-08, 1.791127e-09,-1.411255e-20,
-                          -1.930851e-21,-8.465273e-18, 3.384368e-10) end
+      Eprod = rexpr array(-5.471383e+02, 2.757591e+02, 9.735357e+02,-1.948217e+03,-1.523801e+02,
+                           1.358159e+02,-2.586426e+01, 2.378074e+00, 1.786186e+03,-2.995362e-02,
+                          -3.934252e+03, 3.434207e+03, 1.276208e-09,-8.082043e-11, 4.757539e-10,
+                           3.108807e-15, 7.943873e-08, 2.971049e-12,-1.441050e-13,-2.311405e-12,
+                           1.539214e-13,-1.021105e-04, 1.061436e-04, 4.230531e-08, 8.855515e-15,
+                          -8.237810e-22, 4.559531e-23, 1.497008e-08, 3.966690e-09,-1.411255e-20,
+                          -1.980992e-21,-8.465224e-18, 3.384368e-10) end
       Edpde = rexpr [Erho]*([Egamma] - 1.0) end
       Edpdrho = rexpr array( 7.432314e+06,-6.158820e+07, 4.509459e+05, 5.435450e+06, 4.825521e+06,
                              1.000892e+07, 5.156635e+06, 6.505565e+06, 6.837828e+06, 8.347008e+06,
@@ -561,11 +660,65 @@ function mktestMixture()
       Erhoq = rexpr 0.000000e+00 end
       ESi = rexpr array(           0,           0,           0,           0,           0,
                                    0,           0,           0,           0) end
-      Eprod = rexpr array( 1.137198e+04,-4.437493e+04, 2.812263e+05, 1.220565e+06, 2.572854e+03,
-                           6.879408e+04,-1.540088e+06,-6.713723e+01, 0.000000e+00) end
+      Eprod = rexpr array(1.137198e+04,-4.437493e+04, 2.871371e+05, 1.217424e+06, 2.572854e+03,
+                          7.212189e+04,-1.546185e+06,-6.713723e+01, 0.000000e+00) end
       Edpde = rexpr [Erho]*([Egamma] - 1.0) end
       Edpdrho = rexpr array( 1.203101e+07,-7.707478e+07, 1.103892e+07, 1.017630e+07, 4.619445e+06,
                              1.675467e+07, 1.069290e+07, 1.240178e+07, 1.107404e+07) end
+
+      -- Normalization quantities
+      LRef = rexpr 1.0 end
+      PRef = rexpr 101325.0 end
+      TRef = rexpr 300.0 end
+      MixWRef = rexpr 3.1998800000000e-02 end
+      rhoRef = rexpr [PRef]*[MixWRef]/([R]*[TRef]) end
+      eRef = rexpr [PRef]/[rhoRef] end
+      uRef = rexpr sqrt([PRef]/[rhoRef]) end
+      CpRef = rexpr [R]/[MixWRef] end
+      muRef = rexpr sqrt([PRef]*[rhoRef])*[LRef] end
+      lamRef = rexpr sqrt([PRef]*[rhoRef])*[LRef]*[R]/[MixWRef] end
+      DiRef = rexpr sqrt([PRef]/[rhoRef])*[LRef] end
+      KiRef = rexpr sqrt([rhoRef]/[PRef])*[Na]*[eCrg]*[LRef]/[MixWRef] end
+      rhoqRef = rexpr Na*eCrg*[rhoRef]/[MixWRef] end
+      wiRef = rexpr sqrt([PRef]*[rhoRef])/[LRef] end
+      dpdeRef = rexpr [rhoRef] end
+      dpdrhoiRef = rexpr [eRef] end
+      Eps0 = rexpr [PRef]*[MixWRef]*[MixWRef]/([rhoRef]*[rhoRef]*[Na]*[Na]*[eCrg]*[eCrg]*[LRef]*[LRef]) end
+
+   elseif (os.getenv("EOS") == "H2_UCSDMix") then
+      name = "H2_UCSDMix"
+      local R = 8.3144598
+      T = 1500
+      ENames = rexpr  array(      "H2",          "H",         "O2",         "OH",          "O",
+                                 "H2O",        "HO2",       "H2O2",         "N2") end
+
+      EYi = rexpr  array( 1.000000e-01, 1.000000e-01, 1.000000e-01, 1.000000e-01, 1.000000e-01,
+                          1.000000e-01, 1.000000e-01, 1.000000e-01, 2.000000e-01) end
+      EXi = rexpr  array( 2.714636e-01, 5.429271e-01, 1.710327e-02, 3.217914e-02, 3.420655e-02,
+                          3.037860e-02, 1.658094e-02, 1.608957e-02, 3.907122e-02) end
+      EMixW = rexpr 5.472706e-03 end
+      Erho = rexpr [P]*[EMixW]/([R]*[T]) end
+      Ecp = rexpr 4.974996e+03 end
+      Eh = rexpr  2.739670e+07 end
+      Ehsp = rexpr array( 1.800275e+07, 2.410445e+08, 1.268862e+06, 4.375240e+06, 1.715512e+07,
+                         -1.074697e+07, 2.033551e+06,-1.907931e+06, 1.370909e+06) end
+      EWi = rexpr  array( 2.016000e-03, 1.008000e-03, 3.199800e-02, 1.700700e-02, 1.599900e-02,
+                          1.801500e-02, 3.300600e-02, 3.401400e-02, 2.801400e-02) end
+      Ee = rexpr Eh - [P]/[Erho] end
+      Emu    = rexpr 5.007584e-05 end
+      Elam   = rexpr 5.576127e-01 end
+      Egamma = rexpr 1.439618e+00 end
+      Esos   = rexpr 1.811256e+03 end
+      Edif = rexpr array( 2.922287e-03,  5.405200e-03,  9.675580e-04,  1.390704e-03,  1.408131e-03,
+                          1.239050e-03,  9.631715e-04,  9.588918e-04,  9.004806e-04) end
+      Erhoq = rexpr 0.000000e+00 end
+      ESi = rexpr array(           0,           0,           0,           0,           0,
+                                   0,           0,           0,           0) end
+      Eprod = rexpr array(1.329866e+04,-5.754714e+04, 3.116157e+05, 1.252021e+06, 1.559913e+05,
+                          2.967750e+05,-1.869816e+06,-1.023381e+05, 0.000000e+00) end
+      Edpde = rexpr [Erho]*([Egamma] - 1.0) end
+      Edpdrho = rexpr array( 1.203370e+07,-7.711375e+07, 1.104555e+07, 1.017452e+07, 4.622762e+06,
+                             1.676345e+07, 1.069225e+07, 1.240887e+07, 1.108049e+07) end
 
       -- Normalization quantities
       LRef = rexpr 1.0 end
@@ -607,94 +760,94 @@ function mktestMixture()
       end
 
       -- check GetMolarWeightFromYi
-      var MixW = MIX.GetMolarWeightFromYi([EYi], Mix)
+      var MixW = MIX.GetMolarWeightFromYi([EYi], &Mix)
       regentlib.assert(fabs((MixW/([EMixW])) - 1.0) < 1e-3, ["mixTest: ERROR in GetMolarWeightFromYi of " .. name])
 
       -- check GetMolarFractions
-      var Xi : double[MIX.nSpec]; MIX.GetMolarFractions(&Xi[0], MixW, [EYi], Mix)
+      var Xi : double[MIX.nSpec]; MIX.GetMolarFractions(Xi, MixW, [EYi], &Mix)
       for i = 0, MIX.nSpec do
          regentlib.assert(fabs((Xi[i]/([EXi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetMolarFractions of " .. name])
       end
 
       -- check GetMolarWeightFromXi
-      var MixW2 = MIX.GetMolarWeightFromXi(Xi, Mix)
+      var MixW2 = MIX.GetMolarWeightFromXi(Xi, &Mix)
       regentlib.assert(fabs((MixW2/MixW) - 1.0) < 1e-3, ["mixTest: ERROR in GetMolarWeightFromXi of " .. name])
 
       -- check GetMassFractions
-      var Yi : double[MIX.nSpec]; MIX.GetMassFractions(&Yi[0], MixW, Xi, Mix)
+      var Yi : double[MIX.nSpec]; MIX.GetMassFractions(Yi, MixW, Xi, &Mix)
       for i = 0, MIX.nSpec do
          regentlib.assert(fabs((Yi[i]/([EYi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetMassFractions of " .. name])
       end
 
       -- check GetRho
-      var rho = MIX.GetRho([P]/[PRef], [T]/[TRef], MixW, Mix)*[rhoRef]
+      var rho = MIX.GetRho([P]/[PRef], [T]/[TRef], MixW, &Mix)*[rhoRef]
       regentlib.assert(fabs((rho/([Erho])) - 1.0) < 1e-3, ["mixTest: ERROR in GetRho of " .. name])
 
       -- check GetRhoYiFromYi
-      var rhoYi : double[MIX.nSpec]; MIX.GetRhoYiFromYi(&rhoYi[0], rho, Yi, Mix)
+      var rhoYi : double[MIX.nSpec]; MIX.GetRhoYiFromYi(rhoYi, rho, Yi, &Mix)
       for i = 0, MIX.nSpec do
          regentlib.assert(fabs((rhoYi[i]/([Erho]*[EYi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetRhoYiFromYi of " .. name])
       end
 
       -- check GetYi
-      var Yi2 : double[MIX.nSpec]; MIX.GetYi(&Yi2[0], rho, rhoYi, Mix)
+      var Yi2 : double[MIX.nSpec]; MIX.GetYi(Yi2, rho, rhoYi, &Mix)
       for i = 0, MIX.nSpec do
          regentlib.assert(fabs((Yi2[i]/([EYi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetYi of " .. name])
       end
 
       -- check GetHeatCapacity
-      var cp = MIX.GetHeatCapacity([T]/[TRef], Yi, Mix)*[CpRef]
+      var cp = MIX.GetHeatCapacity([T]/[TRef], Yi, &Mix)*[CpRef]
       regentlib.assert(fabs((cp/([Ecp])) - 1.0) < 1e-3, ["mixTest: ERROR in GetHeatCapacity of " .. name])
 
       -- check GetEnthalpy
-      var h = MIX.GetEnthalpy([T]/[TRef], Yi, Mix)*[eRef]
+      var h = MIX.GetEnthalpy([T]/[TRef], Yi, &Mix)*[eRef]
       regentlib.assert(fabs((h/([Eh])) - 1.0) < 1e-3, ["mixTest: ERROR in GetEnthalpy of " .. name])
 
       -- check GetSpeciesEnthalpy
       for i = 0, MIX.nSpec do
-         var hsp = MIX.GetSpeciesEnthalpy(i, [T]/[TRef], Mix)*[eRef]
+         var hsp = MIX.GetSpeciesEnthalpy(i, [T]/[TRef], &Mix)*[eRef]
          regentlib.assert(fabs((hsp/([Ehsp][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetSpeciesEnthalpy of " .. name])
       end
 
       -- check GetSpeciesMolarWeight
       for i = 0, MIX.nSpec do
-         var W = MIX.GetSpeciesMolarWeight(i, Mix)
+         var W = MIX.GetSpeciesMolarWeight(i, &Mix)
          regentlib.assert(fabs((W/([EWi][i])) - 1.0) < 1e-3, ["mixTest: ERROR in GetSpeciesMolarWeight of " .. name])
       end
 
       -- check GetInternalEnergy
-      var e = MIX.GetInternalEnergy([T]/[TRef], Yi, Mix)*[eRef]
+      var e = MIX.GetInternalEnergy([T]/[TRef], Yi, &Mix)*[eRef]
       regentlib.assert(fabs((e/([Ee])) - 1.0) < 1e-3, ["mixTest: ERROR in GetInternalEnergy of " .. name])
 
       -- check GetTFromInternalEnergy
-      var T1 = MIX.GetTFromInternalEnergy(e/[eRef], ([T]+100.0)/[TRef], Yi, Mix)*[TRef]
+      var T1 = MIX.GetTFromInternalEnergy(e/[eRef], ([T]+100.0)/[TRef], Yi, &Mix)*[TRef]
       regentlib.assert(fabs((T1/([T])) - 1.0) < 1e-3, ["mixTest: ERROR in GetTFromInternalEnergy of " .. name])
 
       -- check isValidInternalEnergy
-      regentlib.assert(MIX.isValidInternalEnergy(e/[eRef], Yi, Mix) == true,  ["mixTest: ERROR in isValidInternalEnergy of " .. name])
-      regentlib.assert(MIX.isValidInternalEnergy(-1.0e60,  Yi, Mix) == false, ["mixTest: ERROR in isValidInternalEnergy of " .. name])
+      regentlib.assert(MIX.isValidInternalEnergy(e/[eRef], Yi, &Mix) == true,  ["mixTest: ERROR in isValidInternalEnergy of " .. name])
+      regentlib.assert(MIX.isValidInternalEnergy(-1.0e60,  Yi, &Mix) == false, ["mixTest: ERROR in isValidInternalEnergy of " .. name])
 
       -- check GetTFromRhoAndP
-      regentlib.assert(fabs((MIX.GetTFromRhoAndP(rho/[rhoRef], MixW, P/[PRef], Mix)*[TRef]/([T])) - 1.0) < 1e-3, ["mixTest: ERROR in GetTFromRhoAndP of " .. name])
+      regentlib.assert(fabs((MIX.GetTFromRhoAndP(rho/[rhoRef], MixW, P/[PRef], &Mix)*[TRef]/([T])) - 1.0) < 1e-3, ["mixTest: ERROR in GetTFromRhoAndP of " .. name])
 
       -- check GetPFromRhoAndT
-      regentlib.assert(fabs((MIX.GetPFromRhoAndT(rho/[rhoRef], MixW, T/[TRef], Mix)*[PRef]/([P])) - 1.0) < 1e-3, ["mixTest: ERROR in GetPFromRhoAndT of " .. name])
+      regentlib.assert(fabs((MIX.GetPFromRhoAndT(rho/[rhoRef], MixW, T/[TRef], &Mix)*[PRef]/([P])) - 1.0) < 1e-3, ["mixTest: ERROR in GetPFromRhoAndT of " .. name])
 
       -- check GetViscosity
-      regentlib.assert(fabs((MIX.GetViscosity(T/[TRef], Xi, Mix)*[muRef]/([Emu])) - 1.0) < 1e-3, ["mixTest: ERROR in GetViscosity of " .. name])
+      regentlib.assert(fabs((MIX.GetViscosity(T/[TRef], Xi, &Mix)*[muRef]/([Emu])) - 1.0) < 1e-3, ["mixTest: ERROR in GetViscosity of " .. name])
 
       -- check GetHeatConductivity
-      regentlib.assert(fabs((MIX.GetHeatConductivity(T/[TRef], Xi, Mix)*[lamRef]/([Elam])) - 1.0) < 1e-3, ["mixTest: ERROR in GetHeatConductivity of " .. name])
+      regentlib.assert(fabs((MIX.GetHeatConductivity(T/[TRef], Xi, &Mix)*[lamRef]/([Elam])) - 1.0) < 1e-3, ["mixTest: ERROR in GetHeatConductivity of " .. name])
 
       -- check GetGamma
-      var gamma = MIX.GetGamma(T/[TRef], MixW, Yi, Mix)
+      var gamma = MIX.GetGamma(T/[TRef], MixW, Yi, &Mix)
       regentlib.assert(fabs((gamma/([Egamma])) - 1.0) < 1e-3, ["mixTest: ERROR in GetGamma of " .. name])
 
       -- check GetSpeedOfSound
-      regentlib.assert(fabs((MIX.GetSpeedOfSound(T/[TRef], gamma, MixW, Mix)*[uRef]/([Esos])) - 1.0) < 1e-3, ["mixTest: ERROR in GetSpeedOfSound of " .. name])
+      regentlib.assert(fabs((MIX.GetSpeedOfSound(T/[TRef], gamma, MixW, &Mix)*[uRef]/([Esos])) - 1.0) < 1e-3, ["mixTest: ERROR in GetSpeedOfSound of " .. name])
 
       -- check GetDiffusivity
-      var dif : double[MIX.nSpec]; MIX.GetDiffusivity(&dif[0], [P]/[PRef], [T]/[TRef], MixW, Xi, Mix)
+      var dif : double[MIX.nSpec]; MIX.GetDiffusivity(dif, [P]/[PRef], [T]/[TRef], MixW, Xi, &Mix)
       for i = 0, MIX.nSpec do
          regentlib.assert(fabs((dif[i]*[DiRef] - [Edif][i])/([Edif][i] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetDiffusivity of " .. name])
       end
@@ -702,34 +855,34 @@ function mktestMixture()
    [(function() local __quotes = terralib.newlist()
    if (MIX.nIons > 0) then __quotes:insert(rquote
       -- check GetElectricMobility
-      var mob : double[MIX.nIons]; MIX.GetElectricMobility(&mob[0], [P]/[PRef], [T]/[TRef], Xi, Mix)
+      var mob : double[MIX.nIons]; MIX.GetElectricMobility(mob, [P]/[PRef], [T]/[TRef], Xi, &Mix)
       for i = 0, MIX.nIons do
          regentlib.assert(fabs((mob[i]*[KiRef] - [Emob][i])/([Emob][i] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetElectricMobility of " .. name])
       end
    end) end return __quotes end)()];
 
       -- check GetElectricChargeDensity
-      regentlib.assert(fabs((MIX.GetElectricChargeDensity(rho/[rhoRef], MixW, Xi, Mix)*[rhoqRef] - [Erhoq])/([Erhoq] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetElectricChargeDensity of " .. name])
+      regentlib.assert(fabs((MIX.GetElectricChargeDensity(rho/[rhoRef], MixW, Xi, &Mix)*[rhoqRef] - [Erhoq])/([Erhoq] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetElectricChargeDensity of " .. name])
 
       -- check GetSpeciesChargeNumnber
       for i = 0, MIX.nSpec do
-         regentlib.assert(MIX.GetSpeciesChargeNumber(i, Mix) == ESi[i], ["mixTest: ERROR in GetSpeciesChargeNumnber of " .. name])
+         regentlib.assert(MIX.GetSpeciesChargeNumber(i, &Mix) == ESi[i], ["mixTest: ERROR in GetSpeciesChargeNumnber of " .. name])
       end
 
       -- check GetDielectricPermittivity
-      regentlib.assert(fabs((MIX.GetDielectricPermittivity(Mix)/[Eps0] - [eps_0])/([eps_0] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetDielectricPermittivity of " .. name])
+      regentlib.assert(fabs((MIX.GetDielectricPermittivity(&Mix)/[Eps0] - [eps_0])/([eps_0] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetDielectricPermittivity of " .. name])
 
       -- check GetProductionRates
-      var prod : double[MIX.nSpec]; MIX.GetProductionRates(&prod[0], rho/[rhoRef], [P]/[PRef], [T]/[TRef], Yi, Mix)
+      var prod : double[MIX.nSpec]; MIX.GetProductionRates(prod, rho/[rhoRef], [P]/[PRef], [T]/[TRef], Yi, &Mix)
       for i = 0, MIX.nSpec do
          regentlib.assert(fabs((prod[i]*[wiRef] - [Eprod][i])/([Eprod][i] + 1e-60)) < 1e-3, ["mixTest: ERROR in GetProductionRates of " .. name])
       end
 
       -- check Getdpdrhoi
-      regentlib.assert(fabs((MIX.Getdpde(rho/[rhoRef], gamma, Mix)*[dpdeRef]/([Edpde])) - 1.0) < 1e-3, ["mixTest: ERROR in Getdpde of " .. name])
+      regentlib.assert(fabs((MIX.Getdpde(rho/[rhoRef], gamma, &Mix)*[dpdeRef]/([Edpde])) - 1.0) < 1e-3, ["mixTest: ERROR in Getdpde of " .. name])
 
       -- check Getdpdrhoi
-      var dpdrhoi : double[MIX.nSpec]; MIX.Getdpdrhoi(&dpdrhoi[0], gamma, [T]/[TRef], Yi, Mix)
+      var dpdrhoi : double[MIX.nSpec]; MIX.Getdpdrhoi(dpdrhoi, gamma, [T]/[TRef], Yi, &Mix)
       for i = 0, MIX.nSpec do
          regentlib.assert(fabs((dpdrhoi[i]*[dpdrhoiRef] - [Edpdrho][i])/([Edpdrho][i] + 1e-60)) < 1e-3, ["mixTest: ERROR in Getdpdrhoi of " .. name])
       end

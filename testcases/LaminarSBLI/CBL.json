@@ -1,0 +1,133 @@
+{
+   "Mapping" : {
+      "tiles" : [2,1,1],
+      "tilesPerRank" : [2,1,1],
+      "wallTime" : 10000
+   },
+
+   "Grid" : {
+      "xNum" : 800,
+      "yNum" : 200,
+      "zNum" : 1,
+      "GridInput" : {
+         "type" : "Cartesian",
+         "origin" : [0.0, 0.0, 0.0],
+         "width" : [50.0, 5.0, 1.0],
+         "xType" : { "type" : "Uniform" },
+         "yType" : {
+            "type" : "SinhMinus",
+            "Stretching" : 2.5
+         },
+         "zType" : { "type" : "Uniform" }
+      }
+   },
+
+   "Integrator" : {
+      "startIter" : 0,
+      "startTime" : 0.0,
+      "resetTime" : false,
+      "maxIter" : 20000,
+      "maxTime" : 20.0,
+      "TimeStep" : {
+         "type" : "ConstantCFL",
+         "cfl" : 0.5
+      },
+      "implicitChemistry" : false,
+      "EulerScheme" : {
+         "type" : "Hybrid",
+         "vorticityScale" : 1.0
+      }
+   },
+
+   "BC" : {
+      "xBCLeft" : {
+         "type" : "NSCBC_Inflow",
+         "VelocityProfile" : {
+            "type" : "File",
+            "FileDir" : "InflowProfile",
+            "Reynolds" : 100000,
+            "velocity" : 7.099
+         },
+         "P" : 1.0,
+         "TemperatureProfile" : {
+            "type" : "File",
+            "FileDir" : "InflowProfile",
+            "temperature" : 1.0
+         },
+         "MixtureProfile" : {
+            "type" : "Constant",
+            "Mixture" : {
+               "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+            }
+         }
+      },
+      "xBCRight" : {
+         "type" : "NSCBC_Outflow",
+         "P" : 1.0
+      },
+      "yBCLeft" : {
+         "type" : "IsothermalWall",
+         "TemperatureProfile" : {
+            "type" : "Constant",
+            "temperature" : 1.0
+         }
+      },
+      "yBCRight" : {
+         "type" : "IncomingShock",
+         "iShock" : 102,
+         "beta" : 15.0,
+         "Mixture" : {
+            "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+         },
+         "velocity0" : [7.099, 0.006, 0.0],
+         "pressure0" : 1.0,
+         "temperature0" : 1.0
+      },
+      "zBCLeft" :  { "type" : "Periodic" },
+      "zBCRight" : { "type" : "Periodic" },
+      "bufferZone" : { "type" : "Off" }
+   },
+
+   "Flow" : {
+      "mixture" : {
+         "type" : "ConstPropMix",
+         "gasConstant" : 1.0,
+         "gamma" : 1.4,
+         "prandtl" : 0.71,
+         "viscosityModel" : {
+            "type" : "PowerLaw",
+            "ViscRef" : 0.0005,
+            "TempRef" : 1.0
+         }
+      },
+      "initCase" : {
+         "type" : "Restart",
+         "restartDir" : "InflowProfile"
+      },
+      "resetMixture" : false,
+      "initMixture" : {
+         "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+      },
+      "bodyForce" : [0.0, 0.0, 0.0],
+      "turbForcing" : { "type" : "OFF" },
+      "laser" : { "type" : "Off" }
+   },
+
+   "IO" : {
+      "wrtRestart" : true,
+      "restartEveryTimeSteps" : 100,
+      "probesSamplingInterval" : 1,
+      "probes" : [],
+      "AveragesSamplingInterval" : 1,
+      "ResetAverages" : false,
+      "YZAverages" : [],
+      "XZAverages" : [],
+      "XYAverages" : [],
+      "XAverages" : [],
+      "YAverages" : [],
+      "ZAverages" : [],
+      "volumeProbes" : []
+   },
+
+   "Efield" : { "type" : "Off" }
+}

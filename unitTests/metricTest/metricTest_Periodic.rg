@@ -8,7 +8,7 @@ local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
 local REGISTRAR = terralib.includec("prometeo_metric.h")
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 
 -- Reference solution
@@ -37,12 +37,16 @@ if ELECTRIC_FIELD then
 end
 local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
 local Fluid_columns = TYPES.Fluid_columns
+local bBoxType = TYPES.bBoxType
 
 --External modules
 local MACRO = require "prometeo_macro"
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
-local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
-local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns, PART.zones_partitions)
+local IO = (require 'prometeo_IO')(SCHEMA)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
+local GRID = (require 'prometeo_grid')(SCHEMA, IO, Fluid_columns, bBoxType,
+                                       PART.zones_partitions, PART.output_partitions)
 
 -- Test parameters
 local Npx = 16
@@ -64,7 +68,6 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, 0)
    fill(Fluid.nType_y, 0)
    fill(Fluid.nType_z, 0)
@@ -107,12 +110,27 @@ task main()
    C.printf("metricTest_Periodic: run...\n")
 
    var config : SCHEMA.Config
+
+   C.snprintf([&int8](config.Mapping.outDir), 256, "./PeriodicDir")
+   UTIL.createDir(config.Mapping.outDir)
+
    config.BC.xBCLeft.type  = SCHEMA.FlowBC_Periodic
    config.BC.xBCRight.type = SCHEMA.FlowBC_Periodic
    config.BC.yBCLeft.type  = SCHEMA.FlowBC_Periodic
    config.BC.yBCRight.type = SCHEMA.FlowBC_Periodic
    config.BC.zBCLeft.type  = SCHEMA.FlowBC_Periodic
    config.BC.zBCRight.type = SCHEMA.FlowBC_Periodic
+
+   config.Grid.xNum = Npx
+   config.Grid.yNum = Npy
+   config.Grid.zNum = Npz
+
+   config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+   config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+   config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+   config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Cosine
+   config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Cosine
+   config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Cosine
 
    -- No ghost cells
    var xBnum = 0
@@ -124,40 +142,23 @@ task main()
                                  y = Npy + 2*yBnum,
                                  z = Npz + 2*zBnum})
    var Fluid = region(is_Fluid, Fluid_columns)
-   var Fluid_bounds = Fluid.bounds
 
    -- Partitioning domain
    var tiles = ispace(int3d, {Nx, Ny, Nz})
 
    -- Fluid Partitioning
    var Fluid_Zones = PART.PartitionZones(Fluid, tiles, config, xBnum, yBnum, zBnum)
-   var {p_All} = Fluid_Zones
+   var Fluid_Ghost = PART.PartitionGhost(Fluid, tiles, Fluid_Zones, config)
 
    InitializeCell(Fluid)
 
-   __demand(__index_launch)
-   for c in tiles do
-      GRID.InitializeGeometry(p_All[c],
-                              SCHEMA.GridType_Cosine, SCHEMA.GridType_Cosine, SCHEMA.GridType_Cosine,
-                              1.0, 1.0, 1.0,
-                              xBnum, Npx, xO, xW,
-                              yBnum, Npy, yO, yW,
-                              zBnum, Npz, zO, zW)
-   end
+   var boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
 
-   METRIC.InitializeOperators(Fluid, tiles, p_All)
+   METRIC.InitializeOperators(Fluid, tiles, Fluid_Zones, config,
+                              xBnum, yBnum, zBnum)
 
-   -- Create partitions to support stencils
-   var Fluid_Ghosts = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
-   var {p_MetricGhosts} = Fluid_Ghosts
-
-   __demand(__index_launch)
-   for c in tiles do
-      METRIC.InitializeMetric(p_MetricGhosts[c],
-                              p_All[c],
-                              Fluid_bounds,
-                              xW, yW, zW)
-   end
+   METRIC.InitializeMetric(Fluid, tiles, Fluid_Zones, Fluid_Ghost,
+                           boundingBox, config)
 
    checkMetric(Fluid)
 

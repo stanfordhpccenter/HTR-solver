@@ -97,11 +97,9 @@ public:
    struct Args {
       uint64_t arg_mask[1];
       LogicalRegion Fluid;
-      LogicalRegion ModCells;
       double Integrator_deltaTime;
       Mix mix;
       FieldID Fluid_fields [FID_last - 101];
-      FieldID ModCells_fields [FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;
@@ -130,10 +128,8 @@ public:
    struct Args {
       uint64_t arg_mask[1];
       LogicalRegion Fluid;
-      LogicalRegion ModCells;
       Mix mix;
       FieldID Fluid_fields [FID_last - 101];
-      FieldID ModCells_fields [FID_last - 101];
    };
 public:
    static const char * const TASK_NAME;

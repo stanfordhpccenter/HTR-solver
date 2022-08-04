@@ -62,7 +62,7 @@
 // H2
 #define iH2 0
 #define     H2 { \
-   /*      Name = */       (char*)("H2"), \
+   /*      Name = */       ("H2"), \
    /*         W = */       0.00100784*2, \
    /*       inx = */       iH2, \
    /*    cpCoeff = */       {  \
@@ -86,7 +86,7 @@
 // H
 #define iH 1
 #define      H { \
-   /*      Name = */       (char*)("H"), \
+   /*      Name = */       ("H"), \
    /*         W = */       0.00100784*1, \
    /*       inx = */       iH, \
    /*    cpCoeff = */       {  \
@@ -110,7 +110,7 @@
 // O
 #define iO 2
 #define      O { \
-   /*      Name = */       (char*)("O"), \
+   /*      Name = */       ("O"), \
    /*         W = */       0.0159994*1, \
    /*       inx = */       iO, \
    /*    cpCoeff = */       {  \
@@ -134,7 +134,7 @@
 // O2
 #define iO2 3
 #define     O2 { \
-   /*      Name = */       (char*)("O2"), \
+   /*      Name = */       ("O2"), \
    /*         W = */       0.0159994*2, \
    /*       inx = */       iO2, \
    /*    cpCoeff = */       {  \
@@ -158,7 +158,7 @@
 // OH
 #define iOH 4
 #define     OH { \
-   /*      Name = */       (char*)("OH"), \
+   /*      Name = */       ("OH"), \
    /*         W = */       0.00100784*1+0.0159994*1, \
    /*       inx = */       iOH, \
    /*    cpCoeff = */       {  \
@@ -182,7 +182,7 @@
 // H2O
 #define iH2O 5
 #define    H2O { \
-   /*      Name = */       (char*)("H2O"), \
+   /*      Name = */       ("H2O"), \
    /*         W = */       0.00100784*2+0.0159994*1, \
    /*       inx = */       iH2O, \
    /*    cpCoeff = */       {  \
@@ -206,7 +206,7 @@
 // HO2
 #define iHO2 6
 #define    HO2 { \
-   /*      Name = */       (char*)("HO2"), \
+   /*      Name = */       ("HO2"), \
    /*         W = */       0.00100784*1+0.0159994*2, \
    /*       inx = */       iHO2, \
    /*    cpCoeff = */       {  \
@@ -230,7 +230,7 @@
 // H2O2
 #define iH2O2 7
 #define   H2O2 { \
-   /*      Name = */       (char*)("H2O2"), \
+   /*      Name = */       ("H2O2"), \
    /*         W = */       0.00100784*2+0.0159994*2, \
    /*       inx = */       iH2O2, \
    /*    cpCoeff = */       {  \
@@ -254,7 +254,7 @@
 // C
 #define iC 8
 #define      C { \
-   /*      Name = */       (char*)("C"), \
+   /*      Name = */       ("C"), \
    /*         W = */       0.0120107*1, \
    /*       inx = */       iC, \
    /*    cpCoeff = */       {  \
@@ -278,7 +278,7 @@
 // CH
 #define iCH 9
 #define     CH { \
-   /*      Name = */       (char*)("CH"), \
+   /*      Name = */       ("CH"), \
    /*         W = */       0.0120107*1+0.00100784*1, \
    /*       inx = */       iCH, \
    /*    cpCoeff = */       {  \
@@ -302,7 +302,7 @@
 // CH2
 #define iCH2 10
 #define    CH2 { \
-   /*      Name = */       (char*)("CH2"), \
+   /*      Name = */       ("CH2"), \
    /*         W = */       0.0120107*1+0.00100784*2, \
    /*       inx = */       iCH2, \
    /*    cpCoeff = */       {  \
@@ -326,7 +326,7 @@
 // CH2(S)
 #define iCH2_S 11
 #define  CH2_S { \
-   /*      Name = */       (char*)("CH2(S)"), \
+   /*      Name = */       ("CH2(S)"), \
    /*         W = */       0.0120107*1+0.00100784*2, \
    /*       inx = */       iCH2_S, \
    /*    cpCoeff = */       {  \
@@ -350,7 +350,7 @@
 // CH3
 #define iCH3 12
 #define    CH3 { \
-   /*      Name = */       (char*)("CH3"), \
+   /*      Name = */       ("CH3"), \
    /*         W = */       0.0120107*1+0.00100784*3, \
    /*       inx = */       iCH3, \
    /*    cpCoeff = */       {  \
@@ -374,7 +374,7 @@
 // CH4
 #define iCH4 13
 #define    CH4 { \
-   /*      Name = */       (char*)("CH4"), \
+   /*      Name = */       ("CH4"), \
    /*         W = */       0.0120107*1+0.00100784*4, \
    /*       inx = */       iCH4, \
    /*    cpCoeff = */       {  \
@@ -398,7 +398,7 @@
 // CO
 #define iCO 14
 #define     CO { \
-   /*      Name = */       (char*)("CO"), \
+   /*      Name = */       ("CO"), \
    /*         W = */       0.0120107*1+0.0159994*1, \
    /*       inx = */       iCO, \
    /*    cpCoeff = */       {  \
@@ -422,7 +422,7 @@
 // CO2
 #define iCO2 15
 #define    CO2 { \
-   /*      Name = */       (char*)("CO2"), \
+   /*      Name = */       ("CO2"), \
    /*         W = */       0.0120107*1+0.0159994*2, \
    /*       inx = */       iCO2, \
    /*    cpCoeff = */       {  \
@@ -446,7 +446,7 @@
 // HCO
 #define iHCO 16
 #define    HCO { \
-   /*      Name = */       (char*)("HCO"), \
+   /*      Name = */       ("HCO"), \
    /*         W = */       0.0120107*1+0.00100784*1+0.0159994*1, \
    /*       inx = */       iHCO, \
    /*    cpCoeff = */       {  \
@@ -470,7 +470,7 @@
 // CH2O
 #define iCH2O 17
 #define   CH2O { \
-   /*      Name = */       (char*)("CH2O"), \
+   /*      Name = */       ("CH2O"), \
    /*         W = */       0.0120107*1+0.00100784*2+0.0159994*1, \
    /*       inx = */       iCH2O, \
    /*    cpCoeff = */       {  \
@@ -494,7 +494,7 @@
 // CH2OH
 #define iCH2OH 18
 #define  CH2OH { \
-   /*      Name = */       (char*)("CH2OH"), \
+   /*      Name = */       ("CH2OH"), \
    /*         W = */       0.0120107*1+0.00100784*3+0.0159994*1, \
    /*       inx = */       iCH2OH, \
    /*    cpCoeff = */       {  \
@@ -518,7 +518,7 @@
 // CH3O
 #define iCH3O 19
 #define   CH3O { \
-   /*      Name = */       (char*)("CH3O"), \
+   /*      Name = */       ("CH3O"), \
    /*         W = */       0.0120107*1+0.00100784*3+0.0159994*1, \
    /*       inx = */       iCH3O, \
    /*    cpCoeff = */       {  \
@@ -542,7 +542,7 @@
 // CH3OH
 #define iCH3OH 20
 #define  CH3OH { \
-   /*      Name = */       (char*)("CH3OH"), \
+   /*      Name = */       ("CH3OH"), \
    /*         W = */       0.0120107*1+0.00100784*4+0.0159994*1, \
    /*       inx = */       iCH3OH, \
    /*    cpCoeff = */       {  \
@@ -566,7 +566,7 @@
 // C2H2
 #define iC2H2 21
 #define   C2H2 { \
-   /*      Name = */       (char*)("C2H2"), \
+   /*      Name = */       ("C2H2"), \
    /*         W = */       0.0120107*2+0.00100784*2, \
    /*       inx = */       iC2H2, \
    /*    cpCoeff = */       {  \
@@ -590,7 +590,7 @@
 // C2H3
 #define iC2H3 22
 #define   C2H3 { \
-   /*      Name = */       (char*)("C2H3"), \
+   /*      Name = */       ("C2H3"), \
    /*         W = */       0.0120107*2+0.00100784*3, \
    /*       inx = */       iC2H3, \
    /*    cpCoeff = */       {  \
@@ -614,7 +614,7 @@
 // C2H4
 #define iC2H4 23
 #define   C2H4 { \
-   /*      Name = */       (char*)("C2H4"), \
+   /*      Name = */       ("C2H4"), \
    /*         W = */       0.0120107*2+0.00100784*4, \
    /*       inx = */       iC2H4, \
    /*    cpCoeff = */       {  \
@@ -638,7 +638,7 @@
 // C2H5
 #define iC2H5 24
 #define   C2H5 { \
-   /*      Name = */       (char*)("C2H5"), \
+   /*      Name = */       ("C2H5"), \
    /*         W = */       0.0120107*2+0.00100784*5, \
    /*       inx = */       iC2H5, \
    /*    cpCoeff = */       {  \
@@ -662,7 +662,7 @@
 // C2H6
 #define iC2H6 25
 #define   C2H6 { \
-   /*      Name = */       (char*)("C2H6"), \
+   /*      Name = */       ("C2H6"), \
    /*         W = */       0.0120107*2+0.00100784*6, \
    /*       inx = */       iC2H6, \
    /*    cpCoeff = */       {  \
@@ -686,7 +686,7 @@
 // HCCO
 #define iHCCO 26
 #define   HCCO { \
-   /*      Name = */       (char*)("HCCO"), \
+   /*      Name = */       ("HCCO"), \
    /*         W = */       0.0120107*2+0.00100784*1+0.0159994*1, \
    /*       inx = */       iHCCO, \
    /*    cpCoeff = */       {  \
@@ -710,7 +710,7 @@
 // CH2CO
 #define iCH2CO 27
 #define  CH2CO { \
-   /*      Name = */       (char*)("CH2CO"), \
+   /*      Name = */       ("CH2CO"), \
    /*         W = */       0.0120107*2+0.00100784*2+0.0159994*1, \
    /*       inx = */       iCH2CO, \
    /*    cpCoeff = */       {  \
@@ -734,7 +734,7 @@
 // CH2CHO
 #define iCH2CHO 28
 #define CH2CHO { \
-   /*      Name = */       (char*)("CH2CHO"), \
+   /*      Name = */       ("CH2CHO"), \
    /*         W = */       0.0120107*2+0.00100784*3+0.0159994*1, \
    /*       inx = */       iCH2CHO, \
    /*    cpCoeff = */       {  \
@@ -758,7 +758,7 @@
 // N2
 #define iN2 29
 #define     N2 { \
-   /*      Name = */       (char*)("N2"), \
+   /*      Name = */       ("N2"), \
    /*         W = */       0.0140067*2, \
    /*       inx = */       iN2, \
    /*    cpCoeff = */       {  \
@@ -5380,11 +5380,11 @@
 
 #ifndef __CUDACC__
 inline Mix::Mix(const Config &config) :
-species({H2, H, O, O2, OH, H2O, HO2, H2O2,
-         C, CH, CH2, CH2_S, CH3, CH4, CO, CO2,
-         HCO, CH2O, CH2OH, CH3O, CH3OH, C2H2, C2H3, C2H4,
-         C2H5, C2H6, HCCO, CH2CO, CH2CHO, N2 }),
-reactions({R3, R4, R5, R6, R7, R8, R9, R10,
+species{H2, H, O, O2, OH, H2O, HO2, H2O2,
+        C, CH, CH2, CH2_S, CH3, CH4, CO, CO2,
+        HCO, CH2O, CH2OH, CH3O, CH3OH, C2H2, C2H3, C2H4,
+        C2H5, C2H6, HCCO, CH2CO, CH2CHO, N2 },
+reactions{R3, R4, R5, R6, R7, R8, R9, R10,
          R11, R13, R14, R15, R16, R17, R18, R19,
          R20, R21, R22, R23, R24, R25, R26, R27,
          R28, R29, R30, R32, R33, R34, R35, R37,
@@ -5403,11 +5403,11 @@ reactions({R3, R4, R5, R6, R7, R8, R9, R10,
          R153, R154, R155, R156, R158, R159, R160, R161,
          R163, R164, R165, R166, R167, R168, R169, R171,
          R172, R173, R174, R175, R176, R178, R179, R180,
-         R181, R182, R183, R184 }),
-ThirdbodyReactions({R1, R2, R31, R36, R40, R157 }),
-FalloffReactions({R12, R47, R49, R51, R53, R54, R56, R60,
+         R181, R182, R183, R184 },
+ThirdbodyReactions{R1, R2, R31, R36, R40, R157 },
+FalloffReactions{R12, R47, R49, R51, R53, R54, R56, R60,
          R67, R68, R70, R72, R78, R80, R90, R122,
-         R131, R137, R148, R162, R170, R177 })
+         R131, R137, R148, R162, R170, R177 }
 {
 // This executable is expecting CH4_30SpMix in the input file
 assert(config.Flow.mixture.type == MixtureModel_CH4_30SpMix);

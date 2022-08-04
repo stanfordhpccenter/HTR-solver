@@ -43,6 +43,10 @@ return function(SCHEMA, MIX, TYPES, Fluid_columns,
 
 local USE_CUDA = (os.getenv("USE_CUDA") == "1")
 
+if (os.getenv("USE_FFTW") ~= "1") then
+   error ("Poisson module needs FFTW.")
+end
+
 -------------------------------------------------------------------------------
 -- CHECK THAT TID_DirFFT IS CORRCTLY SET
 -------------------------------------------------------------------------------
@@ -58,7 +62,7 @@ end
 -- IMPORTS
 -------------------------------------------------------------------------------
 local C = regentlib.c
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 local POISSON_H = terralib.includec("Poisson.h", {"-DUSE_CUDA="..os.getenv("USE_CUDA")})
 
@@ -105,27 +109,26 @@ local fspace fftPlansType {
    id : C.legion_address_space_t,
 }
 
-Exports.DataList = {
-   -- Data region
-   fft = regentlib.newsymbol(),
-   -- FFT plans
-   plans = regentlib.newsymbol(),
-   -- Data partitions
-   Fluid_XZslubs = regentlib.newsymbol("Poisson_Fluid_XZslubs"),
-   Fluid_Yplanes = regentlib.newsymbol("Poisson_Fluid_Yplanes"),
-   fft_XZslubs = regentlib.newsymbol("Poisson_fft_XZslubs"),
-   fft_Yplanes = regentlib.newsymbol("Poisson_fft_Yplanes"),
-   fft_yNeg = regentlib.newsymbol("Poisson_fft_yNeg"),
-   fft_yPos = regentlib.newsymbol("Poisson_fft_yPos"),
-   plans_p = regentlib.newsymbol("Poisson_plans"),
-   -- Launch index spaces
-   fft_yNeg_ispace = regentlib.newsymbol(),
-   fft_yPos_ispace = regentlib.newsymbol(),
-   -- Auxiliary regions and partitions
-   Coeffs = regentlib.newsymbol(),
-   k2X = regentlib.newsymbol(),
-   k2Z = regentlib.newsymbol(),
-}
+function Exports.mkDataList()
+   return {
+      -- Data region
+      fft = regentlib.newsymbol(),
+      -- FFT plans
+      plans = regentlib.newsymbol(),
+      -- Data partitions
+      Fluid_slubs  = regentlib.newsymbol("Poisson_Fluid_slubs"),
+      Fluid_planes = regentlib.newsymbol("Poisson_Fluid_planes"),
+      fft_slubs  = regentlib.newsymbol("Poisson_fft_slubs"),
+      fft_planes = regentlib.newsymbol("Poisson_fft_planes"),
+      fft_yNeg = regentlib.newsymbol("Poisson_fft_yNeg"),
+      fft_yPos = regentlib.newsymbol("Poisson_fft_yPos"),
+      plans_p = regentlib.newsymbol("Poisson_plans"),
+      -- Auxiliary regions and partitions
+      Coeffs = regentlib.newsymbol(),
+      k2X = regentlib.newsymbol(),
+      k2Z = regentlib.newsymbol(),
+   }
+end
 
 -------------------------------------------------------------------------------
 -- PARTITIONING UTILS
@@ -238,7 +241,7 @@ local function mkGenerateYplanes(name)
            hi = int3d{halo.x + (Nx/my_ntx)*(c1d.x+1) + min(c1d.x+1, modP.x) - 1,
                       halo.y + (Ny/my_nty)*(c1d.y+1) + min(c1d.y+1, modP.y) - 1,
                       halo.z + (Nz/my_ntz)*(c1d.z+1) + min(c1d.z+1, modP.z) - 1}}
--- We do not need to do FFT transform of the ghost data
+         -- Inlcude ghost data in the FFT transform
          if c1d.x == 0 then rect.lo.x -= halo.x end
          if c1d.y == 0 then rect.lo.y -= halo.y end
          if c1d.z == 0 then rect.lo.z -= halo.z end
@@ -276,10 +279,11 @@ function Exports.DeclSymbols(DATA, Fluid, tiles, Fluid_Zones, Grid, config, MAPP
       regentlib.assert(config.BC.yBCLeft.type ~= SCHEMA.FlowBC_Periodic,
                        "Boundary conditions in the y direction cannot be periodic for this Poisson solver")
       -- Uniform mesh on X and Z
-      regentlib.assert(config.Grid.xType == SCHEMA.GridType_Uniform,
-                       "Computational mesh has to be uniform in the x direction")
-      regentlib.assert(config.Grid.zType == SCHEMA.GridType_Uniform,
-                       "Computational mesh has to be uniform in the z direction")
+      -- (User is responsible of ensuring this)
+--      regentlib.assert(config.Grid.xType.type == SCHEMA.GridType_Uniform,
+--                       "Computational mesh has to be uniform in the x direction")
+--      regentlib.assert(config.Grid.zType.type == SCHEMA.GridType_Uniform,
+--                       "Computational mesh has to be uniform in the z direction")
    end
 
    ---------------------------------------------------------------------------
@@ -292,22 +296,20 @@ function Exports.DeclSymbols(DATA, Fluid, tiles, Fluid_Zones, Grid, config, MAPP
    [UTIL.emitRegionTagAttach(DATA.fft, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
 
    -- Define data partitions for Poisson solver
-   var [DATA.Fluid_XZslubs] = [mkGenerateXZslubs("Poisson_Fluid_XZslubs")]
-                              (Fluid, tiles, int3d{Grid.xBnum, Grid.yBnum, Grid.zBnum}, int3d{0,0,0})
-   var [DATA.Fluid_Yplanes] = [mkGenerateYplanes("Poisson_Fluid_Yplanes")]
-                              (Fluid, tiles, int3d{Grid.xBnum, Grid.yBnum, Grid.zBnum}, int3d{0,0,0});
+   var [DATA.Fluid_slubs]  = [mkGenerateXZslubs("Poisson_Fluid_slubs")]
+                             (Fluid, tiles, int3d{Grid.xBnum, Grid.yBnum, Grid.zBnum}, int3d{0,0,0})
+   var [DATA.Fluid_planes] = [mkGenerateYplanes("Poisson_Fluid_planes")]
+                             (Fluid, tiles, int3d{Grid.xBnum, Grid.yBnum, Grid.zBnum}, int3d{0,0,0});
 
-   var [DATA.fft_XZslubs] = DATA.fft & DATA.Fluid_XZslubs
-   var [DATA.fft_Yplanes] = DATA.fft & DATA.Fluid_Yplanes;
-   [UTIL.emitPartitionNameAttach(rexpr DATA.fft_XZslubs end, "Poisson_fft_XZslubs")];
-   [UTIL.emitPartitionNameAttach(rexpr DATA.fft_Yplanes end, "Poisson_fft_Yplanes")];
+   var [DATA.fft_slubs]  = DATA.fft & DATA.Fluid_slubs
+   var [DATA.fft_planes] = DATA.fft & DATA.Fluid_planes;
+   [UTIL.emitPartitionNameAttach(rexpr DATA.fft_slubs  end, "Poisson_fft_slubs" )];
+   [UTIL.emitPartitionNameAttach(rexpr DATA.fft_planes end, "Poisson_fft_planes")];
 
-   var [DATA.fft_yNeg] = DATA.fft & cross_product(yNeg, p_All)[0]
-   var [DATA.fft_yPos] = DATA.fft & cross_product(yPos, p_All)[0];
+   var [DATA.fft_yNeg] = (DATA.fft & yNeg)[0] & DATA.fft_slubs
+   var [DATA.fft_yPos] = (DATA.fft & yPos)[0] & DATA.fft_slubs;
    [UTIL.emitPartitionNameAttach(rexpr DATA.fft_yNeg end, "Poisson_fft_yNeg")];
    [UTIL.emitPartitionNameAttach(rexpr DATA.fft_yPos end, "Poisson_fft_yPos")];
-   var [DATA.fft_yNeg_ispace] = yNeg_ispace
-   var [DATA.fft_yPos_ispace] = yPos_ispace
 
    -- Define plans for FFTs
    var [DATA.plans] = region(ispace(int1d, Grid.numTiles), fftPlansType);
@@ -419,7 +421,7 @@ local function mkInitWaveNumbers(sdir)
       mkcr = function(c, r) return rexpr int3d({r.bounds.lo.x, r.bounds.lo.y,        int(c)}) end end
    else assert(false) end
 
-   __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
+   __demand(__leaf, __cuda) -- MANUALLY PARALLELIZED
    task InitWaveNumbers(k : region(ispace(int1d), complex64),
                         r : region(ispace(int3d), Fluid_columns))
    where
@@ -447,21 +449,21 @@ function Exports.Init(DATA, tiles, Grid, config) return rquote
       fillFFTplans(DATA.plans)
       __demand(__index_launch)
       for c in tiles do
-         initFFTplans(DATA.Fluid_Yplanes[c], DATA.plans_p[c])
+         initFFTplans(DATA.Fluid_planes[c], DATA.plans_p[c])
       end
 
       -- Init tridiagonal coefficients
       fill([DATA.Coeffs].a, 0.0)
       fill([DATA.Coeffs].b, 0.0)
       fill([DATA.Coeffs].c, 0.0)
-      initCoefficients(DATA.Fluid_XZslubs[tiles.bounds.lo], DATA.Coeffs, Grid.yBnum)
+      initCoefficients(DATA.Fluid_slubs[tiles.bounds.lo], DATA.Coeffs, Grid.yBnum)
       --PrintCoefficients(DATA.Coeffs)
 
       -- Init regions for squared complex wavenumbers
       fill([DATA.k2X], complex64{0.0, 0.0})
       fill([DATA.k2Z], complex64{0.0, 0.0});
-      [mkInitWaveNumbers("x")](DATA.k2X, DATA.Fluid_Yplanes[tiles.bounds.lo]);
-      [mkInitWaveNumbers("z")](DATA.k2Z, DATA.Fluid_Yplanes[tiles.bounds.lo]);
+      [mkInitWaveNumbers("x")](DATA.k2X, DATA.Fluid_planes[tiles.bounds.lo]);
+      [mkInitWaveNumbers("z")](DATA.k2Z, DATA.Fluid_planes[tiles.bounds.lo]);
    end
 end end
 
@@ -489,7 +491,7 @@ end end
 -- POISSON ROUTINES
 -------------------------------------------------------------------------------
 
-local __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
+local __demand(__leaf, __cuda) -- MANUALLY PARALLELIZED
 task setFFTBCs(fft : region(ispace(int3d), complex64),
                bc : double)
 where
@@ -544,31 +546,30 @@ function Exports.Solve(DATA, tiles, Mix, config) return rquote
       -- Perform planar FFTs
       __demand(__index_launch)
       for c in tiles do
-         performDirFFT(DATA.Fluid_Yplanes[c], DATA.fft_Yplanes[c], DATA.plans_p[c],
-                       Mix)
+         performDirFFT(DATA.Fluid_planes[c], DATA.fft_planes[c], DATA.plans_p[c], Mix)
       end
 
       -- Set electric potential bcs
       __demand(__index_launch)
-      for c in DATA.fft_yNeg_ispace do
+      for c in tiles do
          setFFTBCs(DATA.fft_yNeg[c], config.Efield.u.Ybc.Phi_bottom)
       end
       __demand(__index_launch)
-      for c in DATA.fft_yPos_ispace do
+      for c in tiles do
          setFFTBCs(DATA.fft_yPos[c], config.Efield.u.Ybc.Phi_top)
       end
 
       -- Solve the tridiagonal
       __demand(__index_launch)
       for c in tiles do
-         solveTridiagonals(DATA.fft_XZslubs[c], DATA.Coeffs, DATA.k2X, DATA.k2Z,
+         solveTridiagonals(DATA.fft_slubs[c], DATA.Coeffs, DATA.k2X, DATA.k2Z,
                            config.Efield.u.Ybc.Robin_bc)
       end
 
       -- Perform planar inverse FFTs
       __demand(__index_launch)
       for c in tiles do
-         performInvFFT(DATA.Fluid_Yplanes[c], DATA.fft_Yplanes[c], DATA.plans_p[c])
+         performInvFFT(DATA.Fluid_planes[c], DATA.fft_planes[c], DATA.plans_p[c])
       end
    end
 end end

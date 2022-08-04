@@ -110,9 +110,15 @@ namespace TaskHelper {
                          const std::vector<Legion::PhysicalRegion> &regions,
                          Legion::Context ctx, Legion::Runtime *runtime)
    {
-      assert(task->arglen == 0);
-      assert(task->local_arglen == sizeof(typename T::Args));
-      const typename T::Args *a = (typename T::Args*)task->local_args;
+      typename T::Args *a;
+      if (task->arglen == 0) {
+         assert(task->local_arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->local_args;
+      } else {
+         assert(task->local_arglen == 0);
+         assert(task->arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->args;
+      }
       T::cpu_base_impl(*a, regions, task->futures, ctx, runtime);
    }
 
@@ -121,9 +127,15 @@ namespace TaskHelper {
                         const std::vector<Legion::PhysicalRegion> &regions,
                         Legion::Context ctx, Legion::Runtime *runtime)
    {
-      assert(task->arglen == 0);
-      assert(task->local_arglen == sizeof(typename T::Args));
-      const typename T::Args *a = (typename T::Args*)task->local_args;
+      typename T::Args *a;
+      if (task->arglen == 0) {
+         assert(task->local_arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->local_args;
+      } else {
+         assert(task->local_arglen == 0);
+         assert(task->arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->args;
+      }
       return T::cpu_base_impl(*a, regions, task->futures, ctx, runtime);
    }
 
@@ -133,9 +145,15 @@ namespace TaskHelper {
                          const std::vector<Legion::PhysicalRegion> &regions,
                          Legion::Context ctx, Legion::Runtime *runtime)
    {
-      assert(task->arglen == 0);
-      assert(task->local_arglen == sizeof(typename T::Args));
-      const typename T::Args *a = (typename T::Args*)task->local_args;
+      typename T::Args *a;
+      if (task->arglen == 0) {
+         assert(task->local_arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->local_args;
+      } else {
+         assert(task->local_arglen == 0);
+         assert(task->arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->args;
+      }
       T::gpu_base_impl(*a, regions, task->futures, ctx, runtime);
    }
 
@@ -144,9 +162,15 @@ namespace TaskHelper {
                         const std::vector<Legion::PhysicalRegion> &regions,
                         Legion::Context ctx, Legion::Runtime *runtime)
    {
-      assert(task->arglen == 0);
-      assert(task->local_arglen == sizeof(typename T::Args));
-      const typename T::Args *a = (typename T::Args*)task->local_args;
+      typename T::Args *a;
+      if (task->arglen == 0) {
+         assert(task->local_arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->local_args;
+      } else {
+         assert(task->local_arglen == 0);
+         assert(task->arglen == sizeof(typename T::Args));
+         a = (typename T::Args*)task->args;
+      }
       return T::gpu_base_impl(*a, regions, task->futures, ctx, runtime);
    }
 #endif

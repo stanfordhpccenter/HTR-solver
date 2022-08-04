@@ -7,6 +7,11 @@ RAM_PER_NODE=150000
 GPUS_PER_NODE=4
 FB_PER_GPU=14000
 
+# Use hyperthreading for the runtime
+IO_THREADS="${IO_THREADS:-4}"
+UTIL_THREADS="${UTIL_THREADS:-4}"
+BGWORK_THREADS="${BGWORK_THREADS:-16}"
+
 cd $SLURM_SUBMIT_DIR
 source "$HTR_DIR"/jobscripts/jobscript_shared.sh
 

@@ -29,7 +29,7 @@
 
 import "regent"
 
-return function(SCHEMA, MIX, Fluid_columns) local Exports = {}
+return function(SCHEMA, MIX, Fluid_columns, bBoxType) local Exports = {}
 
 -- Variable indices
 local nSpec = MIX.nSpec       -- Number of species composing the mixture
@@ -45,11 +45,14 @@ local cosh = regentlib.cosh(double)
 local exp  = regentlib.exp(double)
 local pow  = regentlib.pow(double)
 
+local UTIL  = require "util"
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
 
 local PI = CONST.PI
 local Primitives = CONST.Primitives
+
+local rand = UTIL.mkRand()
 
 -------------------------------------------------------------------------------
 -- INITIALIZATION ROUTINES
@@ -75,7 +78,7 @@ do
    end
 end
 
-__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeRandom(Fluid : region(ispace(int3d), Fluid_columns),
                               initPressure : double,
                               initTemperature : double,
@@ -84,15 +87,20 @@ task Exports.InitializeRandom(Fluid : region(ispace(int3d), Fluid_columns),
 where
    writes(Fluid.[Primitives])
 do
-   var rngState : C.drand48_data
-   C.srand48_r(C.legion_get_current_time_in_nanos(), &rngState)
+   var randSeed = C.legion_get_current_time_in_nanos()
+   var xsize = Fluid.bounds.hi.x - Fluid.bounds.lo.x + 1
+   var ysize = Fluid.bounds.hi.y - Fluid.bounds.lo.y + 1
+   __demand(__openmp)
    for c in Fluid do
+      var ctr1 = 3*(c.x + xsize*(c.y + ysize*c.z))
+      var ctr2 = 3*(c.x + xsize*(c.y + ysize*c.z)) + 1
+      var ctr3 = 3*(c.x + xsize*(c.y + ysize*c.z)) + 2
       Fluid[c].MolarFracs  = initMolarFracs
       Fluid[c].pressure    = initPressure
       Fluid[c].temperature = initTemperature
-      Fluid[c].velocity = array(2 * (MACRO.drand48_r(&rngState) - 0.5) * magnitude,
-                                2 * (MACRO.drand48_r(&rngState) - 0.5) * magnitude,
-                                2 * (MACRO.drand48_r(&rngState) - 0.5) * magnitude)
+      Fluid[c].velocity = array(2 * (rand(randSeed, ctr1) - 0.5) * magnitude,
+                                2 * (rand(randSeed, ctr2) - 0.5) * magnitude,
+                                2 * (rand(randSeed, ctr3) - 0.5) * magnitude)
    end
 end
 
@@ -102,18 +110,15 @@ task Exports.InitializeTaylorGreen2D(Fluid : region(ispace(int3d), Fluid_columns
                              taylorGreenTemperature : double,
                              taylorGreenVelocity : double,
                              taylorGreenMolarFracs : double[nSpec],
-                             mix : MIX.Mixture,
-                             Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                             Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                             Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
+                             mix : MIX.Mixture)
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
 do
-   MIX.ClipYi(&taylorGreenMolarFracs[0], mix)
+   MIX.ClipYi(taylorGreenMolarFracs, &mix)
+   var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, &mix)
+   var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, &mix)
    for c in Fluid do
-      var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, mix)
-      var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, mix)
       var xy = Fluid[c].centerCoordinates
       Fluid[c].temperature = taylorGreenTemperature
       Fluid[c].MolarFracs = taylorGreenMolarFracs
@@ -121,7 +126,7 @@ do
       var factor = (cos((2.0*xy[0]))+cos((2.0*xy[1])))
       var pressure = (taylorGreenPressure+(((taylorGreenDensity*pow(taylorGreenVelocity, 2.0))/4.0)*factor))
       Fluid[c].pressure = pressure
-      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure, mix)
+      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure, &mix)
    end
 end
 
@@ -131,18 +136,15 @@ task Exports.InitializeTaylorGreen3D(Fluid : region(ispace(int3d), Fluid_columns
                              taylorGreenTemperature : double,
                              taylorGreenVelocity : double,
                              taylorGreenMolarFracs : double[nSpec],
-                             mix : MIX.Mixture,
-                             Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                             Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                             Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
+                             mix : MIX.Mixture)
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
 do
-   MIX.ClipYi(&taylorGreenMolarFracs[0], mix)
+   MIX.ClipYi(taylorGreenMolarFracs, &mix)
+   var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, &mix)
+   var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, &mix)
    for c in Fluid do
-      var MixW = MIX.GetMolarWeightFromXi(taylorGreenMolarFracs, mix)
-      var taylorGreenDensity = MIX.GetRho(taylorGreenPressure, taylorGreenTemperature, MixW, mix)
       var xy = Fluid[c].centerCoordinates
       Fluid[c].temperature = taylorGreenDensity
       Fluid[c].MolarFracs = taylorGreenMolarFracs
@@ -151,11 +153,11 @@ do
       var factorB = (cos((2.0*xy[0]))+cos((2.0*xy[1])))
       var pressure = (taylorGreenPressure+((((taylorGreenDensity*pow(taylorGreenVelocity, 2.0))/16.0)*factorA)*factorB))
       Fluid[c].pressure = pressure
-      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure, mix)
+      Fluid[c].temperature = MIX.GetTFromRhoAndP(taylorGreenDensity, MixW, pressure, &mix)
    end
 end
 
-__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializePerturbed(Fluid : region(ispace(int3d), Fluid_columns),
                                  initPressure : double,
                                  initTemperature : double,
@@ -164,15 +166,20 @@ task Exports.InitializePerturbed(Fluid : region(ispace(int3d), Fluid_columns),
 where
    writes(Fluid.[Primitives])
 do
-   var rngState : C.drand48_data
-   C.srand48_r(C.legion_get_current_time_in_nanos(), &rngState)
+   var randSeed = C.legion_get_current_time_in_nanos()
+   var xsize = Fluid.bounds.hi.x - Fluid.bounds.lo.x + 1
+   var ysize = Fluid.bounds.hi.y - Fluid.bounds.lo.y + 1
+   __demand(__openmp)
    for c in Fluid do
+      var ctr1 = 3*(c.x + xsize*(c.y + ysize*c.z))
+      var ctr2 = 3*(c.x + xsize*(c.y + ysize*c.z)) + 1
+      var ctr3 = 3*(c.x + xsize*(c.y + ysize*c.z)) + 2
       Fluid[c].MolarFracs  = initMolarFracs
       Fluid[c].pressure    = initPressure
       Fluid[c].temperature = initTemperature
-      Fluid[c].velocity = array(initVelocity[0] + (MACRO.drand48_r(&rngState)-0.5)*10.0,
-                                initVelocity[1] + (MACRO.drand48_r(&rngState)-0.5)*10.0,
-                                initVelocity[2] + (MACRO.drand48_r(&rngState)-0.5)*10.0)
+      Fluid[c].velocity = array(initVelocity[0] + (rand(randSeed, ctr1)-0.5)*10.0,
+                                initVelocity[1] + (rand(randSeed, ctr2)-0.5)*10.0,
+                                initVelocity[2] + (rand(randSeed, ctr3)-0.5)*10.0)
    end
 end
 
@@ -293,7 +300,7 @@ do
    end
 end
 
-__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+__demand(__leaf, __cuda) -- MANUALLY PARALLELIZED
 task Exports.InitializeVortexAdvection2D(Fluid : region(ispace(int3d), Fluid_columns),
                                          VortexPressure : double,
                                          VortexTemperature : double,
@@ -305,6 +312,10 @@ where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
 do
+   var MixW = MIX.GetMolarWeightFromXi(VortexMolarFracs, &mix)
+   var Yi : double[nSpec]; MIX.GetMassFractions(Yi, MixW, VortexMolarFracs, &mix)
+   var gamma = MIX.GetGamma(VortexTemperature, MixW, Yi, &mix)
+   __demand(__openmp)
    for c in Fluid do
       var Beta = 5.0
       var x0 = 0.0
@@ -314,9 +325,6 @@ do
       var ry = xy[1] - y0
       var r2 = rx*rx + ry*ry
 
-      var MixW = MIX.GetMolarWeightFromXi(VortexMolarFracs, mix)
-      var Yi : double[nSpec]; MIX.GetMassFractions(&Yi[0], MixW, VortexMolarFracs, mix)
-      var gamma = MIX.GetGamma(VortexTemperature, MixW, Yi, mix)
       var T = VortexTemperature*(1.0 - (gamma - 1.0)*Beta*Beta/(8*PI*PI*gamma)*exp(1.0 - r2))
       var P = VortexPressure*pow(T, gamma/(gamma - 1.0))
 
@@ -382,7 +390,7 @@ do
    end
 end
 
-__demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
 task Exports.InitializeChannelFlow(Fluid : region(ispace(int3d), Fluid_columns),
                                    bulkPressure : double,
                                    bulkTemperature : double,
@@ -391,9 +399,7 @@ task Exports.InitializeChannelFlow(Fluid : region(ispace(int3d), Fluid_columns),
                                    RandomIntensity : double,
                                    initMolarFracs : double[nSpec],
                                    mix : MIX.Mixture,
-                                   Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                                   Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                                   Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
+                                   bBox : bBoxType)
 where
    reads(Fluid.centerCoordinates),
    writes(Fluid.[Primitives])
@@ -401,11 +407,18 @@ do
    -- Initializes the channel with a streamwise velocity profile ~y^4
    -- streaks and random noise are used for the spanwise and wall-normal directions
    -- the fluid composition is uniform
-   MIX.ClipYi(&initMolarFracs[0], mix)
+   MIX.ClipYi(initMolarFracs, &mix)
 
-   var rngState : C.drand48_data
-   C.srand48_r(C.legion_get_current_time_in_nanos(), &rngState)
+   var randSeed = C.legion_get_current_time_in_nanos()
+   var xsize = Fluid.bounds.hi.x - Fluid.bounds.lo.x + 1
+   var ysize = Fluid.bounds.hi.y - Fluid.bounds.lo.y + 1
 
+   var Grid_yOrigin = bBox.v0[1]
+   var Grid_zOrigin = bBox.v0[2]
+   var Grid_yWidth  = bBox.v3[1] - bBox.v0[1]
+   var Grid_zWidth  = bBox.v4[2] - bBox.v0[2]
+
+   __demand(__openmp)
    for c in Fluid do
       Fluid[c].pressure = bulkPressure
       Fluid[c].temperature = bulkTemperature
@@ -425,9 +438,13 @@ do
          (cosh(0.9*(xyz[1] + off))*(0.9*0.9*pow(cos(2.0*xyz[2]), 2)/pow(cosh(0.9*(xyz[1] + off)), 2) - 1.0))
       velocity[2] = StreaksIntensity*1.25*bulkVelocity*2.0*0.9*0.9*sinh(0.9*(xyz[1] + off))*cos(2.0*xyz[2])/
          (pow(cosh(0.9*(xyz[1] + off)), 2)*(0.9*0.9*pow(cos(2.0 * xyz[2]), 2)/pow(cosh(0.9 * (xyz[1] + off)), 2) - 1.0))
-      -- add the random noise (%5 of uBulk)
-      velocity[1] += RandomIntensity*bulkVelocity*(MACRO.drand48_r(&rngState)-0.5)
-      velocity[2] += RandomIntensity*bulkVelocity*(MACRO.drand48_r(&rngState)-0.5)
+      -- add the random noise
+      var ctr1 = 3*(c.x + xsize*(c.y + ysize*c.z))
+      var ctr2 = 3*(c.x + xsize*(c.y + ysize*c.z)) + 1
+      var ctr3 = 3*(c.x + xsize*(c.y + ysize*c.z)) + 2
+      velocity[0] += RandomIntensity*bulkVelocity*(rand(randSeed, ctr1)-0.5)
+      velocity[1] += RandomIntensity*bulkVelocity*(rand(randSeed, ctr2)-0.5)
+      velocity[2] += RandomIntensity*bulkVelocity*(rand(randSeed, ctr3)-0.5)
       Fluid[c].velocity = velocity
    end
 end

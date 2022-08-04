@@ -133,7 +133,8 @@ public:
                                {new RankTiling2DFunctor(rt, *this, 1, false),
                                 new RankTiling2DFunctor(rt, *this, 1, true )},
                                {new RankTiling2DFunctor(rt, *this, 2, false),
-                                new RankTiling2DFunctor(rt, *this, 2, true )}} {
+                                new RankTiling2DFunctor(rt, *this, 2, true )}},
+      lowpriority_(false) {
       for (unsigned x = 0; x < x_tiles(); ++x) {
          for (unsigned y = 0; y < y_tiles(); ++y) {
             for (unsigned z = 0; z < z_tiles(); ++z) {
@@ -214,6 +215,14 @@ public:
       return rank_hardcoded_functors_[tile[0] * ranks_per_dim_[1] * ranks_per_dim_[2] +
                                       tile[1] * ranks_per_dim_[2] +
                                       tile[2]];
+   }
+
+   bool isLowpriority() const {
+        return lowpriority_;
+   }
+
+   void setLowpriority() {
+        lowpriority_ = true;
    }
 
 public:
@@ -428,6 +437,8 @@ private:
    RankTiling3DFunctor* rank_tiling_3d_functor_[2];
    RankTiling2DFunctor* rank_tiling_2d_functors_[3][2];
    std::vector<RankHardcodedFunctor*> rank_hardcoded_functors_;
+   // Samples passed using -lp (low-priority) are mapped differently (e.g., to CPUs)
+   bool lowpriority_;
 };
 
 AddressSpace SplinteringFunctor::get_rank(const DomainPoint &point) {
@@ -442,14 +453,55 @@ class PrometeoMapper : public DefaultMapper {
 public:
    PrometeoMapper(Runtime* rt, Machine machine, Processor local)
       : DefaultMapper(rt->get_mapper_runtime(), machine, local, "prometeo_mapper"),
-      all_procs_(remote_cpus.size()) {
+      all_procs_(remote_cpus.size()),
+      all_next_io_proc_(remote_cpus.size()) {
+
+      Processor::Kind kind = local_proc.kind();
+      auto pid = local_proc.id;
+      switch (kind) {
+         // Latency-optimized cores (LOCs) are CPUs
+         case Processor::LOC_PROC:
+         {
+            LOG.debug() << "  Processor ID " << std::hex << pid << " is CPU";
+            break;
+         }
+         // Throughput-optimized cores (TOCs) are GPUs
+         case Processor::TOC_PROC:
+         {
+            LOG.debug() << "  Processor ID " << std::hex << pid << " is GPU";
+            break;
+         }
+         // Throughput-optimized cores (TOCs) are GPUs
+         case Processor::OMP_PROC:
+         {
+            LOG.debug() << "  Processor ID " << std::hex <<  pid << " is OMP";
+            break;
+         }
+         // Processor for doing I/O
+         case Processor::IO_PROC:
+         {
+            LOG.debug() << "  Processor ID " << std::hex << pid << " is I/O Proc";
+            break;
+         }
+         // Utility processors are helper processors for
+         // running Legion runtime meta-level tasks and
+         // should not be used for running application tasks
+         case Processor::UTIL_PROC:
+         {
+            LOG.debug() << "  Processor ID " << std::hex << pid << " is utility";
+            break;
+         }
+         default:
+         {
+            LOG.debug() << "  Processor ID " << std::hex << pid << " is have no clue:";
+         }
+      }
 
       // Set the umask of the process to clear S_IWGRP and S_IWOTH.
       umask(022);
       // Assign ranks sequentially to samples, each sample getting one rank for
       // each super-tile.
-      AddressSpace reqd_ranks = 0;
-      auto process_config = [&](const Config& config) {
+      auto process_config = [&](const Config& config, AddressSpace reqd_ranks) {
          CHECK(config.Mapping.tiles[0] > 0 &&
                config.Mapping.tiles[1] > 0 &&
                config.Mapping.tiles[2] > 0 &&
@@ -462,18 +514,41 @@ public:
                "Invalid tiling for sample %lu", sample_mappings_.size() + 1);
          sample_mappings_.emplace_back(rt, config, reqd_ranks);
       };
+
+      unsigned supplied_ranks = remote_cpus.size();
+      AddressSpace reqd_ranks = 0;
+      AddressSpace reqd_ranks_lp = 0;
+
       // Locate all config files specified on the command-line arguments.
       InputArgs args = Runtime::get_input_args();
       for (int i = 0; i < args.argc; ++i) {
          if (EQUALS(args.argv[i], "-i") && i < args.argc-1) {
             Config config;
             parse_Config(&config, args.argv[i+1]);
-            process_config(config);
+            process_config(config, reqd_ranks);
             reqd_ranks += sample_mappings_.back().num_ranks();
+         } else if (EQUALS(args.argv[i], "-lp") && i < args.argc-1) {
+            Config config;
+            parse_Config(&config, args.argv[i+1]);
+            process_config(config, reqd_ranks_lp);
+            sample_mappings_.back().setLowpriority();
+            auto snranks = sample_mappings_.back().num_ranks();
+            LOG.debug() << std::hex << local_proc.id << "] -lp snranks: " << snranks << " supplied_ranks: " << supplied_ranks << " reqd_ranks_lp: " << reqd_ranks_lp;
+            // Verify that we have enough ranks.
+            CHECK(snranks <= supplied_ranks,
+               "%u rank(s) required, but %u rank(s) supplied to Legion",
+               snranks, supplied_ranks);
+            // Just to make sure that there are enough ranks for the LP samples.
+            // If not, just start from rank 0 for the next sample.
+            if (snranks + reqd_ranks_lp >= supplied_ranks) {
+               reqd_ranks_lp = 0;
+            } else {
+               reqd_ranks_lp += snranks;
+            }
+            LOG.debug() << std::hex << local_proc.id << "] -lp reqd_ranks_lp: " << reqd_ranks_lp;
          }
       }
       // Verify that we have enough ranks.
-      unsigned supplied_ranks = remote_cpus.size();
       CHECK(reqd_ranks <= supplied_ranks,
             "%u rank(s) required, but %u rank(s) supplied to Legion",
             reqd_ranks, supplied_ranks);
@@ -487,6 +562,11 @@ public:
          AddressSpace rank = it->address_space();
          Processor::Kind kind = it->kind();
          get_procs(rank, kind).push_back(*it);
+      }
+      // Initialize next_io_proc to use first IO proc
+      for (auto it = query.begin(); it != query.end(); it++) {
+         AddressSpace rank = it->address_space();
+         all_next_io_proc_[rank] = 0;
       }
       // Verify machine configuration.
       for (AddressSpace rank = 0; rank < remote_cpus.size(); ++rank) {
@@ -506,6 +586,7 @@ private:
       // Tasks called on regions: read the SAMPLE_ID_TAG from the region
       if (task.is_index_space ||
          EQUALS(task.get_task_name(), "DummyAverages") ||
+         EQUALS(task.get_task_name(), "InitializeNodeGrid") ||
          EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
          EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
          EQUALS(task.get_task_name(), "GetRescalingData") ||
@@ -514,8 +595,7 @@ private:
          EQUALS(task.get_task_name(), "initCoefficients")  ||
          EQUALS(task.get_task_name(), "InitWaveNumbers") ||
 #endif
-         STARTS_WITH(task.get_task_name(), "FastInterp") ||
-         STARTS_WITH(task.get_task_name(), "readTileAttr")) {
+         STARTS_WITH(task.get_task_name(), "FastInterp")) {
 
          CHECK(!task.regions.empty(),
                "Expected region argument in call to %s", task.get_task_name());
@@ -538,13 +618,15 @@ private:
          sample_ids.push_back(static_cast<unsigned>(config->Mapping.sampleId));
       }
       // Helper & I/O tasks: go up one level to the work task
-      else if (STARTS_WITH(task.get_task_name(), "Exports.Console_Write") ||
-               STARTS_WITH(task.get_task_name(), "Exports.Probe_Write") ||
-               EQUALS(task.get_task_name(), "Exports.createDir") ||
+      else if (STARTS_WITH(task.get_task_name(), "Console_Write") ||
+               STARTS_WITH(task.get_task_name(), "Probe_Write") ||
+               EQUALS(task.get_task_name(), "createDir") ||
+               EQUALS(task.get_task_name(), "dumpMasterFile") ||
+               EQUALS(task.get_task_name(), "writeTileAttr") ||
+               EQUALS(task.get_task_name(), "readTileAttr") ||
                EQUALS(task.get_task_name(), "__dummy") ||
                STARTS_WITH(task.get_task_name(), "__unary_") ||
-               STARTS_WITH(task.get_task_name(), "__binary_") ||
-               STARTS_WITH(task.get_task_name(), "AffineTransform")) {
+               STARTS_WITH(task.get_task_name(), "__binary_")) {
          assert(task.parent_task != NULL);
          sample_ids = find_sample_ids(ctx, *(task.parent_task));
       }
@@ -567,33 +649,29 @@ private:
 
    DomainPoint find_tile(const MapperContext ctx,
                          const Task& task) const {
-      // 3D index space tasks that are launched individually
-      if (STARTS_WITH(task.get_task_name(), "readTileAttr")) {
-         assert(!task.regions.empty() && task.regions[0].region.exists());
-         DomainPoint tile =
-            runtime->get_logical_region_color_point(ctx, task.regions[0].region);
-         return tile;
-      }
       // Tasks that should run on the first rank of their sample's allocation
-      else if (EQUALS(task.get_task_name(), "workSingle") ||
-               EQUALS(task.get_task_name(), "workDual") ||
-               EQUALS(task.get_task_name(), "cache_grid_translation") ||
-               STARTS_WITH(task.get_task_name(), "Exports.Console_Write") ||
-               STARTS_WITH(task.get_task_name(), "Exports.Probe_Write") ||
-               EQUALS(task.get_task_name(), "Exports.createDir") ||
-               EQUALS(task.get_task_name(), "__dummy") ||
-               EQUALS(task.get_task_name(), "DummyAverages") ||
-               EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
-               EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
-               EQUALS(task.get_task_name(), "GetRescalingData") ||
+      if (EQUALS(task.get_task_name(), "workSingle") ||
+          EQUALS(task.get_task_name(), "workDual") ||
+          EQUALS(task.get_task_name(), "cache_grid_translation") ||
+          STARTS_WITH(task.get_task_name(), "Console_Write") ||
+          STARTS_WITH(task.get_task_name(), "Probe_Write") ||
+          EQUALS(task.get_task_name(), "createDir") ||
+          EQUALS(task.get_task_name(), "__dummy") ||
+          EQUALS(task.get_task_name(), "DummyAverages") ||
+          EQUALS(task.get_task_name(), "InitializeNodeGrid") ||
+          EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
+          EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
+          EQUALS(task.get_task_name(), "GetRescalingData") ||
 #ifdef ELECTRIC_FIELD
-               EQUALS(task.get_task_name(), "initCoefficients")  ||
-               EQUALS(task.get_task_name(), "InitWaveNumbers") ||
+          EQUALS(task.get_task_name(), "initCoefficients")  ||
+          EQUALS(task.get_task_name(), "InitWaveNumbers") ||
 #endif
-               STARTS_WITH(task.get_task_name(), "FastInterp") ||
-               STARTS_WITH(task.get_task_name(), "__unary_") ||
-               STARTS_WITH(task.get_task_name(), "__binary_") ||
-               STARTS_WITH(task.get_task_name(), "AffineTransform")) {
+          EQUALS(task.get_task_name(), "dumpMasterFile") ||
+          EQUALS(task.get_task_name(), "writeTileAttr") ||
+          EQUALS(task.get_task_name(), "readTileAttr") ||
+          STARTS_WITH(task.get_task_name(), "FastInterp") ||
+          STARTS_WITH(task.get_task_name(), "__unary_") ||
+          STARTS_WITH(task.get_task_name(), "__binary_")) {
          return Point<3>(0,0,0);
       }
       // Other tasks: fail and notify the user
@@ -611,8 +689,7 @@ private:
          SampleMapping& mapping = sample_mappings_[sample_id];
          // IO of 3D partitioned regions is managed by each rank
          if (STARTS_WITH(task.get_task_name(), "dumpTile") ||
-             STARTS_WITH(task.get_task_name(), "loadTile") ||
-             STARTS_WITH(task.get_task_name(), "writeTileAttr")) {
+             STARTS_WITH(task.get_task_name(), "loadTile")) {
             return mapping.rank_tiling_3d_functor(true);
          } else {
             return mapping.tiling_3d_functor();
@@ -624,11 +701,24 @@ private:
          SampleMapping& mapping = sample_mappings_[sample_id];
          // IO of 2D partitioned regions
          if (STARTS_WITH(task.get_task_name(), "dumpTile") ||
-             STARTS_WITH(task.get_task_name(), "loadTile") ||
-             STARTS_WITH(task.get_task_name(), "writeTileAttr")) {
+             STARTS_WITH(task.get_task_name(), "loadTile")) {
             return mapping.hardcoded_functor(Point<3>(0,0,0));
          } else {
             CHECK(false, "Unexpected 2D domain on index space launch of task %s",
+                  task.get_task_name());
+            return NULL;
+         }
+      }
+      // 1D index space tasks
+      else if (task.is_index_space && task.index_domain.get_dim() == 1) {
+         unsigned sample_id = find_sample_id(ctx, task);
+         SampleMapping& mapping = sample_mappings_[sample_id];
+         // IO of 1D partitioned regions
+         if (STARTS_WITH(task.get_task_name(), "dumpTile") ||
+             STARTS_WITH(task.get_task_name(), "loadTile")) {
+            return mapping.hardcoded_functor(Point<3>(0,0,0));
+         } else {
+            CHECK(false, "Unexpected 1D domain on index space launch of task %s",
                   task.get_task_name());
             return NULL;
          }
@@ -637,6 +727,7 @@ private:
       else if (EQUALS(task.get_task_name(), "workSingle") ||
                EQUALS(task.get_task_name(), "workDual") ||
                EQUALS(task.get_task_name(), "DummyAverages") ||
+               EQUALS(task.get_task_name(), "InitializeNodeGrid") ||
                EQUALS(task.get_task_name(), "ComputeRecycleAveragePosition") ||
                EQUALS(task.get_task_name(), "InitializeBoundarLayerData") ||
                EQUALS(task.get_task_name(), "GetRescalingData") ||
@@ -644,26 +735,21 @@ private:
                EQUALS(task.get_task_name(), "initCoefficients")  ||
                EQUALS(task.get_task_name(), "InitWaveNumbers") ||
 #endif
+               EQUALS(task.get_task_name(), "dumpMasterFile") ||
+               EQUALS(task.get_task_name(), "writeTileAttr") ||
+               EQUALS(task.get_task_name(), "readTileAttr") ||
                EQUALS(task.get_task_name(), "cache_grid_translation") ||
                STARTS_WITH(task.get_task_name(), "FastInterp") ||
-               STARTS_WITH(task.get_task_name(), "Exports.Console_Write") ||
-               STARTS_WITH(task.get_task_name(), "Exports.Probe_Write") ||
-               EQUALS(task.get_task_name(), "Exports.createDir") ||
+               STARTS_WITH(task.get_task_name(), "Console_Write") ||
+               STARTS_WITH(task.get_task_name(), "Probe_Write") ||
+               EQUALS(task.get_task_name(), "createDir") ||
                EQUALS(task.get_task_name(), "__dummy") ||
                STARTS_WITH(task.get_task_name(), "__unary_") ||
-               STARTS_WITH(task.get_task_name(), "__binary_") ||
-               STARTS_WITH(task.get_task_name(), "AffineTransform")) {
+               STARTS_WITH(task.get_task_name(), "__binary_")) {
          unsigned sample_id = find_sample_id(ctx, task);
          SampleMapping& mapping = sample_mappings_[sample_id];
          DomainPoint tile = find_tile(ctx, task);
          return mapping.hardcoded_functor(tile);
-      }
-      // Sample-specific tasks that are launched individually on each rank
-      else if (STARTS_WITH(task.get_task_name(), "readTileAttr")) {
-         unsigned sample_id = find_sample_id(ctx, task);
-         SampleMapping& mapping = sample_mappings_[sample_id];
-         DomainPoint tile = find_tile(ctx, task);
-         return mapping.rank_hardcoded_functor(tile);
       }
       // Other tasks: fail and notify the user
       else {
@@ -690,15 +776,48 @@ public:
    virtual void default_policy_rank_processor_kinds(MapperContext ctx,
                                                     const Task& task,
                                                     std::vector<Processor::Kind>& ranking) {
-      // Work tasks: map to IO processors, so they don't get blocked by tiny
-      // CPU tasks.
-      if (EQUALS(task.get_task_name(), "workSingle") ||
-          EQUALS(task.get_task_name(), "workDual")) {
-         ranking.push_back(Processor::IO_PROC);
-      }
-      // Other tasks: defer to the default mapping policy
-      else {
+
+      // the main task is deferred to the default mapping policy
+      if (EQUALS(task.get_task_name(), "main")) {
          DefaultMapper::default_policy_rank_processor_kinds(ctx, task, ranking);
+
+      // Work tasks: map to CPU processors
+      } else if (EQUALS(task.get_task_name(), "workSingle") ||
+                 EQUALS(task.get_task_name(), "workDual")) {
+         ranking.push_back(Processor::LOC_PROC);
+
+      // HDF5 tasks: map to IO processors
+      } else if (STARTS_WITH(task.get_task_name(), "dumpTile")  ||
+                 STARTS_WITH(task.get_task_name(), "loadTile")  ||
+                 EQUALS(task.get_task_name(), "dumpMasterFile") ||
+                 EQUALS(task.get_task_name(), "writeTileAttr")  ||
+                 EQUALS(task.get_task_name(), "readTileAttr")) {
+         ranking.push_back(Processor::IO_PROC);
+
+      // Console tasks: map to IO processors
+      } else if (STARTS_WITH(task.get_task_name(), "Console_Write") ||
+                 EQUALS(     task.get_task_name(), "createDir")) {
+         ranking.push_back(Processor::IO_PROC);
+
+      // Probe output tasks: map to IO processors
+      } else if (STARTS_WITH(task.get_task_name(), "Probe_Write")) {
+         ranking.push_back(Processor::IO_PROC);
+
+      // Other tasks: differ mapping depending whether it is Low priority or High priority
+      } else {
+         unsigned sample_id = find_sample_id(ctx, task);
+         const SampleMapping& mapping = sample_mappings_[sample_id];
+
+         // Restrict low fidelities to CPUs
+         if (mapping.isLowpriority()) {
+             ranking.resize(2);
+             ranking[0] = Processor::OMP_PROC;
+             ranking[1] = Processor::LOC_PROC;
+
+         // Other tasks: defer to the default mapping policy
+         } else {
+             DefaultMapper::default_policy_rank_processor_kinds(ctx, task, ranking);
+         }
       }
    }
 
@@ -713,7 +832,7 @@ public:
       // Read configuration.
       assert(!runtime->is_MPI_interop_configured(ctx));
       assert(EQUALS(task.get_task_name(), "workSingle") ||
-            EQUALS(task.get_task_name(), "workDual"));
+             EQUALS(task.get_task_name(), "workDual"));
       VariantInfo info =
          default_find_preferred_variant(task, ctx, false/*needs_tight_bound*/);
       CHECK(task.regions.empty() && info.is_replicable,
@@ -776,11 +895,30 @@ public:
       output.verify_correctness = false;
       unsigned sample_id = find_sample_id(ctx, task);
       VariantInfo info = default_find_preferred_variant(task, ctx, false/*needs_tight_bound*/);
+      if (sample_mappings_[sample_id].isLowpriority() and
+          (info.proc_kind != Processor::IO_PROC) ) {
+         // Low-priority stuff that does not need an IO_PROC gets mapped either on
+         // - OMP_PROC
+         // - LOC_PROC
+         Processor::Kind lpkind = Processor::LOC_PROC;
+#ifdef REALM_USE_OPENMP
+         std::vector<VariantID> variants;
+         runtime->find_valid_variants(ctx, task.task_id, variants, Processor::OMP_PROC);
+         if ( ! variants.empty() ) {
+            lpkind = Processor::OMP_PROC;
+         }
+#endif
+         info = default_find_preferred_variant(task, ctx,
+                                               false/*needs_tight_bound*/,
+                                               true/*cache*/,
+                                               lpkind);
+      }
       SplinteringFunctor* functor = pick_functor(ctx, task);
       for (Domain::DomainPointIterator it(input.domain); it; it++) {
          Processor target_proc = select_proc(it.p, info.proc_kind, functor);
          output.slices.emplace_back(Domain(it.p, it.p), target_proc,
-                                    false/*recurse*/, false/*stealable*/);
+                                    false/*recurse*/,
+                                    (target_proc.kind() == Processor::IO_PROC) /*stealable*/);
          LOG.debug() << "Sample " << sample_id
                      << ": Task " << task.get_task_name()
                      << ": Index space launch"
@@ -793,16 +931,26 @@ public:
                                                             const Task& task) {
       // Unless handled specially below, all tasks have the same priority.
       int priority = 0;
-      // Increase priority of tasks on the critical path of the fluid solve.
-      if (STARTS_WITH(task.get_task_name(), "Exports.GetVelocityGradients") ||
-          STARTS_WITH(task.get_task_name(), "UpdateShockSensor") ||
-          STARTS_WITH(task.get_task_name(), "UpdateUsingHybridEulerFlux") ||
-          STARTS_WITH(task.get_task_name(), "UpdateUsingTENOAEulerFlux") ||
-          STARTS_WITH(task.get_task_name(), "UpdateUsingDiffusionFlux") ||
-//          STARTS_WITH(task.get_task_name(), "CorrectUsingFlux") ||
-          STARTS_WITH(task.get_task_name(), "UpdateVars") ||
-          STARTS_WITH(task.get_task_name(), "UpdateChemistry")) {
-         priority = 1;
+
+      if ( ! EQUALS(task.get_task_name(), "main") ) {
+         unsigned sample_id = find_sample_id(ctx, task);
+         const SampleMapping& mapping = sample_mappings_[sample_id];
+
+         if (mapping.isLowpriority()) {
+            priority = -1;
+         } else {
+            if (STARTS_WITH(task.get_task_name(), "UpdateShockSensor") ||
+                STARTS_WITH(task.get_task_name(), "UpdateUsing") ||
+                STARTS_WITH(task.get_task_name(), "UpdateVars") ||
+                STARTS_WITH(task.get_task_name(), "UpdateChemistry") ||
+                STARTS_WITH(task.get_task_name(), "AddChemistrySources") ||
+                STARTS_WITH(task.get_task_name(), "AddBodyForces") ||
+                STARTS_WITH(task.get_task_name(), "AddIonWindSources") ||
+                STARTS_WITH(task.get_task_name(), "AddLaser") ||
+                STARTS_WITH(task.get_task_name(), "workSingle")) {
+               priority = 1;
+            }
+         }
       }
       return priority;
    }
@@ -841,16 +989,24 @@ public:
                                         SelectShardingFunctorOutput& output) {
 		CHECK(fill.parent_task != NULL,
             "Unsupported: Sharded Fill does not have parent partition");
+      unsigned sample_id = find_sample_id(ctx, *(fill.parent_task));
       if (fill.is_index_space && fill.index_domain.get_dim() == 3) {
-         unsigned sample_id = find_sample_id(ctx, *(fill.parent_task));
          SampleMapping& mapping = sample_mappings_[sample_id];
-         output.chosen_functor = mapping.rank_tiling_3d_functor(true)->id;
-         LOG.debug() << "Sample " << sample_id
-                     << ": Fill with parent task " << fill.parent_task->get_task_name()
-                     << ": sharded using rank_tiling_3d_functor";
+         if (fill.index_domain.get_volume() == mapping.num_tiles()) {
+            output.chosen_functor = mapping.tiling_3d_functor()->id;
+            LOG.debug() << "Sample " << sample_id
+                        << ": Fill from parent task " << fill.parent_task->get_task_name()
+                        << ": sharded using tiling_3d_functor";
+         } else {
+            output.chosen_functor = mapping.rank_tiling_3d_functor(true)->id;
+            LOG.debug() << "Sample " << sample_id
+                        << ": Fill from parent task " << fill.parent_task->get_task_name()
+                        << ": sharded using rank_tiling_3d_functor";
+         }
       } else {
          output.chosen_functor = pick_functor(ctx, *(fill.parent_task))->id;
-         LOG.debug() << ": Fill parent task " << fill.parent_task->get_task_name()
+         LOG.debug() << "Sample " << sample_id
+                     << ": Fill from parent task " << fill.parent_task->get_task_name()
                      << ": sharded using pick_functor";
       }
    }
@@ -873,11 +1029,19 @@ public:
 
       // 3D index space tasks
       if (partition.is_index_space && partition.index_domain.get_dim() == 3) {
-         output.chosen_functor = mapping.rank_tiling_3d_functor(true)->id;
-         LOG.debug() << "Sample " << sample_id
-                     << ": Partition parent task " << partition.parent_task->get_task_name()
-//                     << ": Partition parent partition " << name
-                     << ": sharded using rank_tiling_3d_functor";
+         if (partition.index_domain.get_volume() == mapping.num_tiles()) {
+            output.chosen_functor = mapping.tiling_3d_functor()->id;
+            LOG.debug() << "Sample " << sample_id
+                        << ": Partition parent task " << partition.parent_task->get_task_name()
+//                        << ": Partition parent partition " << name
+                        << ": sharded using tiling_3d_functor";
+         } else {
+            output.chosen_functor = mapping.rank_tiling_3d_functor(true)->id;
+            LOG.debug() << "Sample " << sample_id
+                        << ": Partition parent task " << partition.parent_task->get_task_name()
+//                        << ": Partition parent partition " << name
+                        << ": sharded using rank_tiling_3d_functor";
+         }
       } else {
          LOG.debug() << "Sample " << sample_id
                      << ": Partition parent task " << partition.parent_task->get_task_name()
@@ -885,7 +1049,56 @@ public:
                      << ": sharded using pick_functor";
          output.chosen_functor = pick_functor(ctx, *(partition.parent_task))->id;
       }
-  }
+   }
+
+   //--------------------------------------------------------------------------
+   // Work stealing algorithm
+   // For now we allow only IO_PROCs to steal work from the other IO_PROCs of
+   // the same shard
+   //--------------------------------------------------------------------------
+
+   virtual void select_steal_targets(const MapperContext         ctx,
+                                     const SelectStealingInput&  input,
+                                           SelectStealingOutput& output) {
+      LOG.spew("select_steal_targets in %s", get_mapper_name());
+      output.targets.clear();
+      if (local_kind == Processor::IO_PROC) {
+         // Add all the IO_PROCs of my rank as potential targets
+         const std::vector<Processor>& procs = get_procs(node_id, local_kind);
+         for (auto p : procs) {
+            if (local_proc == p) continue;
+            output.targets.insert(p);
+            LOG.debug() << "Processor " << local_proc
+                        << ": Adding Processor " << p
+                        << " as a steal targets";
+         }
+      }
+   }
+
+   virtual void permit_steal_request(const MapperContext       ctx,
+                                     const StealRequestInput&  input,
+                                           StealRequestOutput& output) {
+      LOG.spew("permit_steal_request in %s", get_mapper_name());
+      output.stolen_tasks.clear();
+      // Only Processor::IO_PROC are allowed to steal work for now
+      assert(input.thief_proc.kind() == Processor::IO_PROC);
+      // Find rank of the stealing proc
+      const AddressSpace thief_rank = get_proc_rank(input.thief_proc);
+      // Iterate over stealable tasks
+      for (auto task : input.stealable_tasks) {
+         if ((task->current_proc.kind() == input.thief_proc.kind()) and
+             (get_proc_rank(task->current_proc) == thief_rank)) {
+            // The task was assigned to a proc of the same kind in the same rank
+            // let's steal it
+            output.stolen_tasks.insert(task);
+            unsigned sample_id = find_sample_id(ctx, *task);
+            LOG.debug() << "Sample " << sample_id
+                        << ": Processor " << input.thief_proc
+                        << " is stealing the Task " << task->get_task_name()
+                        << " from Processor " << task->current_proc;
+         }
+      }
+   }
 
 //=============================================================================
 // MAPPER CLASS: MINOR OVERRIDES
@@ -948,18 +1161,22 @@ public:
           EQUALS(name, "p_AllBCs") ||
           EQUALS(name, "p_solved") ||
           EQUALS(name, "p_GradientGhosts") ||
+          EQUALS(name, "p_AvgGradientGhosts") ||
           EQUALS(name, "p_MetricGhosts") ||
           EQUALS(name, "p_x_divg")  || EQUALS(name, "p_y_divg")  || EQUALS(name, "p_z_divg") ||
           EQUALS(name, "p_x_faces") || EQUALS(name, "p_y_faces") || EQUALS(name, "p_z_faces") ||
+          STARTS_WITH(name, "p_xNeg") || STARTS_WITH(name, "p_xPos") ||
+          STARTS_WITH(name, "p_yNeg") || STARTS_WITH(name, "p_yPos") ||
+          STARTS_WITH(name, "p_zNeg") || STARTS_WITH(name, "p_zPos") ||
           EQUALS(name, "p_XFluxGhosts")    || EQUALS(name, "p_YFluxGhosts")    || EQUALS(name, "p_ZFluxGhosts")    ||
           EQUALS(name, "p_XDiffGhosts")    || EQUALS(name, "p_YDiffGhosts")    || EQUALS(name, "p_ZDiffGhosts")    ||
-          EQUALS(name, "p_XEulerGhosts2")  || EQUALS(name, "p_YEulerGhosts2")  || EQUALS(name, "p_ZEulerGhosts2")  ||
-          EQUALS(name, "p_XSensorGhosts2") || EQUALS(name, "p_YSensorGhosts2") || EQUALS(name, "p_ZSensorGhosts2") ||
+          EQUALS(name, "p_XDiffGradGhosts")|| EQUALS(name, "p_YDiffGradGhosts")|| EQUALS(name, "p_ZDiffGradGhosts")||
           EQUALS(name, "p_XEulerGhosts")   || EQUALS(name, "p_YEulerGhosts")   || EQUALS(name, "p_ZEulerGhosts")   ||
+          EQUALS(name, "p_XSensorGhosts2") || EQUALS(name, "p_YSensorGhosts2") || EQUALS(name, "p_ZSensorGhosts2") ||
           EQUALS(name, "p_XSensorGhosts")  || EQUALS(name, "p_YSensorGhosts")  || EQUALS(name, "p_ZSensorGhosts")  ||
           EQUALS(name, "p_Fluid_YZAvg")    || EQUALS(name, "p_Fluid_XZAvg")    || EQUALS(name, "p_Fluid_XYAvg")    ||
           EQUALS(name, "p_Fluid_XAvg")     || EQUALS(name, "p_Fluid_YAvg")     || EQUALS(name, "p_Fluid_ZAvg")     ||
-          EQUALS(name, "BCPlane")) {
+          EQUALS(name, "BCPlane")          || EQUALS(name, "p_Laser")) {
 
          DomainPoint tile = runtime->get_logical_region_color_point(ctx, req.region);
          LogicalRegion root_region = get_root(ctx, req.region);
@@ -1075,12 +1292,6 @@ public:
                                         SelectShardingFunctorOutput& output) {
       CHECK(false, "Unsupported: Sharded Release");
    }
-   //virtual void select_sharding_functor(const MapperContext ctx,
-   //                                     const Partition& partition,
-   //                                     const SelectShardingFunctorInput& input,
-   //                                     SelectShardingFunctorOutput& output) {
-   //  CHECK(false, "Unsupported: Sharded Partition");
-   //}
    virtual void select_sharding_functor(const MapperContext ctx,
                                         const MustEpoch& epoch,
                                         const SelectShardingFunctorInput& input,
@@ -1093,23 +1304,50 @@ public:
 //=============================================================================
 
 private:
-  // NOTE: This function doesn't sanity check its input.
-  Processor select_proc(const DomainPoint& tile,
-                        Processor::Kind kind,
-                        SplinteringFunctor* functor) {
-      AddressSpace rank = functor->get_rank(tile);
+   // This function selects the processor for a given tile and it has
+   // two different behaviours depending on the processor kind:
+   // - kind == IO_PROC: use a round-robin approach to assign task mapped on a
+   //                    shard to different IO_PROC
+   // - every other kind: assign the proc corresponding to the tile with the
+   //                     approach described at the beginning of the file
+   // NOTE: This function doesn't sanity check its input.
+   Processor select_proc(const DomainPoint& tile,
+                         const Processor::Kind kind,
+                         SplinteringFunctor* functor) {
+      const AddressSpace rank = functor->get_rank(tile);
       const std::vector<Processor>& procs = get_procs(rank, kind);
-      SplinterID splinter_id = functor->splinter(tile);
-      return procs[splinter_id % procs.size()];
+      Processor p;
+      if (kind == Processor::IO_PROC) {
+         // apply round robin
+         if (all_next_io_proc_[rank] == procs.size())
+            all_next_io_proc_[rank] = 0;
+         p = procs[all_next_io_proc_[rank]++];
+      } else {
+         // Assign based on tile
+         SplinterID splinter_id = functor->splinter(tile);
+         p = procs[splinter_id % procs.size()];
+      }
+      return p;
    }
 
-   std::vector<Processor>& get_procs(AddressSpace rank, Processor::Kind kind) {
+   std::vector<Processor>& get_procs(const AddressSpace rank, const Processor::Kind kind) {
       assert(rank < all_procs_.size());
       auto& rank_procs = all_procs_[rank];
       if (kind >= rank_procs.size()) {
          rank_procs.resize(kind + 1);
       }
       return rank_procs[kind];
+   }
+
+   AddressSpace get_proc_rank(const Processor & p) {
+      AddressSpace r = all_procs_.size();
+      for (AddressSpace rank = 0; rank < all_procs_.size(); ++rank) {
+         const std::vector<Processor>& procs = get_procs(rank, p.kind());
+         for (auto pr : procs)
+            if (pr == p) r = rank;
+      }
+      assert(r < all_procs_.size());
+      return r;
    }
 
    LogicalRegion get_root(const MapperContext ctx, LogicalRegion region) const {
@@ -1148,6 +1386,7 @@ private:
 private:
    std::deque<SampleMapping> sample_mappings_;
    std::vector<std::vector<std::vector<Processor> > > all_procs_;
+   std::vector< unsigned > all_next_io_proc_;
 };
 
 //=============================================================================

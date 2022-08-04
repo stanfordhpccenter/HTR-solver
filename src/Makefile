@@ -31,11 +31,17 @@ CH4_30SpMixHPP= Utils/my_array.hpp Mixtures/Species.inl Mixtures/Reaction.inl Mi
 CH4_43SpIonsMixH= Utils/constants.h Mixtures/Species.hpp Mixtures/Reaction.hpp Mixtures/MultiComponent.hpp config_schema.o Mixtures/CH4_43SpIonsMix.hpp
 CH4_43SpIonsMixHPP= Utils/my_array.hpp Mixtures/Species.inl Mixtures/Reaction.inl Mixtures/MultiComponent.inl $(CH4_43SpIonsMixH)
 
+CH4_26SpIonsMixH= Utils/constants.h Mixtures/Species.hpp Mixtures/Reaction.hpp Mixtures/MultiComponent.hpp config_schema.o Mixtures/CH4_26SpIonsMix.hpp
+CH4_26SpIonsMixHPP= Utils/my_array.hpp Mixtures/Species.inl Mixtures/Reaction.inl Mixtures/MultiComponent.inl $(CH4_26SpIonsMixH)
+
 FFCM1MixH= Utils/constants.h Mixtures/Species.hpp Mixtures/Reaction.hpp Mixtures/MultiComponent.hpp config_schema.o Mixtures/FFCM1Mix.hpp
 FFCM1MixHPP= Utils/my_array.hpp Mixtures/Species.inl Mixtures/Reaction.inl Mixtures/MultiComponent.inl $(FFCM1MixH)
 
 BoivinMixH= Utils/constants.h Mixtures/Species.hpp Mixtures/Reaction.hpp Mixtures/MultiComponent.hpp config_schema.o Mixtures/BoivinMix.hpp
 BoivinMixHPP= Utils/my_array.hpp Mixtures/Species.inl Mixtures/Reaction.inl Mixtures/MultiComponent.inl $(BoivinMixH)
+
+H2_UCSDMixH= Utils/constants.h Mixtures/Species.hpp Mixtures/Reaction.hpp Mixtures/MultiComponent.hpp config_schema.o Mixtures/H2_UCSDMix.hpp
+H2_UCSDMixHPP= Utils/my_array.hpp Mixtures/Species.inl Mixtures/Reaction.inl Mixtures/MultiComponent.inl $(H2_UCSDMixH)
 
 ######################################################
 # Rules
@@ -54,13 +60,14 @@ BoivinMixHPP= Utils/my_array.hpp Mixtures/Species.inl Mixtures/Reaction.inl Mixt
 			prometeo_average_%_gpu.o prometeo_average_%_cpu.o \
 			prometeo_cfl_%_gpu.o prometeo_cfl_%_cpu.o \
 			Poisson/Poisson_%_cpu.o Poisson/Poisson_%_gpu.o \
-			prometeo_electricField_%_cpu.o prometeo_electricField_%_gpu.o
+			prometeo_electricField_%_cpu.o prometeo_electricField_%_gpu.o \
+			prometeo_laser_%_gpu.o prometeo_laser_%_cpu.o \
 
 .SUFFIXES: .rg .cc .cu .h .o .a
 
 default: prometeo_ConstPropMix.exec prometeo_IsentropicMix.exec prometeo_AirMix.exec \
 			prometeo_CH41StMix.exec prometeo_CH4_30SpMix.exec prometeo_FFCM1Mix.exec \
-			$(if $(filter $(strip $(ELECTRIC_FIELD)), 1), prometeo_CH4_43SpIonsMix.exec)
+			$(if $(filter $(strip $(ELECTRIC_FIELD)), 1), prometeo_CH4_43SpIonsMix.exec, prometeo_CH4_26SpIonsMix.exec)
 
 ######################################################
 # Objects
@@ -72,11 +79,11 @@ Utils = Utils/task_helper.hpp Utils/my_array.hpp Utils/PointDomain_helper.hpp
 
 MathUtils = Utils/math_utils.h Utils/math_utils.hpp
 
-Common= hdf_helper.rg util-desugared.rg  Utils/math_utils.rg prometeo_const.rg prometeo_macro.rg \
+Common= Utils/hdf_helper.rg Utils/util.rg Utils/math_utils.rg prometeo_const.rg prometeo_macro.rg \
 		prometeo_grid.rg prometeo_metric.rg prometeo_IO.rg prometeo_cfl.rg prometeo_chem.rg \
 		prometeo_init.rg prometeo_variables.rg prometeo_average.rg prometeo_rk.rg \
 		prometeo_sensor.rg prometeo_rhs.rg prometeo_stat.rg prometeo_bc.rg prometeo_mixture.rg \
-		prometeo_profiles.rg prometeo_partitioner.rg prometeo_probe.rg
+		prometeo_profiles.rg prometeo_partitioner.rg prometeo_probe.rg prometeo_laser.rg
 
 ifeq ($(ELECTRIC_FIELD), 1)
 Headers+= Poisson/Poisson.h prometeo_electricField.h
@@ -87,11 +94,8 @@ endif
 # Recipes
 ######################################################
 clean:
-	$(RM) *.exec *.o *.a *-desugared.rg config_schema.h version.rg solver_version~ legion_version~
+	$(RM) *.exec *.o *.a config_schema.h version.rg solver_version~ legion_version~
 	$(RM) Mixtures/*.o Poisson/*.o
-
-%-desugared.rg: %.rg
-	./desugar.py $< > $@
 
 getRecipe = $(if $(DEPENDENCY_GRAPH),@echo Target $@ depends on prerequisites "$^",$(1))
 
@@ -107,7 +111,8 @@ prometeo_%_cpu.a: prometeo_mapper.o prometeo_registrar.o config_schema.o json.o 
 	$(call getRecipe)
 	$(AR) rcs $@ $^
 
-prometeo_%_gpu.a: prometeo_metric_coeffs_gpu.o prometeo_mixture_%_gpu.o prometeo_metric_%_gpu.o prometeo_sensor_%_gpu.o \
+prometeo_%_gpu.a: cuda_utils.o \
+						prometeo_metric_coeffs_gpu.o prometeo_mixture_%_gpu.o prometeo_metric_%_gpu.o prometeo_sensor_%_gpu.o \
 						prometeo_variables_%_gpu.o prometeo_rhs_%_gpu.o prometeo_chem_%_gpu.o prometeo_bc_%_gpu.o \
 						prometeo_average_%_gpu.o prometeo_cfl_%_gpu.o \
 						$(if $(filter $(strip $(ELECTRIC_FIELD)), 1), prometeo_electricField_%_gpu.o Poisson/Poisson_%_gpu.o)
@@ -116,9 +121,9 @@ prometeo_%_gpu.a: prometeo_metric_coeffs_gpu.o prometeo_mixture_%_gpu.o prometeo
 	$(NVCC) -lib -o $@ $^ $(@:.a=.o)
 
 .SECONDEXPANSION:
-prometeo_main_%.o: version.rg prometeo_types.h prometeo-desugared.rg prometeo_mapper.h $$($$*H) $(Headers) $(Common)
+prometeo_main_%.o: version.rg prometeo_types.h prometeo.rg prometeo_mapper.h $$($$*H) $(Headers) $(Common)
 	$(call getRecipe)
-	EOS="$*" $(REGENT) prometeo-desugared.rg $(REGENT_FLAGS)
+	EOS="$*" $(REGENT) $(REGENT_OPTS) prometeo.rg $(REGENT_FLAGS)
 
 .SECONDEXPANSION:
 prometeo_mixture_%_cpu.o: prometeo_mixture.cc prometeo_mixture.h prometeo_mixture.hpp prometeo_mixture_wrappers.hpp $(Utils) \
@@ -273,13 +278,17 @@ prometeo_mapper.o: prometeo_mapper.cc prometeo_mapper.h config_schema.o
 	$(call getRecipe)
 	$(CXX) $(CXX_FLAGS) -c -o $@ $<
 
-config_schema.o: process_schema.rg config_schema.lua json.h util-desugared.rg
+config_schema.o: Utils/process_schema.rg config_schema.lua json.h Utils/util.rg
 	$(call getRecipe)
-	$(REGENT) process_schema.rg config_schema.lua $(REGENT_FLAGS)
+	$(REGENT) $(REGENT_OPTS) $< config_schema.lua $(REGENT_FLAGS)
 
 json.o: json.c json.h
 	$(call getRecipe)
 	$(CC) $(C_FLAGS) -c -o $@ $<
+
+cuda_utils.o: Utils/cuda_utils.cu Utils/cuda_utils.hpp $(Utils)
+	$(call getRecipe)
+	$(NVCC) $(NVCC_FLAGS) -dc -o  $@ $<
 
 # recompile version.h dependants when GIT_VERSION changes, uses temporary file version~
 solver_version~: force

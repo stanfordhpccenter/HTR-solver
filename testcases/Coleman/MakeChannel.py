@@ -60,26 +60,25 @@ TauW = uTau**2*rhoB
 yPlusTrg = 0.8
 
 def objective(yStretching):
-   yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
+   config["Grid"]["GridInput"]["yType"]["Stretching"] = yStretching[0]
+   yGrid, dy = gridGen.GetGrid(config["Grid"]["GridInput"]["origin"][1],
                                2.0*h,
-                               config["Grid"]["yNum"], 
-                               config["Grid"]["yType"],
-                               yStretching,
+                               config["Grid"]["yNum"],
+                               config["Grid"]["GridInput"]["yType"],
                                False,
                                StagMinus=True,
                                StagPlus=True)
    return dy[1]/deltaNu - yPlusTrg
-   #return (yGrid[1] - config["Grid"]["origin"][1])/deltaNu - yPlusTrg
+   #return (yGrid[1] - config["Grid"]["GridInput"]["origin"][1])/deltaNu - yPlusTrg
 
-yStretching, = fsolve(objective, 1.0)
+config["Grid"]["GridInput"]["yType"]["Stretching"], = fsolve(objective, 1.0)
 
 tNu = deltaNu**2*rhoW/muW
 
 # Grid section
-config["Grid"]["xWidth"] = 4.0*h*np.pi
-config["Grid"]["yWidth"] = 2.0*h
-config["Grid"]["zWidth"] = 2.0*h*np.pi
-config["Grid"]["yStretching"] = yStretching
+config["Grid"]["GridInput"]["width"][0] = 4.0*h*np.pi
+config["Grid"]["GridInput"]["width"][1] = 2.0*h
+config["Grid"]["GridInput"]["width"][2] = 2.0*h*np.pi
 
 # Flow section
 config["Flow"]["initCase"]["velocity"] = uB

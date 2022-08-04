@@ -36,18 +36,18 @@ return function(SCHEMA) local Exports = {}
 -------------------------------------------------------------------------------
 local C = regentlib.c
 local MACRO = require 'prometeo_macro'
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 
 -------------------------------------------------------------------------------
 -- I/O RUTINES
 -------------------------------------------------------------------------------
 
 -- regentlib.rexpr, regentlib.rexpr, regentlib.rexpr* -> regentlib.rquote
-local function emitConsoleWrite(config_Mapping, format, ...)
+local function emitConsoleWrite(outDir, format, ...)
    local args = terralib.newlist{...}
    return rquote
       var consoleFile = [&int8](C.malloc(256))
-      C.snprintf(consoleFile, 256, '%s/console.txt', config_Mapping.outDir)
+      C.snprintf(consoleFile, 256, '%s/console.txt', outDir)
       var console = UTIL.openFile(consoleFile, 'a')
       C.free(consoleFile)
       C.fprintf(console, format, [args])
@@ -56,68 +56,94 @@ local function emitConsoleWrite(config_Mapping, format, ...)
    end
 end
 
--- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.Console_WriteHeader(config_Mapping : SCHEMA.MappingStruct)
-   [emitConsoleWrite(config_Mapping, '%10s'..
-                                     '%15s'..
-                                     '%13s'..
-                                     '%15s'..
-                                     '%15s'..
-                                     '%15s'..
-                                     '%15s\n',
-                                     'Iter',
-                                     'Sim Time',
-                                     'Wall t',
-                                     'Delta Time',
-                                     'Avg Press',
-                                     'Avg Temp',
-                                     'Average KE')];
+local -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Console_WriteHeader(outDir : regentlib.string)
+   [emitConsoleWrite(outDir, '%10s'..
+                             '%15s'..
+                             '%13s'..
+                             '%15s'..
+                             '%15s'..
+                             '%15s'..
+                             '%15s'..
+                             --'%15s'..
+                             --'%15s'..
+                             --'%15s'..
+                             --'%15s'..
+                             '%15s\n',
+                             'Iter',
+                             'Sim Time',
+                             'Wall t',
+                             'Delta Time',
+                             'Avg Press',
+                             'Avg Temp',
+                             'Avg KE',
+                             --'MaxSpeed',
+                             --'MaxDensity',
+                             --'MaxPressure',
+                             --'MaxTemperature',
+                             'Avg TotalE'
+                             )];
 end
 
--- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.Console_Write(config_Mapping : SCHEMA.MappingStruct,
-                           Integrator_timeStep : int,
-                           Integrator_simTime : double,
-                           startTime : uint64,
-                           Integrator_deltaTime : double,
-                           Flow_averagePressure : double,
-                           Flow_averageTemperature : double,
-                           Flow_averageKineticEnergy : double)
-   var currTime = C.legion_get_current_time_in_micros() / 1000;
-   [emitConsoleWrite(config_Mapping, '%10d'..
-                                     '%15.7e'..
-                                     '%9llu.%03llu'..
-                                     '%15.7e'..
-                                     '%15.7e'..
-                                     '%15.7e'..
-                                     '%15.7e\n',
+local -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Console_Write(outDir : regentlib.string,
+                   Integrator_timeStep : int,
+                   Integrator_simTime : double,
+                   startTime : int64,
+                   Integrator_deltaTime : double,
+                   Flow_averagePressure : double,
+                   Flow_averageTemperature : double,
+                   Flow_averageKineticEnergy : double,
+                   --Flow_maxSpeed : double,
+                   --Flow_maxDensity : double,
+                   --Flow_maxPressure : double,
+                   --Flow_maxTemperature : double,
+                   Flow_totalEnergy : double)
+   var deltaTime = (C.legion_get_current_time_in_micros() - startTime) / 1000;
+   [emitConsoleWrite(outDir, '%10d'..
+                             '%15.7e'..
+                             '%9llu.%03llu'..
+                             '%15.7e'..
+                             '%15.7e'..
+                             '%15.7e'..
+                             '%15.7e'..
+                             --'%15.7e'..
+                             --'%15.7e'..
+                             --'%15.7e'..
+                             --'%15.7e'..
+                             '%15.7e\n',
                      Integrator_timeStep,
                      Integrator_simTime,
-                     rexpr (currTime - startTime) / 1000 end,
-                     rexpr (currTime - startTime) % 1000 end,
+                     rexpr deltaTime / 1000 end,
+                     rexpr deltaTime % 1000 end,
                      Integrator_deltaTime,
                      Flow_averagePressure,
                      Flow_averageTemperature,
-                     Flow_averageKineticEnergy)];
+                     Flow_averageKineticEnergy,
+                     --Flow_maxSpeed,
+                     --Flow_maxDensity,
+                     --Flow_maxPressure,
+                     --Flow_maxTemperature,
+                     Flow_totalEnergy)];
 end
 
--- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.Console_WriteFooter(config_Mapping : SCHEMA.MappingStruct,
-                                 startTime : uint64)
-   var endTime = C.legion_get_current_time_in_micros() / 1000;
-   [emitConsoleWrite(config_Mapping,
+local -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Console_WriteFooter(outDir : regentlib.string,
+                         startTime : int64)
+   var deltaTime = (C.legion_get_current_time_in_micros() - startTime) / 1000;
+   [emitConsoleWrite(outDir,
                      'Total time: %llu.%03llu seconds\n',
-                     rexpr (endTime - startTime) / 1000 end,
-                     rexpr (endTime - startTime) % 1000 end)];
+                     rexpr deltaTime / 1000 end,
+                     rexpr deltaTime % 1000 end)];
 end
 
 -- regentlib.rexpr, regentlib.rexpr, regentlib.rexpr, regentlib.rexpr*
 --   -> regentlib.rquote
-local function emitProbeWrite(config_Mapping, probeId, format, ...)
+local function emitProbeWrite(outDir, probeId, format, ...)
   local args = terralib.newlist{...}
   return rquote
     var filename = [&int8](C.malloc(256))
-    C.snprintf(filename, 256, '%s/probe%d.csv', config_Mapping.outDir, probeId)
+    C.snprintf(filename, 256, '%s/probe%d.csv', outDir, probeId)
     var file = UTIL.openFile(filename, 'a')
     C.free(filename)
     C.fprintf(file, format, [args])
@@ -126,70 +152,53 @@ local function emitProbeWrite(config_Mapping, probeId, format, ...)
   end
 end
 
--- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.Probe_WriteHeader(config_Mapping : SCHEMA.MappingStruct,
-                               probeId : int)
-   [emitProbeWrite(config_Mapping, probeId, '%10s'..
-                                            '%15s' ..
-                                            '%15s' ..
-                                            '%15s\n',
-                                            'Iter',
-                                            'Time',
-                                            'Temperature',
-                                            'Pressure')];
+local -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Probe_WriteHeader(outDir : regentlib.string,
+                       probeId : int)
+   [emitProbeWrite(outDir, probeId, '%10s'..
+                                    '%15s' ..
+                                    '%15s' ..
+                                    '%15s\n',
+                                    'Iter',
+                                    'Time',
+                                    'Temperature',
+                                    'Pressure')];
 end
 
--- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.Probe_Write(config_Mapping : SCHEMA.MappingStruct,
-                         probeId : int,
-                         Integrator_timeStep : int,
-                         Integrator_simTime : double,
-                         avgTemperature : double,
-                         avgPressure : double)
-   [emitProbeWrite(config_Mapping, probeId, '%10d'..
-                                            '%15.7e' ..
-                                            '%15.7e' ..
-                                            '%15.7e\n',
-                                            Integrator_timeStep,
-                                            Integrator_simTime,
-                                            avgTemperature,
-                                            avgPressure)];
+local -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task Probe_Write(outDir : regentlib.string,
+                 probeId : int,
+                 Integrator_timeStep : int,
+                 Integrator_simTime : double,
+                 avgTemperature : double,
+                 avgPressure : double)
+   [emitProbeWrite(outDir, probeId, '%10d'..
+                                    '%15.7e' ..
+                                    '%15.7e' ..
+                                    '%15.7e\n',
+                                    Integrator_timeStep,
+                                    Integrator_simTime,
+                                    avgTemperature,
+                                    avgPressure)];
 end
 
--- regentlib.rexpr, regentlib.rexpr, regentlib.rexpr* -> regentlib.rquote
-local function emitTimingWrite(config_Mapping, format, ...)
-   local args = terralib.newlist{...}
-   return rquote
-      var consoleFile = [&int8](C.malloc(256))
-      C.snprintf(consoleFile, 256, '%s/timing.txt', config_Mapping.outDir)
-      var console = UTIL.openFile(consoleFile, 'a')
-      C.free(consoleFile)
-      C.fprintf(console, format, [args])
-      C.fflush(console)
-      C.fclose(console)
-   end
-end
-
--- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.Console_WriteTiming( _ : int,
-                                  config_Mapping : SCHEMA.MappingStruct,
-                                  taskname : regentlib.string,
-                                  line : int,
-                                  currTime : uint64)
-   [emitTimingWrite(config_Mapping,
-                    "TIMING: %s task is on line %d at time %llu.%06llu\n",
-                    taskname,
-                    line,
-                    rexpr currTime / 1000000 end,
-                    rexpr currTime % 1000000 end)];
-   return _
-end
-
--- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
-task Exports.createDir(_ : int, dirname : regentlib.string)
+local -- MANUALLY PARALLELIZED, NO CUDA, NO OPENMP
+task createDir(_ : int, dirname : regentlib.string)
    UTIL.createDir(dirname)
    return _
 end
+
+--------------------------------------------------------------------------------
+-- EXPORTED SYMBOLS
+--------------------------------------------------------------------------------
+Exports.Console_WriteHeader = Console_WriteHeader
+Exports.Console_Write       = Console_Write
+Exports.Console_WriteFooter = Console_WriteFooter
+
+Exports.Probe_WriteHeader   = Probe_WriteHeader
+Exports.Probe_Write         = Probe_Write
+
+Exports.createDir           = createDir
 
 return Exports end
 

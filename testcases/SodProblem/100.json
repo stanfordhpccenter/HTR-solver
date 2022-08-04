@@ -2,8 +2,6 @@
    "Mapping" : {
       "tiles" : [1,1,1],
       "tilesPerRank" : [1,1,1],
-      "sampleId" : -1,
-      "outDir" : "100",
       "wallTime" : 10
    },
 
@@ -11,16 +9,14 @@
       "xNum" : 100,
       "yNum" : 1,
       "zNum" : 1,
-      "origin" : [0.0, 0.0, 0.0],
-      "xWidth" : 1.0,
-      "yWidth" : 1.0,
-      "zWidth" : 1.0,
-      "xType" : "Uniform",
-      "yType" : "Uniform",
-      "zType" : "Uniform",
-      "xStretching" : 1.0,
-      "yStretching" : 1.0,
-      "zStretching" : 1.0
+      "GridInput" : {
+         "type" : "Cartesian",
+         "origin" : [0.0, 0.0, 0.0],
+         "width" : [1.0, 1.0, 1.0],
+         "xType" : { "type" : "Uniform" },
+         "yType" : { "type" : "Uniform" },
+         "zType" : { "type" : "Uniform" }
+      }
    },
 
    "Integrator" : {
@@ -29,8 +25,10 @@
       "resetTime" : false,
       "maxIter" : 200,
       "maxTime" : 0.2,
-      "cfl" : -0.4,
-      "fixedDeltaTime" : 1.0e-3,
+      "TimeStep" : {
+         "type" : "ConstantDeltaTime",
+         "DeltaTime" : 1.0e-3
+      },
       "implicitChemistry" : false,
       "EulerScheme" : {
          "type" : "Hybrid",
@@ -78,7 +76,8 @@
       "yBCLeft" :  { "type" : "Periodic" },
       "yBCRight" : { "type" : "Periodic" },
       "zBCLeft" :  { "type" : "Periodic" },
-      "zBCRight" : { "type" : "Periodic" }
+      "zBCRight" : { "type" : "Periodic" },
+      "bufferZone" : { "type" : "Off" }
    },
 
    "Flow" : {
@@ -98,7 +97,8 @@
          "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
       },
       "bodyForce" : [0.0, 0.0, 0.0],
-      "turbForcing" : { "type" : "OFF" }
+      "turbForcing" : { "type" : "OFF" },
+      "laser" : { "type" : "Off" }
    },
 
    "IO" : {

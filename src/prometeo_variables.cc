@@ -39,7 +39,7 @@ void UpdatePropertiesFromPrimitiveTask::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for primitive variables
@@ -61,15 +61,15 @@ void UpdatePropertiesFromPrimitiveTask::cpu_base_impl(
 #endif
 
    // Extract execution domain
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_Fluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
    #pragma omp parallel for collapse(3)
 #endif
-   for (int k = r_ModCells.lo.z; k <= r_ModCells.hi.z; k++)
-      for (int j = r_ModCells.lo.y; j <= r_ModCells.hi.y; j++)
-         for (int i = r_ModCells.lo.x; i <= r_ModCells.hi.x; i++) {
+   for (int k = r_Fluid.lo.z; k <= r_Fluid.hi.z; k++)
+      for (int j = r_Fluid.lo.y; j <= r_Fluid.hi.y; j++)
+         for (int i = r_Fluid.lo.x; i <= r_Fluid.hi.x; i++) {
             const Point<3> p = Point<3>{i,j,k};
             // Mixture check
             assert(args.mix.CheckMixture(acc_MolarFracs[p]));
@@ -95,7 +95,7 @@ void UpdateConservedFromPrimitiveTask::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for primitive variables
@@ -110,10 +110,10 @@ void UpdateConservedFromPrimitiveTask::cpu_base_impl(
    const AccessorWO<VecNEq, 3> acc_Conserved        (regions[1], FID_Conserved);
 
    // Extract execution domain
-   Domain r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Domain r_Fluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Launch domain might be composed by multiple rectangles
-   for (RectInDomainIterator<3> Rit(r_ModCells); Rit(); Rit++) {
+   for (RectInDomainIterator<3> Rit(r_Fluid); Rit(); Rit++) {
       // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
       #pragma omp parallel for collapse(3)
@@ -141,7 +141,7 @@ void UpdatePrimitiveFromConservedTask::cpu_base_impl(
                       const std::vector<Future>         &futures,
                       Context ctx, Runtime *runtime)
 {
-   assert(regions.size() == 3);
+   assert(regions.size() == 2);
    assert(futures.size() == 0);
 
    // Accessors for conserved variables
@@ -156,149 +156,21 @@ void UpdatePrimitiveFromConservedTask::cpu_base_impl(
    const AccessorWO<  Vec3, 3> acc_velocity         (regions[1], FID_velocity);
 
    // Extract execution domain
-   Rect<3> r_ModCells = runtime->get_index_space_domain(ctx, args.ModCells.get_index_space());
+   Rect<3> r_Fluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Here we are assuming C layout of the instance
 #ifdef REALM_USE_OPENMP
    #pragma omp parallel for collapse(3)
 #endif
-   for (int k = r_ModCells.lo.z; k <= r_ModCells.hi.z; k++)
-      for (int j = r_ModCells.lo.y; j <= r_ModCells.hi.y; j++)
-         for (int i = r_ModCells.lo.x; i <= r_ModCells.hi.x; i++) {
+   for (int k = r_Fluid.lo.z; k <= r_Fluid.hi.z; k++)
+      for (int j = r_Fluid.lo.y; j <= r_Fluid.hi.y; j++)
+         for (int i = r_Fluid.lo.x; i <= r_Fluid.hi.x; i++) {
             const Point<3> p = Point<3>{i,j,k};
             UpdatePrimitive(acc_Conserved, acc_temperature, acc_pressure,
                             acc_MolarFracs, acc_velocity,
                             p, args.mix);
          }
 }
-
-
-// GetVelocityGradientsTask
-/*static*/ const char * const    GetVelocityGradientsTask::TASK_NAME = "GetVelocityGradients";
-/*static*/ const int             GetVelocityGradientsTask::TASK_ID = TID_GetVelocityGradients;
-
-void GetVelocityGradientsTask::cpu_base_impl(
-                      const Args &args,
-                      const std::vector<PhysicalRegion> &regions,
-                      const std::vector<Future>         &futures,
-                      Context ctx, Runtime *runtime)
-{
-   assert(regions.size() == 3);
-   assert(futures.size() == 0);
-
-   // Accessors for variables in the Ghost regions
-   const AccessorRO<  Vec3, 3> acc_velocity         (regions[0], FID_velocity);
-
-   // Accessors for metrics
-   const AccessorRO<   int, 3> acc_nType_x          (regions[1], FID_nType_x);
-   const AccessorRO<   int, 3> acc_nType_y          (regions[1], FID_nType_y);
-   const AccessorRO<   int, 3> acc_nType_z          (regions[1], FID_nType_z);
-   const AccessorRO<double, 3> acc_dcsi_d           (regions[1], FID_dcsi_d);
-   const AccessorRO<double, 3> acc_deta_d           (regions[1], FID_deta_d);
-   const AccessorRO<double, 3> acc_dzet_d           (regions[1], FID_dzet_d);
-
-   // Accessors for gradients
-   const AccessorWO<  Vec3, 3> acc_vGradX           (regions[2], FID_velocityGradientX);
-   const AccessorWO<  Vec3, 3> acc_vGradY           (regions[2], FID_velocityGradientY);
-   const AccessorWO<  Vec3, 3> acc_vGradZ           (regions[2], FID_velocityGradientZ);
-
-   // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
-   Rect<3> Fluid_bounds = args.Fluid_bounds;
-
-   // Get domain sizes
-   const coord_t xsize = getSize<Xdir>(Fluid_bounds);
-   const coord_t ysize = getSize<Ydir>(Fluid_bounds);
-   const coord_t zsize = getSize<Zdir>(Fluid_bounds);
-
-   // Here we are assuming C layout of the instance
-#ifdef REALM_USE_OPENMP
-   #pragma omp parallel for collapse(3)
-#endif
-   for (int k = r_MyFluid.lo.z; k <= r_MyFluid.hi.z; k++)
-      for (int j = r_MyFluid.lo.y; j <= r_MyFluid.hi.y; j++)
-         for (int i = r_MyFluid.lo.x; i <= r_MyFluid.hi.x; i++) {
-            const Point<3> p = Point<3>{i,j,k};
-            // X gradient
-            computeDerivatives<Xdir>(acc_vGradX, acc_velocity, p,
-                                     acc_nType_x[p], acc_dcsi_d[p],
-                                     xsize, Fluid_bounds);
-
-            // Y gradient
-            computeDerivatives<Ydir>(acc_vGradY, acc_velocity, p,
-                                     acc_nType_y[p], acc_deta_d[p],
-                                     ysize, Fluid_bounds);
-
-            // Z gradient
-            computeDerivatives<Zdir>(acc_vGradZ, acc_velocity, p,
-                                     acc_nType_z[p], acc_dzet_d[p],
-                                     zsize, Fluid_bounds);
-         }
-}
-
-#if 0
-// GetTemperatureGradientTask
-/*static*/ const char * const    GetTemperatureGradientTask::TASK_NAME = "GetTemperatureGradient";
-/*static*/ const int             GetTemperatureGradientTask::TASK_ID = TID_GetTemperatureGradient;
-
-void GetTemperatureGradientTask::cpu_base_impl(
-                      const Args &args,
-                      const std::vector<PhysicalRegion> &regions,
-                      const std::vector<Future>         &futures,
-                      Context ctx, Runtime *runtime)
-{
-   assert(regions.size() == 3);
-   assert(futures.size() == 0);
-
-   // Accessors for variables in the Ghost regions
-   const AccessorRO<double, 3> acc_temperature      (regions[0], FID_temperature);
-
-   // Accessors for metrics
-   const AccessorRO<   int, 3> acc_nType_x          (regions[1], FID_nType_x);
-   const AccessorRO<   int, 3> acc_nType_y          (regions[1], FID_nType_y);
-   const AccessorRO<   int, 3> acc_nType_z          (regions[1], FID_nType_z);
-   const AccessorRO<double, 3> acc_dcsi_d           (regions[1], FID_dcsi_d);
-   const AccessorRO<double, 3> acc_deta_d           (regions[1], FID_deta_d);
-   const AccessorRO<double, 3> acc_dzet_d           (regions[1], FID_dzet_d);
-
-   // Accessors for gradients
-   const AccessorWO<  Vec3, 3> acc_tGrad            (regions[2], FID_temperatureGradient);
-
-   // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
-   Rect<3> Fluid_bounds = args.Fluid_bounds;
-
-   // Get domain sizes
-   const coord_t xsize = getSize<Xdir>(Fluid_bounds);
-   const coord_t ysize = getSize<Ydir>(Fluid_bounds);
-   const coord_t zsize = getSize<Zdir>(Fluid_bounds);
-
-   // Here we are assuming C layout of the instance
-#ifdef REALM_USE_OPENMP
-   #pragma omp parallel for collapse(3)
-#endif
-   for (int k = r_MyFluid.lo.z; k <= r_MyFluid.hi.z; k++)
-      for (int j = r_MyFluid.lo.y; j <= r_MyFluid.hi.y; j++)
-         for (int i = r_MyFluid.lo.x; i <= r_MyFluid.hi.x; i++) {
-            const Point<3> p = Point<3>{i,j,k};
-            // X gradient
-            acc_tGrad[p][0] = computeDerivative<Xdir>(acc_temperature, p,
-                                                      acc_nType_x[p], acc_dcsi_d[p],
-                                                      xsize, Fluid_bounds);
-
-            // Y gradient
-            acc_tGrad[p][1] = computeDerivative<Ydir>(acc_temperature, p,
-                                                      acc_nType_y[p], acc_deta_d[p],
-                                                      ysize, Fluid_bounds);
-
-            // Z gradient
-            acc_tGrad[p][2] = computeDerivative<Zdir>(acc_temperature, p,
-                                                      acc_nType_z[p], acc_dzet_d[p],
-                                                      zsize, Fluid_bounds);
-         }
-}
-#endif
-
 
 void register_variables_tasks() {
 
@@ -307,9 +179,5 @@ void register_variables_tasks() {
    TaskHelper::register_hybrid_variants<UpdateConservedFromPrimitiveTask>();
 
    TaskHelper::register_hybrid_variants<UpdatePrimitiveFromConservedTask>();
-
-   TaskHelper::register_hybrid_variants<GetVelocityGradientsTask>();
-
-//   TaskHelper::register_hybrid_variants<GetTemperatureGradientTask>();
 
 };

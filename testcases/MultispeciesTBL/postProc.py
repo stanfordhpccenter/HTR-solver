@@ -13,7 +13,7 @@ from scipy.integrate import odeint
 from scipy.optimize import fsolve
 import pandas
 
-# load grid generator
+# load HTR modules
 sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
 import gridGen
 import Averages
@@ -68,12 +68,12 @@ config = json.load(args.json_file)
 xNum    = config["Grid"]["xNum"]
 yNum    = config["Grid"]["yNum"]
 zNum    = config["Grid"]["zNum"]
-xWidth  = config["Grid"]["xWidth"]
-yWidth  = config["Grid"]["yWidth"]
-zWidth  = config["Grid"]["zWidth"]
-xOrigin = config["Grid"]["origin"][0]
-yOrigin = config["Grid"]["origin"][1]
-zOrigin = config["Grid"]["origin"][2]
+xWidth  = config["Grid"]["GridInput"]["width"][0]
+yWidth  = config["Grid"]["GridInput"]["width"][1]
+zWidth  = config["Grid"]["GridInput"]["width"][2]
+xOrigin = config["Grid"]["GridInput"]["origin"][0]
+yOrigin = config["Grid"]["GridInput"]["origin"][1]
+zOrigin = config["Grid"]["GridInput"]["origin"][2]
 
 ReIn   = config["Case"]["ReInlet"]
 MaInf  = config["Case"]["MaInf"]
@@ -106,24 +106,7 @@ assert abs(Tw/TB[-1] - TwOvT) < 1e-3
 ##############################################################################
 #                               Compute Grid                                 #
 ##############################################################################
-
-xGrid, dx = gridGen.GetGrid(config["Grid"]["origin"][0],
-                            config["Grid"]["xWidth"],
-                            config["Grid"]["xNum"],
-                            config["Grid"]["xType"],
-                            config["Grid"]["xStretching"],
-                            False)
-
-yGrid, dy = gridGen.GetGrid(config["Grid"]["origin"][1],
-                            config["Grid"]["yWidth"],
-                            config["Grid"]["yNum"],
-                            config["Grid"]["yType"],
-                            config["Grid"]["yStretching"],
-                            False,
-                            StagMinus=True)
-
-# Correct boundaries that are staggered
-yGrid[0] += 0.5*dy[0]
+xGrid, yGrid, zGrid, dx, dy, dz = gridGen.getCellCenters(config)
 
 ##############################################################################
 #                          Load average files                                #

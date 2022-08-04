@@ -12,7 +12,7 @@ local sqrt = regentlib.sqrt(double)
 
 local SCHEMA = terralib.includec("config_schema.h")
 local REGISTRAR = terralib.includec("registrar.h")
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 
 local MAPPER = {
@@ -29,15 +29,19 @@ local PI = CONST.PI
 local types_inc_flags = terralib.newlist({"-DEOS=IsentropicMix", "-DELECTRIC_FIELD"})
 local TYPES = terralib.includec("prometeo_types.h", types_inc_flags)
 local Fluid_columns = TYPES.Fluid_columns
+local bBoxType = TYPES.bBoxType
 
 -------------------------------------------------------------------------------
 --External modules
 -------------------------------------------------------------------------------
 local MACRO = require "prometeo_macro"
+local IO = (require 'prometeo_IO')(SCHEMA)
 local MIX = (require 'prometeo_mixture')(SCHEMA, TYPES)
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
-local PART = (require 'prometeo_partitioner')(SCHEMA, METRIC, Fluid_columns)
-local GRID = (require 'prometeo_grid')(SCHEMA, Fluid_columns, PART.zones_partitions)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
+local GRID = (require 'prometeo_grid')(SCHEMA, IO, Fluid_columns, bBoxType,
+                                       PART.zones_partitions, PART.output_partitions)
 local POISSON = (require "Poisson")(SCHEMA, MIX, TYPES, Fluid_columns,
                                     terralib.newlist({"rho"}), TYPES.TID_performDirFFTFromField,
                                     "electricPotential",
@@ -74,7 +78,6 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth,         array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, 0)
    fill(Fluid.nType_y, 0)
    fill(Fluid.nType_z, 0)
@@ -145,7 +148,7 @@ do
    end
 end
 
-local PoissonData = POISSON.DataList
+local PoissonData = POISSON.mkDataList()
 local Grid = {
    xBnum = regentlib.newsymbol(),
    yBnum = regentlib.newsymbol(),
@@ -161,6 +164,10 @@ task main()
    C.printf("poissonTest: run...\n")
 
    var config : SCHEMA.Config
+
+   C.snprintf([&int8](config.Mapping.outDir), 256, "./PoissonDir")
+   UTIL.createDir(config.Mapping.outDir)
+
    config.BC.xBCLeft.type  = SCHEMA.FlowBC_Periodic
    config.BC.xBCRight.type = SCHEMA.FlowBC_Periodic
    config.BC.yBCLeft.type  = SCHEMA.FlowBC_NSCBC_Outflow
@@ -168,10 +175,17 @@ task main()
    config.BC.zBCLeft.type  = SCHEMA.FlowBC_Periodic
    config.BC.zBCRight.type = SCHEMA.FlowBC_Periodic
 
-   config.Grid.xType = SCHEMA.GridType_Uniform
-   config.Grid.yType = SCHEMA.GridType_Cosine
-   config.Grid.yType = SCHEMA.GridType_Uniform
-   config.Grid.zType = SCHEMA.GridType_Uniform
+   config.Grid.xNum = Npx
+   config.Grid.yNum = Npy
+   config.Grid.zNum = Npz
+
+   config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+   config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+   config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+   config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Uniform
+   config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Cosine
+   config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Uniform
+   config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Uniform
 
    config.Efield.type = SCHEMA.EFieldStruct_Ybc
 
@@ -200,6 +214,7 @@ task main()
 
    -- Fluid Partitioning
    var Fluid_Zones = PART.PartitionZones(Fluid, tiles, config, Grid.xBnum, Grid.yBnum, Grid.zBnum)
+   var Fluid_Ghost = PART.PartitionGhost(Fluid, tiles, Fluid_Zones, config)
    var {p_All} = Fluid_Zones
 
    -- Init the mixture
@@ -212,49 +227,15 @@ task main()
    InitializeCell(Fluid)
 
    -- Initialize operators
-   METRIC.InitializeOperators(Fluid, tiles, p_All)
+   METRIC.InitializeOperators(Fluid, tiles, Fluid_Zones, config,
+                              Grid.xBnum, Grid.yBnum, Grid.zBnum)
 
-   -- Enforce BCs on the operators
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostOperators("x")](p_All[c], Fluid_bounds, config.BC.xBCLeft.type, config.BC.xBCRight.type, Grid.xBnum, Npx) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostOperators("y")](p_All[c], Fluid_bounds, config.BC.yBCLeft.type, config.BC.yBCRight.type, Grid.yBnum, Npy) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostOperators("z")](p_All[c], Fluid_bounds, config.BC.zBCLeft.type, config.BC.zBCRight.type, Grid.zBnum, Npz) end
-
-   -- Create partitions to support stencils
-   var Fluid_Ghosts = PART.PartitionGhost(Fluid, tiles, Fluid_Zones)
-   var {p_MetricGhosts} = Fluid_Ghosts
-
-   __demand(__index_launch)
-   for c in tiles do
-      GRID.InitializeGeometry(p_All[c],
-                              config.Grid.xType, config.Grid.yType, config.Grid.zType,
-                              1.0, 1.0, 1.0,
-                              Grid.xBnum, Npx, xO, xW,
-                              Grid.yBnum, Npy, yO, yW,
-                              Grid.zBnum, Npz, zO, zW)
-   end
-
-   -- Enforce BCs
-   GRID.InitializeGhostGeometry(Fluid, tiles, Fluid_Zones, config)
+   -- Initialize the geometry
+   var boundingBox = GRID.InitializeGeometry(Fluid, tiles, Fluid_Zones, config)
 
    -- Init Metrics
-   __demand(__index_launch)
-   for c in tiles do
-      METRIC.InitializeMetric(p_MetricGhosts[c],
-                              p_All[c],
-                              Fluid_bounds,
-                              xW, yW, zW);
-   end
-
-   -- Enforce BCs on the metric
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostMetric("x")](p_All[c]) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostMetric("y")](p_All[c]) end
-   __demand(__index_launch)
-   for c in tiles do [METRIC.mkCorrectGhostMetric("z")](p_All[c]) end
+   METRIC.InitializeMetric(Fluid, tiles, Fluid_Zones, Fluid_Ghost,
+                           boundingBox, config);
 
    -- Init Poisson solver
    [POISSON.Init(PoissonData, tiles, Grid, config)];

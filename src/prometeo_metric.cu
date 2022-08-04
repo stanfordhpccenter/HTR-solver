@@ -114,8 +114,13 @@ void InitializeMetricTask::gpu_base_impl(
    const AccessorWO<double, 3> acc_dzet_s(regions[1], FID_dzet_s);
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
    Rect<3> Fluid_bounds = args.Fluid_bounds;
+
+   // Determine the grid width from bounding box
+   const double xWidth = args.bBox.v1[0] - args.bBox.v0[0];
+   const double yWidth = args.bBox.v3[1] - args.bBox.v0[1];
+   const double zWidth = args.bBox.v4[2] - args.bBox.v0[2];
 
    const int threads_per_block = 256;
 
@@ -135,7 +140,7 @@ void InitializeMetricTask::gpu_base_impl(
       ComputeMetrics_kernel<Xdir><<<num_blocks_3d, TPB_3d, 0, Xstream>>>(
                            acc_dcsi_e, acc_dcsi_d, acc_dcsi_s,
                            acc_centerCoordinates, acc_nType_x,
-                           r_MyFluid, Fluid_bounds, args.Grid_xWidth,
+                           r_MyFluid, Fluid_bounds, xWidth,
                            getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
    }
 
@@ -147,7 +152,7 @@ void InitializeMetricTask::gpu_base_impl(
       ComputeMetrics_kernel<Ydir><<<num_blocks_3d, TPB_3d, 0, Ystream>>>(
                            acc_deta_e, acc_deta_d, acc_deta_s,
                            acc_centerCoordinates, acc_nType_y,
-                           r_MyFluid, Fluid_bounds, args.Grid_yWidth,
+                           r_MyFluid, Fluid_bounds, yWidth,
                            getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
    }
 
@@ -159,7 +164,7 @@ void InitializeMetricTask::gpu_base_impl(
       ComputeMetrics_kernel<Zdir><<<num_blocks_3d, TPB_3d, 0, Zstream>>>(
                            acc_dzet_e, acc_dzet_d, acc_dzet_s,
                            acc_centerCoordinates, acc_nType_z,
-                           r_MyFluid, Fluid_bounds, args.Grid_zWidth,
+                           r_MyFluid, Fluid_bounds, zWidth,
                            getSize<Xdir>(r_MyFluid), getSize<Ydir>(r_MyFluid), getSize<Zdir>(r_MyFluid));
    }
 
@@ -217,7 +222,7 @@ void CorrectGhostMetricTask<dir>::gpu_base_impl(
    const AccessorRW<double, 3> acc_m                (regions[1], FID_m);
 
    // Extract execution domains
-   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, args.Fluid.get_index_space());
+   Rect<3> r_MyFluid = runtime->get_index_space_domain(ctx, regions[1].get_logical_region().get_index_space());
 
    // Launch the kernel to update the ghost metric
    const int threads_per_block = 256;

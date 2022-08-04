@@ -38,6 +38,6 @@ for i in range(0,args.num_times):
    print(command)
    subprocess.call(command, shell=True)
 
-   config["Mapping"]["tiles"][idir] *=2 
+   config["Mapping"]["tiles"][idir] *=2
    idir = (idir + 1)%3
 

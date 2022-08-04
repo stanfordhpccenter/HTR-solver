@@ -11,6 +11,7 @@ from scipy.optimize import fsolve
 sys.path.insert(0, os.path.expandvars("$HTR_DIR/scripts/modules"))
 import gridGen
 import ConstPropMix
+import HTRrestart
 
 ##############################################################################
 #                         Read Prometeo Input File                           #
@@ -25,14 +26,10 @@ with open(prometeo_input_file) as f:
 xNum = data["Grid"]["xNum"]
 yNum = data["Grid"]["yNum"]
 zNum = data["Grid"]["zNum"]
-xWidth  = data["Grid"]["xWidth"]
-yWidth  = data["Grid"]["yWidth"]
-xOrigin = data["Grid"]["origin"][0]
-yOrigin = data["Grid"]["origin"][1]
-xType  = data["Grid"]["xType"]
-yType  = data["Grid"]["yType"]
-xStretching  = data["Grid"]["xStretching"]
-yStretching  = data["Grid"]["yStretching"]
+xWidth  = data["Grid"]["GridInput"]["width"][0]
+yWidth  = data["Grid"]["GridInput"]["width"][1]
+xOrigin = data["Grid"]["GridInput"]["origin"][0]
+yOrigin = data["Grid"]["GridInput"]["origin"][1]
 
 gamma = data["Flow"]["mixture"]["gamma"]
 R     = data["Flow"]["mixture"]["gasConstant"]
@@ -43,7 +40,7 @@ Tw   = data["BC"]["xBCLeft"]["TemperatureProfile"]["temperature"]
 P    = data["BC"]["xBCLeft"]["P"]
 U    = data["BC"]["xBCLeft"]["VelocityProfile"]["velocity"]
 Re   = data["BC"]["xBCLeft"]["VelocityProfile"]["Reynolds"]
- 
+
 aInf = np.sqrt(gamma*R*TInf)
 MaInf = U/aInf
 
@@ -91,13 +88,7 @@ def GetCBL():
 ##############################################################################
 #               Generate y grid that will be used in the solver              #
 ##############################################################################
-y, dy = gridGen.GetGrid(data["Grid"]["origin"][1],
-                        data["Grid"]["yWidth"],
-                        data["Grid"]["yNum"],
-                        data["Grid"]["yType"],
-                        data["Grid"]["yStretching"],
-                        False,
-                        StagMinus=True)
+x, y, z, dx, dy, dz = gridGen.getCellCenters(data)
 
 ##############################################################################
 #                     Compute the profile on this grid                       #
@@ -122,41 +113,20 @@ v = np.interp(y, yB, vB)
 T = np.interp(y, yB, TB)
 
 ##############################################################################
-#                          Print Prometeo Profile                            #
+#                          Print profile files                               #
 ##############################################################################
 
-profileDir = os.path.join(dir_name, 'InflowProfile')
-exists = os.path.isdir(profileDir)
+def temperature(i, j, k):
+   return T[j]
 
-if (not exists):
-   mkdir_command = 'mkdir {}'.format(os.path.expandvars(profileDir))
-   try:
-      subprocess.call(mkdir_command, shell=True)
-   except OSError:
-      print("Failed command: {}".format(mkdir_command))
-      sys.exit()
+def MolarFracs(i, j, k):
+   return [1.0,]
 
-filename = os.path.join(profileDir, '0,0,0-'+str(xNum+1)+','+str(yNum+1)+',0.hdf')
+def velocity(i, j, k):
+   return [u[j], v[j], 0.0]
 
-f = h5py.File(filename, 'w')
-
-shape = [zNum, yNum+2, xNum+2]
-MolarFracs_profile  = np.ndarray(shape, dtype=np.dtype('(1,)f8'))
-temperature_profile = np.ndarray(shape) 
-velocity_profile    = np.ndarray(shape, dtype=np.dtype('(3,)f8')) 
-for k in range(0, shape[0]):
-   for j in range(0, shape[1]):
-      for i in range(0, shape[2]):
-         MolarFracs_profile[k,j,i] = [1.0,]
-         temperature_profile[k,j,i] = T[j]
-         velocity_profile[k,j,i] = np.array([u[j], v[j], 0])
-
-f.create_dataset("MolarFracs_profile",   shape=shape, dtype = np.dtype("(1,)f8"))
-f.create_dataset("velocity_profile",     shape=shape, dtype = np.dtype("(3,)f8"))
-f.create_dataset("temperature_profile",  shape=shape, dtype = np.dtype("f8"))
-
-f["MolarFracs_profile" ][:] = MolarFracs_profile
-f["temperature_profile"][:] = temperature_profile
-f["velocity_profile"   ][:] = velocity_profile
-
-f.close()
+restart = HTRrestart.HTRrestart(data)
+restart.write_profiles('InflowProfile', 1,
+              temperature,
+              MolarFracs,
+              velocity)

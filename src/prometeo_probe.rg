@@ -36,7 +36,7 @@ return function(SCHEMA, MIX, IO, Fluid_columns) local Exports = {}
 -------------------------------------------------------------------------------
 local C = regentlib.c
 local sqrt = regentlib.sqrt(double)
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 local MACRO = require "prometeo_macro"
 
@@ -53,11 +53,13 @@ local Properties = CONST.Properties
 -- DATA STRUCTURES
 -------------------------------------------------------------------------------
 
-Exports.ProbesList = {
-   probes_tiles = regentlib.newsymbol(),
-   p_Probes = regentlib.newsymbol("p_Probes"),
-   Volumes = regentlib.newsymbol(double[5], "Volumes") -- Match the up to in config_schema.lua
-}
+function Exports.mkProbesList()
+   return {
+      probes_tiles = regentlib.newsymbol(),
+      p_Probes = regentlib.newsymbol("p_Probes"),
+      Volumes = regentlib.newsymbol(double[5], "Volumes") -- Match the up to in config_schema.lua
+   }
+end
 
 -------------------------------------------------------------------------------
 -- PROBE ROUTINES
@@ -66,12 +68,12 @@ Exports.ProbesList = {
 local __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
 task ProbeVolume(Fluid : region(ispace(int3d), Fluid_columns))
 where
-   reads(Fluid.cellWidth)
+   reads(Fluid.{dcsi_d, deta_d, dzet_d})
 do
    var acc = 0.0
    __demand(__openmp)
    for c in Fluid do
-      acc += Fluid[c].cellWidth[0]*Fluid[c].cellWidth[1]*Fluid[c].cellWidth[2]
+      acc += 1.0/(Fluid[c].dcsi_d*Fluid[c].deta_d*Fluid[c].dzet_d)
    end
    return acc
 end
@@ -79,13 +81,13 @@ end
 local __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
 task ProbeTemperature(Fluid : region(ispace(int3d), Fluid_columns))
 where
-   reads(Fluid.cellWidth),
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
    reads(Fluid.temperature)
 do
    var acc = 0.0
    __demand(__openmp)
    for c in Fluid do
-      var vol = Fluid[c].cellWidth[0]*Fluid[c].cellWidth[1]*Fluid[c].cellWidth[2]
+      var vol = 1.0/(Fluid[c].dcsi_d*Fluid[c].deta_d*Fluid[c].dzet_d)
       acc += Fluid[c].temperature*vol
    end
    return acc
@@ -94,13 +96,13 @@ end
 local __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
 task ProbePressure(Fluid : region(ispace(int3d), Fluid_columns))
 where
-   reads(Fluid.cellWidth),
+   reads(Fluid.{dcsi_d, deta_d, dzet_d}),
    reads(Fluid.pressure)
 do
    var acc = 0.0
    __demand(__openmp)
    for c in Fluid do
-		var vol = Fluid[c].cellWidth[0]*Fluid[c].cellWidth[1]*Fluid[c].cellWidth[2]
+		var vol = 1.0/(Fluid[c].dcsi_d*Fluid[c].deta_d*Fluid[c].dzet_d)
 		acc += Fluid[c].pressure*vol
    end
    return acc
@@ -118,7 +120,7 @@ function Exports.DeclSymbols(s, Grid, Fluid, p_All, config)
       -- Write probe file headers
       __forbid(__index_launch)
       for probeId = 0, config.IO.probes.length do
-         IO.Probe_WriteHeader(config.Mapping, probeId)
+         IO.Probe_WriteHeader([&int8](config.Mapping.outDir), probeId)
       end
 
       -- Partition the Fluid region based on the specified regions
@@ -202,7 +204,8 @@ function Exports.WriteProbes(s, Integrator_timeStep, Integrator_simTime, config)
             end
             avgTemperature /= s.Volumes[p]
             avgPressure    /= s.Volumes[p]
-            IO.Probe_Write(config.Mapping, p, Integrator_timeStep, Integrator_simTime, avgTemperature, avgPressure)
+            IO.Probe_Write([&int8](config.Mapping.outDir), p,
+                           Integrator_timeStep, Integrator_simTime, avgTemperature, avgPressure)
          end
       end
    end

@@ -7,7 +7,7 @@ local C = regentlib.c
 local fabs = regentlib.fabs(double)
 local sqrt = regentlib.sqrt(double)
 local SCHEMA = terralib.includec("../../src/config_schema.h")
-local UTIL = require 'util-desugared'
+local UTIL = require 'util'
 local CONST = require "prometeo_const"
 
 -- Node types
@@ -41,7 +41,9 @@ local Fluid_columns = TYPES.Fluid_columns
 
 --External modules
 local MACRO = require "prometeo_macro"
-local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES, Fluid_columns)
+local PART = (require 'prometeo_partitioner')(SCHEMA, Fluid_columns)
+local METRIC = (require 'prometeo_metric')(SCHEMA, TYPES,
+                                           PART.zones_partitions, PART.ghost_partitions)
 
 -- Test parameters
 local Npx = 32
@@ -196,7 +198,6 @@ where
    writes(Fluid)
 do
    fill(Fluid.centerCoordinates, array(0.0, 0.0, 0.0))
-   fill(Fluid.cellWidth, array(0.0, 0.0, 0.0))
    fill(Fluid.nType_x, 0)
    fill(Fluid.nType_y, 0)
    fill(Fluid.nType_z, 0)
@@ -233,6 +234,26 @@ task main()
 
    C.printf("operatorsTest_Periodic: run...\n")
 
+   var config : SCHEMA.Config
+
+   config.BC.xBCLeft.type  = SCHEMA.FlowBC_Periodic
+   config.BC.xBCRight.type = SCHEMA.FlowBC_Periodic
+   config.BC.yBCLeft.type  = SCHEMA.FlowBC_Periodic
+   config.BC.yBCRight.type = SCHEMA.FlowBC_Periodic
+   config.BC.zBCLeft.type  = SCHEMA.FlowBC_Periodic
+   config.BC.zBCRight.type = SCHEMA.FlowBC_Periodic
+
+   config.Grid.xNum = Npx
+   config.Grid.yNum = Npy
+   config.Grid.zNum = Npz
+
+   config.Grid.GridInput.type = SCHEMA.GridInputStruct_Cartesian
+   config.Grid.GridInput.u.Cartesian.origin = array(double(xO), double(yO), double(zO))
+   config.Grid.GridInput.u.Cartesian.width  = array(double(xW), double(yW), double(zW))
+   config.Grid.GridInput.u.Cartesian.xType.type = SCHEMA.GridTypes_Cosine
+   config.Grid.GridInput.u.Cartesian.yType.type = SCHEMA.GridTypes_Cosine
+   config.Grid.GridInput.u.Cartesian.zType.type = SCHEMA.GridTypes_Cosine
+
    -- No ghost cells
    var xBnum = 0
    var yBnum = 0
@@ -243,19 +264,17 @@ task main()
                                  y = Npy + 2*yBnum,
                                  z = Npz + 2*zBnum})
    var Fluid = region(is_Fluid, Fluid_columns)
-   var Fluid_bounds = Fluid.bounds
 
    -- Partitioning domain
    var tiles = ispace(int3d, {Nx, Ny, Nz})
 
    -- Fluid Partitioning
-   var p_Fluid =
-      [UTIL.mkPartitionByTile(int3d, int3d, Fluid_columns, "p_All")]
-      (Fluid, tiles, int3d{xBnum,yBnum,zBnum}, int3d{0,0,0})
+   var Fluid_Zones = PART.PartitionZones(Fluid, tiles, config, xBnum, yBnum, zBnum)
 
    InitializeCell(Fluid)
 
-   METRIC.InitializeOperators(Fluid, tiles, p_Fluid)
+   METRIC.InitializeOperators(Fluid, tiles, Fluid_Zones, config,
+                              xBnum, yBnum, zBnum)
 
    checkOperators(Fluid)
 

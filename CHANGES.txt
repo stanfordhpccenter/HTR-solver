@@ -1,5 +1,29 @@
 This file lists the major changes as they appear in the master branch.
 
+Version 1.4.1 (August 1, 2022)
+   - Minor bug fixes and performance improvements
+
+Version 1.4.0 (July 1, 2022)
+   - NSCBC (Inflow/Outflow) are now available for xNeg/xPos/yNeg/yPos/zNeg/zPos
+   - new NSCBC FarField added to the solver
+   - unitTest suite is now compatible with CUDA
+   - solverTest suite is now compatible with GPUs
+   - laser energy kernel based on Wang et al., JFM (2020) implemented, with accompanying test case
+   - boundary buffer zones based on Freund, AIAA (1997)
+   - one-dimensional planar flame for calculating flame speed added to test cases
+   - low-priority samples that use only CPUs can be passed using the -lp argument
+   - 26 species (including ions) chemical scheme (Di Renzo & Cuenot (2022) CnF 244) added to the solver with the name CH4_26SpIonsMix
+   - several improvements in precision of task privileges
+   - new implementation of constant TKE forcing for proposed in Bassenne et al., POF (2016)
+   - TENO added as option for Euler flux reconstruction
+   - less intrusive flux limiter to avoid negative species partial densities
+   - fixed compatibility with macOS
+   - UCSD mechanism for H2 combustion added to the solver (Saxena & Williams (2006) CnF 145)
+   - ability to repartition on different number of nodes the simulation data upon restart
+   - new python module to read and write the restart files
+   - new grid parameter section in the input file
+   - new grid IO
+
 Version 1.3.0 (February 28, 2021)
    - normalization of the multicomponent mixture
    - NSCBCInflow is now available for yLeft BC

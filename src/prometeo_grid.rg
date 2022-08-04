@@ -7,7 +7,7 @@
 --                         multi-GPU high-order code for hypersonic aerothermodynamics.
 --                         Computer Physics Communications 255, 107262"
 -- All rights reserved.
--- 
+--
 -- Redistribution and use in source and binary forms, with or without
 -- modification, are permitted provided that the following conditions are met:
 --    * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 --    * Redistributions in binary form must reproduce the above copyright
 --      notice, this list of conditions and the following disclaimer in the
 --      documentation and/or other materials provided with the distribution.
--- 
+--
 -- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 -- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 -- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -29,7 +29,8 @@
 
 import "regent"
 
-return function(SCHEMA, Fluid_columns, zones_partitions) local Exports = {}
+return function(SCHEMA, IO, Fluid_columns, bBoxType,
+                zones_partitions, output_partitions) local Exports = {}
 
 -------------------------------------------------------------------------------
 -- IMPORTS
@@ -41,7 +42,11 @@ local sinh = regentlib.sinh(double)
 local cosh = regentlib.cosh(double)
 local tanh = regentlib.tanh(double)
 
+local MAPPER = terralib.includec("prometeo_mapper.h")
+
+local UTIL = require "util"
 local MACRO = require 'prometeo_macro'
+local VERSION = require "version"
 
 -------------------------------------------------------------------------------
 -- CONSTANTS
@@ -51,18 +56,49 @@ local CONST = require "prometeo_const"
 local PI = CONST.PI
 
 -------------------------------------------------------------------------------
+-- DATA TYPES
+-------------------------------------------------------------------------------
+
+local struct nodeType {
+   position : double;
+}
+
+-------------------------------------------------------------------------------
+-- EXTERNAL MODULES IMPORTS
+-------------------------------------------------------------------------------
+local NGridVars = terralib.newlist({
+   'position',
+})
+
+local CCGridVars = terralib.newlist({
+   'centerCoordinates',
+})
+
+local HDF_N = (require 'hdf_helper')(int1d, int1d, nodeType,
+                                                   NGridVars,
+                                                   {Bnum=int,
+                                                    NegStaggered=bool, PosStaggered=bool,
+                                                    boundingBox=bBoxType},
+                                                   {Versions={2, VERSION.Length}})
+
+local HDF_C = (require 'hdf_helper')(int3d, int3d, Fluid_columns,
+                                                   CCGridVars,
+                                                   {},
+                                                   {Versions={2, VERSION.Length}})
+
+-------------------------------------------------------------------------------
 -- MESH ROUTINES
 -------------------------------------------------------------------------------
 -- Description:
---     Linear interpolation, given the line defined by the points 
+--     Linear interpolation, given the line defined by the points
 --     (x=alpha, y=a) and (x=beta, y=b) find the y location of the
---     point on the line (x=xi, y=?) 
+--     point on the line (x=xi, y=?)
 -- Input:
 --     xi = location on x axis
 --     alpha = lower point on x axis
---     beta =  upper point on x axis 
---     a = lower point on y axis 
---     b = upper point on y axis 
+--     beta =  upper point on x axis
+--     a = lower point on y axis
+--     b = upper point on y axis
 -- Output:
 --     y location on line at x=xi
 local __demand(__inline)
@@ -79,7 +115,7 @@ end
 --     Generate the cell width of a nonuniform mesh
 -- Input:
 --     x_min = domain minimum
---     x_max = domain maximum 
+--     x_max = domain maximum
 --     Nx = number of cells between x_min and x_max
 -- Output:
 --     width of the non-uniform mesh cell
@@ -90,390 +126,405 @@ task uniform_cell_width(x_min : double,
    return (x_max-x_min)/Nx
 end
 
-
--- Description:
---     Generate the cell center on a uniform mesh
--- Input:
---     x_min = domain minimum
---     x_max = domain maximum 
---     Nx = number of cells between x_min and x_max
---     i  = cell index between x_min and x_max
---         Note: i = 0 has x_min as left face and 
---               i = Nx-1 has x_max as right face
---               so no ghost cells accounted for here
--- Output:
---     location of cell center
-local __demand(__inline)
-task uniform_cell_center(x_min : double,
-                         x_max : double,
-                         Nx    : uint64,
-                         i     : uint64) : double
-   var dx = uniform_cell_width(x_min, x_max, Nx)
-   return x_min + i*dx + dx/2.0
-end
-
--- Description:
---     Generate the location of the face in the negative direction
--- Input:
---     x_min = domain minimum
---     x_max = domain maximum 
---     Nx = number of cells between x_min and x_max
---     i  = cell index between x_min and x_max
---         Note: i = 0 has x_min as negative direction (left) face and 
---               i = Nx-1 has x_max as positive direction (right) face
---               so no ghost cells accounted for here
--- Output:
---     location of face in the negative direction
-local __demand(__inline)
-task uniform_cell_neg_face(x_min : double,
-                           x_max : double,
-                           Nx    : uint64,
-                           i     : uint64) : double
-   var dx = uniform_cell_width(x_min, x_max, Nx)
-   var x_center = uniform_cell_center(x_min, x_max, Nx, i)
-   return x_center - 0.5*dx
-end
-
--- Description:
---     Generate the location of the face in the postive direction
--- Input:
---     x_min = domain minimum
---     x_max = domain maximum 
---     Nx = number of cells between x_min and x_max
---     i  = cell index between x_min and x_max
---         Note: i = 0 has x_min as negative direction (left) face and 
---               i = Nx-1 has x_max as positive direction (right) face
---               so no ghost cells accounted for here
--- Output:
---     location of face in the postive direction
-local __demand(__inline)
-task uniform_cell_pos_face(x_min : double,
-                           x_max : double,
-                           Nx    : uint64,
-                           i     : uint64) : double
-   var dx = uniform_cell_width(x_min, x_max, Nx)
-   var x_center = uniform_cell_center(x_min, x_max, Nx, i)
-   return x_center + 0.5*dx
-end
-
-
 -- Description:
 --     non-linear map point (x) on the interval (x_min, x_max) using
---     a cosine  
+--     a cosine
 -- Input:
 --     x = location on uniform mesh
 --     x_min = domain minimum
---     x_max = domain maximum 
+--     x_max = domain maximum
 -- Output:
 --     x location on a non-uniform mesh
 local __demand(__inline)
 task transform_uniform_to_nonuniform(x : double,
                                      x_min : double,
                                      x_max : double,
-                                     Grid_Type : SCHEMA.GridType,
-                                     Grid_Stretching : double) : double
+                                     Grid_Type : SCHEMA.GridTypes) : double
    var transformed : double
-   if (Grid_Type == SCHEMA.GridType_Uniform) then
+   if (Grid_Type.type == SCHEMA.GridTypes_Uniform) then
       transformed = x
-   elseif (Grid_Type == SCHEMA.GridType_Cosine) then
+   elseif (Grid_Type.type == SCHEMA.GridTypes_Cosine) then
       -- map x onto the interval -1 to 1
       var x_scaled_minus1_to_plus1 = linear_interpolation(x, x_min, x_max, -1.0, 1.0)
       -- map non-uniformly onto the interval -1 to 1
       var x_non_uniform_minus1_to_plus1 = -1.0*cos(PI*(x_scaled_minus1_to_plus1+1.0)/2.0)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_minus1_to_plus1, -1.0, 1.0, x_min, x_max)
-   elseif (Grid_Type == SCHEMA.GridType_TanhMinus) then
+   elseif (Grid_Type.type == SCHEMA.GridTypes_TanhMinus) then
+      var Stretching = Grid_Type.u.TanhMinus.Stretching
       -- map x onto the interval -1 to 0
       var x_scaled_minus1_to_zero = linear_interpolation(x, x_min, x_max, -1.0, 0.0)
       -- map non-uniformly onto the interval -1 to 0
-      var x_non_uniform_minus1_to_zero = tanh(Grid_Stretching*x_scaled_minus1_to_zero)/tanh(Grid_Stretching)
+      var x_non_uniform_minus1_to_zero = tanh(Stretching*x_scaled_minus1_to_zero)/tanh(Stretching)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_minus1_to_zero, -1.0, 0.0, x_min, x_max)
-   elseif (Grid_Type == SCHEMA.GridType_TanhPlus) then
+   elseif (Grid_Type.type == SCHEMA.GridTypes_TanhPlus) then
+      var Stretching = Grid_Type.u.TanhPlus.Stretching
       -- map x onto the interval 0 to 1
       var x_scaled_zero_to_plus1 = linear_interpolation(x, x_min, x_max, 0.0, 1.0)
       -- map non-uniformly onto the interval 0 to 1
-      var x_non_uniform_zero_to_plus1 = tanh(Grid_Stretching*x_scaled_zero_to_plus1)/tanh(Grid_Stretching)
+      var x_non_uniform_zero_to_plus1 = tanh(Stretching*x_scaled_zero_to_plus1)/tanh(Stretching)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_zero_to_plus1, 0.0, 1.0, x_min, x_max)
-   elseif (Grid_Type == SCHEMA.GridType_Tanh) then
+   elseif (Grid_Type.type == SCHEMA.GridTypes_Tanh) then
+      var Stretching = Grid_Type.u.Tanh.Stretching
       -- map x onto the interval -1 to 1
       var x_scaled_minus1_to_plus1 = linear_interpolation(x, x_min, x_max, -1.0, 1.0)
       -- map non-uniformly onto the interval -1 to 1
-      var x_non_uniform_minus1_to_plus1 = tanh(Grid_Stretching*x_scaled_minus1_to_plus1)/tanh(Grid_Stretching)
+      var x_non_uniform_minus1_to_plus1 = tanh(Stretching*x_scaled_minus1_to_plus1)/tanh(Stretching)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_minus1_to_plus1, -1.0, 1.0, x_min, x_max)
-   elseif (Grid_Type == SCHEMA.GridType_SinhMinus) then
+   elseif (Grid_Type.type == SCHEMA.GridTypes_SinhMinus) then
+      var Stretching = Grid_Type.u.SinhMinus.Stretching
       -- map x onto the interval 0 to 1
       var x_scaled_zero_to_plus1 = linear_interpolation(x, x_min, x_max, 0.0, 1.0)
       -- map non-uniformly onto the interval 0 to 1
-      var x_non_uniform_zero_to_plus1 = sinh(Grid_Stretching*x_scaled_zero_to_plus1)/sinh(Grid_Stretching)
+      var x_non_uniform_zero_to_plus1 = sinh(Stretching*x_scaled_zero_to_plus1)/sinh(Stretching)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_zero_to_plus1, 0.0, 1.0, x_min, x_max)
-   elseif (Grid_Type == SCHEMA.GridType_SinhPlus) then
+   elseif (Grid_Type.type == SCHEMA.GridTypes_SinhPlus) then
+      var Stretching = Grid_Type.u.SinhPlus.Stretching
       -- map x onto the interval -1 to 0
       var x_scaled_minus1_to_zero = linear_interpolation(x, x_min, x_max, -1.0, 0.0)
       -- map non-uniformly onto the interval -1 to 0
-      var x_non_uniform_minus1_to_zero = sinh(Grid_Stretching*x_scaled_minus1_to_zero)/sinh(Grid_Stretching)
+      var x_non_uniform_minus1_to_zero = sinh(Stretching*x_scaled_minus1_to_zero)/sinh(Stretching)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_minus1_to_zero, -1.0, 0.0, x_min, x_max)
-   elseif (Grid_Type == SCHEMA.GridType_Sinh) then
+   elseif (Grid_Type.type == SCHEMA.GridTypes_Sinh) then
+      var Stretching = Grid_Type.u.Sinh.Stretching
       -- map x onto the interval -1 to 1
       var x_scaled_minus1_to_plus1 = linear_interpolation(x, x_min, x_max, -1.0, 1.0)
       -- map non-uniformly onto the interval -1 to 1
-      var x_non_uniform_minus1_to_plus1 = sinh(Grid_Stretching*x_scaled_minus1_to_plus1)/sinh(Grid_Stretching)
+      var x_non_uniform_minus1_to_plus1 = sinh(Stretching*x_scaled_minus1_to_plus1)/sinh(Stretching)
       -- map non-uniform sample back to origional interval x_min to x_max
       transformed = linear_interpolation(x_non_uniform_minus1_to_plus1, -1.0, 1.0, x_min, x_max)
    end
    return  transformed
 end
 
--- Description:
---     Generate the location of the face in the negative direction
---     on a non uniform mesh
--- Input:
---     x_min = domain minimum
---     x_max = domain maximum 
---     Nx = number of cells between x_min and x_max
---     i  = cell index between x_min and x_max
---         Note: i = 0 has x_min as negative direction (left) face and 
---               i = Nx-1 has x_max as positive direction (right) face
---               so no ghost cells accounted for here
--- Output:
---     location of face in the negative direction
-local __demand(__inline)
-task nonuniform_cell_neg_face(x_min : double,
-                              x_max : double,
-                              Nx    : uint64,
-                              i     : uint64,
-                              Grid_Type: SCHEMA.GridType,
-                              Grid_Stretching: double) : double
-   var x_uniform_neg_face = uniform_cell_neg_face(x_min, x_max, Nx, i)
-   return transform_uniform_to_nonuniform(x_uniform_neg_face, x_min, x_max, Grid_Type, Grid_Stretching)
-end
-
--- Description:
---     Generate the location of the face in the postive direction
---     on a non uniform mesh
--- Input:
---     x_min = domain minimum
---     x_max = domain maximum 
---     Nx = number of cells between x_min and x_max
---     i  = cell index between x_min and x_max
---         Note: i = 0 has x_min as negative direction (left) face and 
---               i = Nx-1 has x_max as positive direction (right) face
---               so no ghost cells accounted for here
--- Output:
---     location of face in the postive direction
-local __demand(__inline)
-task nonuniform_cell_pos_face(x_min : double,
-                              x_max : double,
-                              Nx    : uint64,
-                              i     : uint64,
-                              Grid_Type: SCHEMA.GridType,
-                              Grid_Stretching: double) : double
-   var x_uniform_pos_face = uniform_cell_pos_face(x_min, x_max, Nx, i)
-   return transform_uniform_to_nonuniform(x_uniform_pos_face, x_min, x_max, Grid_Type, Grid_Stretching)
-end
-
--- Description:
---     Generate the cell center of a nonuniform mesh
--- Input:
---     x_min = domain minimum
---     x_max = domain maximum 
---     Nx = number of cells between x_min and x_max
---     i  = cell index between x_min and x_max
---         Note: i = 0 has x_min as left face and 
---               i = Nx-1 has x_max as right face
---               so no ghost cells accounted for here
--- Output:
---     x location on a non-uniform mesh
-local __demand(__inline)
-task cell_center(x_min : double,
-                 x_max : double,
-                 Nx    : uint64,
-                 i     : uint64,
-                 Grid_Type: SCHEMA.GridType,
-                 Grid_Stretching: double) : double
-   var x_non_uniform_neg_face = nonuniform_cell_neg_face(x_min, x_max, Nx, i, Grid_Type, Grid_Stretching)
-   var x_non_uniform_pos_face = nonuniform_cell_pos_face(x_min, x_max, Nx, i, Grid_Type, Grid_Stretching)
-   return 0.5*(x_non_uniform_neg_face + x_non_uniform_pos_face)
-end
-
--- Description:
---     Generate the cell width of a nonuniform mesh
--- Input:
---     x_min = domain minimum
---     x_max = domain maximum 
---     Nx = number of cells between x_min and x_max
---     i  = cell index between x_min and x_max
---         Note: i = 0 has x_min as left face and 
---               i = Nx-1 has x_max as right face
---               so no ghost cells accounted for here
--- Output:
---     width of the non-uniform mesh cell
-local __demand(__inline)
-task cell_width(x_min : double,
-                x_max : double,
-                Nx    : uint64,
-                i     : uint64,
-                Grid_Type: int,
-                Grid_Stretching: double) : double
-   var x_non_uniform_neg_face = nonuniform_cell_neg_face(x_min, x_max, Nx, i, Grid_Type, Grid_Stretching)
-   var x_non_uniform_pos_face = nonuniform_cell_pos_face(x_min, x_max, Nx, i, Grid_Type, Grid_Stretching)
-   return x_non_uniform_pos_face - x_non_uniform_neg_face 
-end
-
-
-__demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-task Exports.InitializeGeometry(Fluid : region(ispace(int3d), Fluid_columns),
-                        Grid_xType : SCHEMA.GridType, Grid_yType : SCHEMA.GridType, Grid_zType : SCHEMA.GridType,
-                        Grid_xStretching : double,    Grid_yStretching : double,    Grid_zStretching : double,
-                        Grid_xBnum : int32, Grid_xNum : int32, Grid_xOrigin : double, Grid_xWidth : double,
-                        Grid_yBnum : int32, Grid_yNum : int32, Grid_yOrigin : double, Grid_yWidth : double,
-                        Grid_zBnum : int32, Grid_zNum : int32, Grid_zOrigin : double, Grid_zWidth : double)
+-------------------------------------------------------------------------------
+-- NODE MESH TASKS
+-------------------------------------------------------------------------------
+-- TODO: Regent does not like SCHEMA.GridTypes in its CUDA kernels
+--       we need either to recactor this piece of code or ask for an upgrade
+local __demand(__leaf) -- MANUALLY PARALLELIZED, NO CUDA
+task InitializeNodeGrid(nodes : region(ispace(int1d), nodeType),
+                        origin : double,
+                        width : double,
+                        Type : SCHEMA.GridTypes)
 where
-   reads writes(Fluid.centerCoordinates),
-   reads writes(Fluid.cellWidth)
+   writes(nodes)
+do
+   var xmin = origin
+   var xmax = origin+width
+   var Nx = nodes.bounds.hi-nodes.bounds.lo
+   var dx = uniform_cell_width(xmin, xmax, Nx)
+   __demand(__openmp)
+   for c in nodes do
+      var uniform_node = xmin + double(c)*dx
+      nodes[c].position = transform_uniform_to_nonuniform(uniform_node, xmin, xmax, Type)
+   end
+end
+
+-------------------------------------------------------------------------------
+-- CELL CENTER MESH TASKS
+-------------------------------------------------------------------------------
+local __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
+task InitializeCellCenters(Fluid : region(ispace(int3d), Fluid_columns),
+                           Xnode : region(ispace(int1d), nodeType),
+                           Ynode : region(ispace(int1d), nodeType),
+                           Znode : region(ispace(int1d), nodeType),
+                           is_xNeg_Staggered : bool, is_xPos_Staggered : bool,
+                           is_yNeg_Staggered : bool, is_yPos_Staggered : bool,
+                           is_zNeg_Staggered : bool, is_zPos_Staggered : bool,
+                           xBnum : uint64, xNum : uint64,
+                           yBnum : uint64, yNum : uint64,
+                           zBnum : uint64, zNum : uint64)
+where
+   reads(Xnode, Ynode, Znode),
+   writes(Fluid.centerCoordinates)
 do
    -- Find cell center coordinates and cell width of interior cells
    __demand(__openmp)
    for c in Fluid do
-      var xNegGhost = MACRO.is_xNegGhost(c, Grid_xBnum)
-      var xPosGhost = MACRO.is_xPosGhost(c, Grid_xBnum, Grid_xNum)
-      var yNegGhost = MACRO.is_yNegGhost(c, Grid_yBnum)
-      var yPosGhost = MACRO.is_yPosGhost(c, Grid_yBnum, Grid_yNum)
-      var zNegGhost = MACRO.is_zNegGhost(c, Grid_zBnum)
-      var zPosGhost = MACRO.is_zPosGhost(c, Grid_zBnum, Grid_zNum)
+      var xNegGhost = MACRO.is_xNegGhost(c, xBnum)
+      var xPosGhost = MACRO.is_xPosGhost(c, xBnum, xNum)
+      var yNegGhost = MACRO.is_yNegGhost(c, yBnum)
+      var yPosGhost = MACRO.is_yPosGhost(c, yBnum, yNum)
+      var zNegGhost = MACRO.is_zNegGhost(c, zBnum)
+      var zPosGhost = MACRO.is_zPosGhost(c, zBnum, zNum)
 
-      if not (xNegGhost or xPosGhost) then
-         var x_neg_boundary = Grid_xOrigin
-         var x_pos_boundary = Grid_xOrigin + Grid_xWidth
-         var x_idx_interior = c.x - Grid_xBnum
-         Fluid[c].centerCoordinates[0] = cell_center(x_neg_boundary, x_pos_boundary, Grid_xNum, x_idx_interior, Grid_xType, Grid_xStretching)
-         Fluid[c].cellWidth[0]         = cell_width( x_neg_boundary, x_pos_boundary, Grid_xNum, x_idx_interior, Grid_xType, Grid_xStretching)
-      end
-
-      if not (yNegGhost or yPosGhost) then
-         var y_neg_boundary = Grid_yOrigin
-         var y_pos_boundary = Grid_yOrigin + Grid_yWidth
-         var y_idx_interior = c.y - Grid_yBnum
-         Fluid[c].centerCoordinates[1] = cell_center(y_neg_boundary, y_pos_boundary, Grid_yNum, y_idx_interior, Grid_yType, Grid_yStretching)
-         Fluid[c].cellWidth[1]         = cell_width( y_neg_boundary, y_pos_boundary, Grid_yNum, y_idx_interior, Grid_yType, Grid_yStretching)
-      end
-
-      if not (zNegGhost or zPosGhost) then
-         var z_neg_boundary = Grid_zOrigin
-         var z_pos_boundary = Grid_zOrigin + Grid_zWidth
-         var z_idx_interior = c.z - Grid_zBnum
-         Fluid[c].centerCoordinates[2] = cell_center(z_neg_boundary, z_pos_boundary, Grid_zNum, z_idx_interior, Grid_zType, Grid_zStretching)
-         Fluid[c].cellWidth[2]         = cell_width( z_neg_boundary, z_pos_boundary, Grid_zNum, z_idx_interior, Grid_zType, Grid_zStretching)
-      end
-   end
-end
-
--- NOTE: It is safe to not pass the ghost regions to this task, because we
--- always group ghost cells with their neighboring interior cells.
-local mkInitializeGhostGeometry = terralib.memoize(function(sdir)
-   local InitializeGhostGeometry
-
-   local ind
-   local sign
-   if     sdir == "xNeg" then
-      ind = 0
-      sign = -1
-   elseif sdir == "xPos" then
-      ind = 0
-      sign = 1
-   elseif sdir == "yNeg" then
-      ind = 1
-      sign = -1
-   elseif sdir == "yPos" then
-      ind = 1
-      sign = 1
-   elseif sdir == "zNeg" then
-      ind = 2
-      sign = -1
-   elseif sdir == "zPos" then
-      ind = 2
-      sign = 1
-   else assert(false) end
-
-   local mk_cint
-   if sdir == "xNeg" then
-      mk_cint = function(c) return rexpr (c+{ 1, 0, 0}) end end
-   elseif sdir == "xPos" then
-      mk_cint = function(c) return rexpr (c+{-1, 0, 0}) end end
-   elseif sdir == "yNeg" then
-      mk_cint = function(c) return rexpr (c+{ 0, 1, 0}) end end
-   elseif sdir == "yPos" then
-      mk_cint = function(c) return rexpr (c+{ 0,-1, 0}) end end
-   elseif sdir == "zNeg" then
-      mk_cint = function(c) return rexpr (c+{ 0, 0, 1}) end end
-   elseif sdir == "zPos" then
-      mk_cint = function(c) return rexpr (c+{ 0, 0,-1}) end end
-   else assert(false) end
-
-   __demand(__cuda, __leaf) -- MANUALLY PARALLELIZED
-   task InitializeGhostGeometry(Fluid : region(ispace(int3d), Fluid_columns),
-                                Fluid_BC : partition(disjoint, Fluid, ispace(int1d)),
-                                BCType : int32)
-
-   where
-      reads writes(Fluid.centerCoordinates),
-      reads writes(Fluid.cellWidth)
-   do
-      var BC   = Fluid_BC[0]
-      var BCst = Fluid_BC[1]
-
-      var isStaggered = ((BCType == SCHEMA.FlowBC_Dirichlet) or
-                         (BCType == SCHEMA.FlowBC_AdiabaticWall) or
-                         (BCType == SCHEMA.FlowBC_IsothermalWall) or
-                         (BCType == SCHEMA.FlowBC_SuctionAndBlowingWall))
-
-      __demand(__openmp)
-      for c in BC do
-         var c_int = [mk_cint(rexpr c end)];
-         if isStaggered then
-            -- Staggered BCs
-            BC[c].centerCoordinates[ind] = BCst[c_int].centerCoordinates[ind]
-                                           + 0.5*[sign]*BCst[c_int].cellWidth[ind]
-            BC[c].cellWidth[ind] = 1e-12
+      var cc = array(0.0, 0.0, 0.0)
+rescape
+   local function ComputeCoordinatesExpr(dir)
+      local idx
+      local NegGhost
+      local PosGhost
+      local node
+      local is_Neg_Staggered
+      local is_Pos_Staggered
+      local r_idx
+      local Bnum
+      if     (dir == "x") then
+         idx = 0
+         NegGhost = xNegGhost
+         PosGhost = xPosGhost
+         node = Xnode
+         is_Neg_Staggered = is_xNeg_Staggered
+         is_Pos_Staggered = is_xPos_Staggered
+         r_idx = rexpr c.x end
+         Bnum = xBnum
+      elseif (dir == "y") then
+         idx = 1
+         NegGhost = yNegGhost
+         PosGhost = yPosGhost
+         node = Ynode
+         is_Neg_Staggered = is_yNeg_Staggered
+         is_Pos_Staggered = is_yPos_Staggered
+         r_idx = rexpr c.y end
+         Bnum = yBnum
+      elseif (dir == "z") then
+         idx = 2
+         NegGhost = zNegGhost
+         PosGhost = zPosGhost
+         node = Znode
+         is_Neg_Staggered = is_zNeg_Staggered
+         is_Pos_Staggered = is_zPos_Staggered
+         r_idx = rexpr c.z end
+         Bnum = zBnum
+      else assert(false) end
+      return rquote
+         if [NegGhost] then
+            if [is_Neg_Staggered] then
+               -- Staggered point
+               cc[idx] = node[r_idx].position
+            else
+               -- Colocated point
+               cc[idx] = 1.5*node[r_idx].position - 0.5*node[r_idx+1].position
+            end
+         elseif [PosGhost] then
+            if [is_Pos_Staggered] then
+               -- Staggered point
+               cc[idx] = node[r_idx-1].position
+            else
+               -- Colocated point
+               cc[idx] = 1.5*node[r_idx-1].position - 0.5*node[r_idx-2].position
+            end
          else
-            BC[c].centerCoordinates[ind] = BCst[c_int].centerCoordinates[ind]
-                                           + [sign]*BCst[c_int].cellWidth[ind]
-            BC[c].cellWidth[ind] = BCst[c_int].cellWidth[ind]
+            -- internal point
+            var node_idx = [r_idx] - Bnum
+            cc[idx] = 0.5*(node[node_idx+1].position + node[node_idx].position)
          end
       end
    end
-   return InitializeGhostGeometry
-end)
+   remit ComputeCoordinatesExpr("x")
+   remit ComputeCoordinatesExpr("y")
+   remit ComputeCoordinatesExpr("z")
+end
+      Fluid[c].centerCoordinates = cc
+   end
+end
 
-__demand(__inline)
-task Exports.InitializeGhostGeometry(Fluid : region(ispace(int3d), Fluid_columns),
-                                     tiles : ispace(int3d),
-                                     Fluid_Zones : zones_partitions(Fluid, tiles),
-                                     config : SCHEMA.Config)
+-------------------------------------------------------------------------------
+-- INLINED TASKS
+-------------------------------------------------------------------------------
+-- Workaround to avoid lifting to future bBoxType
+local terra strip_future(x : bBoxType) return x end
+strip_future.replicable = true
+
+local __demand(__inline)
+task isStaggered(BCType : SCHEMA.FlowBCType)
+   return ((BCType == SCHEMA.FlowBC_Dirichlet) or
+           (BCType == SCHEMA.FlowBC_AdiabaticWall) or
+           (BCType == SCHEMA.FlowBC_IsothermalWall) or
+           (BCType == SCHEMA.FlowBC_SuctionAndBlowingWall))
+end
+
+local __demand(__inline)
+task InitializeGeometry(Fluid : region(ispace(int3d), Fluid_columns),
+                        tiles : ispace(int3d),
+                        Fluid_Zones : zones_partitions(Fluid, tiles),
+                        config : SCHEMA.Config)
 where
    reads writes(Fluid)
 do
    -- Unpack the partitions that we are going to need
-   var {p_All,
-        p_AllxNeg, p_AllxPos, p_AllyNeg, p_AllyPos, p_AllzNeg, p_AllzPos} = Fluid_Zones
+   var { p_All } = Fluid_Zones
 
+   -- Determine number of ghost cells in each direction
+   -- 0 ghost cells if periodic and 1 otherwise
+   var xBnum = 1
+   var yBnum = 1
+   var zBnum = 1
+   if config.BC.xBCLeft.type == SCHEMA.FlowBC_Periodic then xBnum = 0 end
+   if config.BC.yBCLeft.type == SCHEMA.FlowBC_Periodic then yBnum = 0 end
+   if config.BC.zBCLeft.type == SCHEMA.FlowBC_Periodic then zBnum = 0 end
+
+   -- Determine if boundary conditions are staggered or not
+   var is_xNeg_Staggered = isStaggered(config.BC.xBCLeft.type )
+   var is_xPos_Staggered = isStaggered(config.BC.xBCRight.type)
+   var is_yNeg_Staggered = isStaggered(config.BC.yBCLeft.type )
+   var is_yPos_Staggered = isStaggered(config.BC.yBCRight.type)
+   var is_zNeg_Staggered = isStaggered(config.BC.zBCLeft.type )
+   var is_zPos_Staggered = isStaggered(config.BC.zBCRight.type)
+
+   -- Define the bounding box
+   var bBox : bBoxType
+
+   -- Create node regions
+   var sampleId = config.Mapping.sampleId
+   var is_Xnodes = ispace(int1d, config.Grid.xNum + 1)
+   var is_Ynodes = ispace(int1d, config.Grid.yNum + 1)
+   var is_Znodes = ispace(int1d, config.Grid.zNum + 1)
+   var Xnodes = region(is_Xnodes, nodeType);
+   var Ynodes = region(is_Ynodes, nodeType);
+   var Znodes = region(is_Znodes, nodeType);
+   [UTIL.emitRegionTagAttach(Xnodes, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+   [UTIL.emitRegionTagAttach(Ynodes, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+   [UTIL.emitRegionTagAttach(Znodes, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+
+   var Xnodes_copy = region(is_Xnodes, nodeType);
+   var Ynodes_copy = region(is_Ynodes, nodeType);
+   var Znodes_copy = region(is_Znodes, nodeType);
+   [UTIL.emitRegionTagAttach(Xnodes_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+   [UTIL.emitRegionTagAttach(Ynodes_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+   [UTIL.emitRegionTagAttach(Znodes_copy, MAPPER.SAMPLE_ID_TAG, sampleId, int)];
+
+   -- Generate nodes grid partitions
+   -- IO (dump everything in one file for now)
+   var IO_grid_tiles = ispace(int1d, 1)
+   var p_Xnodes_IO      = partition(equal, Xnodes     , IO_grid_tiles)
+   var p_Ynodes_IO      = partition(equal, Ynodes     , IO_grid_tiles)
+   var p_Znodes_IO      = partition(equal, Znodes     , IO_grid_tiles)
+   var p_Xnodes_IO_copy = partition(equal, Xnodes_copy, IO_grid_tiles)
+   var p_Ynodes_IO_copy = partition(equal, Ynodes_copy, IO_grid_tiles)
+   var p_Znodes_IO_copy = partition(equal, Znodes_copy, IO_grid_tiles)
+
+   -- Initialize the nodes grid
+   fill(Xnodes.position, 0.0)
+   fill(Ynodes.position, 0.0)
+   fill(Znodes.position, 0.0)
+
+   if (config.Grid.GridInput.type == SCHEMA.GridInputStruct_Cartesian) then
+      -- Generate a Cartesian grid based on config data
+      var gridGen = config.Grid.GridInput.u.Cartesian
+      InitializeNodeGrid(Xnodes, gridGen.origin[0], gridGen.width[0], gridGen.xType)
+      InitializeNodeGrid(Ynodes, gridGen.origin[1], gridGen.width[1], gridGen.yType)
+      InitializeNodeGrid(Znodes, gridGen.origin[2], gridGen.width[2], gridGen.zType)
+
+      -- Initialize the bounding box
+      bBox.v0 = array(gridGen.origin[0]                 , gridGen.origin[1]                 , gridGen.origin[2])
+      bBox.v1 = array(gridGen.origin[0]+gridGen.width[0], gridGen.origin[1]                 , gridGen.origin[2])
+      bBox.v2 = array(gridGen.origin[0]+gridGen.width[0], gridGen.origin[1]+gridGen.width[1], gridGen.origin[2])
+      bBox.v3 = array(gridGen.origin[0]                 , gridGen.origin[1]+gridGen.width[1], gridGen.origin[2])
+      bBox.v4 = array(gridGen.origin[0]                 , gridGen.origin[1]                 , gridGen.origin[2]+gridGen.width[2])
+      bBox.v5 = array(gridGen.origin[0]+gridGen.width[0], gridGen.origin[1]                 , gridGen.origin[2]+gridGen.width[2])
+      bBox.v6 = array(gridGen.origin[0]+gridGen.width[0], gridGen.origin[1]+gridGen.width[1], gridGen.origin[2]+gridGen.width[2])
+      bBox.v7 = array(gridGen.origin[0]                 , gridGen.origin[1]+gridGen.width[1], gridGen.origin[2]+gridGen.width[2]);
+
+   elseif (config.Grid.GridInput.type == SCHEMA.GridInputStruct_FromFile) then
+      -- Read the node location from file
+      var gridDir = config.Grid.GridInput.u.FromFile.gridDir
+      var dirname = [&int8](C.malloc(256))
+      -- X nodes
+      C.snprintf(dirname, 256, '%s/xNodes', gridDir)
+      bBox = strip_future(HDF_N.read.boundingBox(IO_grid_tiles, dirname, Xnodes, p_Xnodes_IO))
+      HDF_N.load(IO_grid_tiles, dirname, Xnodes, Xnodes_copy, p_Xnodes_IO, p_Xnodes_IO_copy)
+      -- Y nodes
+      C.snprintf(dirname, 256, '%s/yNodes', gridDir)
+      HDF_N.load(IO_grid_tiles, dirname, Ynodes, Ynodes_copy, p_Ynodes_IO, p_Ynodes_IO_copy)
+      -- Z nodes
+      C.snprintf(dirname, 256, '%s/zNodes', gridDir)
+      HDF_N.load(IO_grid_tiles, dirname, Znodes, Znodes_copy, p_Znodes_IO, p_Znodes_IO_copy)
+      C.free(dirname)
+
+   else regentlib.assert(false, 'Unhandled GridInput type') end
+
+   -- Dump nodes grid
+   var dirname = [&int8](C.malloc(256))
+   C.snprintf(dirname, 256, '%s/nodes_grid', config.Mapping.outDir)
+   var _1 = IO.createDir(0, dirname)
+   -- X grid
+   C.snprintf(dirname, 256, '%s/nodes_grid/xNodes', config.Mapping.outDir)
+   var _2 = IO.createDir(_1, dirname)
+   _2 = HDF_N.dump( _2, IO_grid_tiles, dirname, Xnodes, Xnodes_copy, p_Xnodes_IO, p_Xnodes_IO_copy)
+   _2 = HDF_N.write.Bnum(        _2, dirname, xBnum)
+   _2 = HDF_N.write.NegStaggered(_2, dirname, is_xNeg_Staggered)
+   _2 = HDF_N.write.PosStaggered(_2, dirname, is_xPos_Staggered)
+   _2 = HDF_N.write.boundingBox( _2, dirname, bBox)
+   _2 = HDF_N.write.Versions(    _2, dirname, array(regentlib.string([VERSION.SolverVersion]),
+                                                    regentlib.string([VERSION.LegionVersion])))
+   -- Y grid
+   C.snprintf(dirname, 256, '%s/nodes_grid/yNodes', config.Mapping.outDir)
+   var _3 = IO.createDir(_1, dirname)
+   _3 = HDF_N.dump( _3, IO_grid_tiles, dirname, Ynodes, Ynodes_copy, p_Ynodes_IO, p_Ynodes_IO_copy)
+   _3 = HDF_N.write.Bnum(        _3, dirname, yBnum)
+   _3 = HDF_N.write.NegStaggered(_3, dirname, is_yNeg_Staggered)
+   _3 = HDF_N.write.PosStaggered(_3, dirname, is_yPos_Staggered)
+   _3 = HDF_N.write.boundingBox( _3, dirname, bBox)
+   _3 = HDF_N.write.Versions(    _3, dirname, array(regentlib.string([VERSION.SolverVersion]),
+                                                    regentlib.string([VERSION.LegionVersion])))
+
+   -- Z grid
+   C.snprintf(dirname, 256, '%s/nodes_grid/zNodes', config.Mapping.outDir)
+   var _4 = IO.createDir(_1, dirname)
+   _4 = HDF_N.dump( _4, IO_grid_tiles, dirname, Znodes, Znodes_copy, p_Znodes_IO, p_Znodes_IO_copy)
+   _4 = HDF_N.write.Bnum(        _4, dirname, zBnum)
+   _4 = HDF_N.write.NegStaggered(_4, dirname, is_zNeg_Staggered)
+   _4 = HDF_N.write.PosStaggered(_4, dirname, is_zPos_Staggered)
+   _4 = HDF_N.write.boundingBox( _4, dirname, bBox)
+   _4 = HDF_N.write.Versions(    _4, dirname, array(regentlib.string([VERSION.SolverVersion]),
+                                                    regentlib.string([VERSION.LegionVersion])))
+
+   C.free(dirname)
+
+   -- Initialize cell centers of standard points
    __demand(__index_launch)
-   for c in tiles do [mkInitializeGhostGeometry("xNeg")](p_All[c], p_AllxNeg[c], config.BC.xBCLeft.type ) end
-   __demand(__index_launch)
-   for c in tiles do [mkInitializeGhostGeometry("xPos")](p_All[c], p_AllxPos[c], config.BC.xBCRight.type) end
-   __demand(__index_launch)
-   for c in tiles do [mkInitializeGhostGeometry("yNeg")](p_All[c], p_AllyNeg[c], config.BC.yBCLeft.type ) end
-   __demand(__index_launch)
-   for c in tiles do [mkInitializeGhostGeometry("yPos")](p_All[c], p_AllyPos[c], config.BC.yBCRight.type) end
-   __demand(__index_launch)
-   for c in tiles do [mkInitializeGhostGeometry("zNeg")](p_All[c], p_AllzNeg[c], config.BC.zBCLeft.type ) end
-   __demand(__index_launch)
-   for c in tiles do [mkInitializeGhostGeometry("zPos")](p_All[c], p_AllzPos[c], config.BC.zBCRight.type) end
+   for c in tiles do
+      InitializeCellCenters(p_All[c],
+                         Xnodes, Ynodes, Znodes,
+                         is_xNeg_Staggered, is_xPos_Staggered,
+                         is_yNeg_Staggered, is_yPos_Staggered,
+                         is_zNeg_Staggered, is_zPos_Staggered,
+                         xBnum, config.Grid.xNum,
+                         yBnum, config.Grid.yNum,
+                         zBnum, config.Grid.zNum)
+   end
+
+   return bBox
 end
+
+local __demand(__inline)
+task dumpCellCenterGrid(Fluid : region(ispace(int3d), Fluid_columns),
+                        Fluid_copy : region(ispace(int3d), Fluid_columns),
+                        tiles_output : ispace(int3d),
+                        Fluid_Output      : output_partitions(Fluid,      tiles_output),
+                        Fluid_Output_copy : output_partitions(Fluid_copy, tiles_output),
+                        config : SCHEMA.Config)
+where
+   reads(Fluid),
+   reads writes(Fluid_copy),
+   Fluid * Fluid_copy
+do
+   -- Unpack the partitions that we are going to need
+   var {p_Output } = Fluid_Output
+   var {p_Output_copy=p_Output} = Fluid_Output_copy
+
+   var dirname = [&int8](C.malloc(256))
+   C.snprintf(dirname, 256, '%s/cellCenter_grid', config.Mapping.outDir)
+   var _1 = IO.createDir(0, dirname)
+   _1 = HDF_C.dump(           _1, tiles_output, dirname, Fluid, Fluid_copy, p_Output, p_Output_copy)
+   _1 = HDF_C.write.Versions( _1, dirname, array(regentlib.string([VERSION.SolverVersion]),
+                                                 regentlib.string([VERSION.LegionVersion])))
+   C.free(dirname)
+end
+
+-------------------------------------------------------------------------------
+-- EXPORTED TASKS
+-------------------------------------------------------------------------------
+
+Exports.InitializeGeometry = InitializeGeometry
+Exports.dumpCellCenterGrid = dumpCellCenterGrid
 
 return Exports end
 

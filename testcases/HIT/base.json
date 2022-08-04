@@ -1,0 +1,103 @@
+{
+   "Case" : {
+      "ReLambda" : 24,
+      "MaTurb"   : 0.05,
+      "Tref"     : 1.0,
+      "Pref"     : 1.0
+   },
+
+   "Mapping" : {
+      "tiles" : [1,1,1],
+      "tilesPerRank" : [1,1,1],
+      "sampleId" : -1,
+      "outDir" : "",
+      "wallTime" : 720
+   },
+
+   "Grid" : {
+      "xNum" : 32,
+      "yNum" : 32,
+      "zNum" : 32,
+      "GridInput" : {
+         "type" : "Cartesian",
+         "origin" : [0.0, 0.0, 0.0],
+         "width" : [1.0, 1.0, 1.0],
+         "xType" : { "type" : "Uniform" },
+         "yType" : { "type" : "Uniform" },
+         "zType" : { "type" : "Uniform" }
+      }
+   },
+
+   "Integrator" : {
+      "startIter" : 0,
+      "startTime" : 0.0,
+      "resetTime" : false,
+      "maxIter" : 20000,
+      "maxTime" : 8000.0,
+      "TimeStep" : {
+         "type" : "ConstantCFL",
+         "cfl" : 0.5
+      },
+      "implicitChemistry" : false,
+      "EulerScheme" : {
+         "type" : "SkewSymmetric"
+      }
+   },
+
+   "BC" : {
+      "xBCLeft"  : { "type" : "Periodic" },
+      "xBCRight" : { "type" : "Periodic" },
+      "yBCLeft"  : { "type" : "Periodic" },
+      "yBCRight" : { "type" : "Periodic" },
+      "zBCLeft"  : { "type" : "Periodic" },
+      "zBCRight" : { "type" : "Periodic" },
+      "bufferZone" : { "type" : "Off" }
+   },
+
+   "Flow" : {
+      "mixture" : {
+         "type" : "ConstPropMix",
+         "gasConstant" : 1.0,
+         "gamma" : 1.4,
+         "prandtl" : 0.72,
+         "viscosityModel" : {
+            "type" : "Constant",
+            "Visc" : 0.05
+         }
+      },
+      "initCase" : {
+         "type" : "Restart",
+         "restartDir" : ""
+      },
+      "resetMixture" : false,
+      "initMixture" : {
+         "Species" : [{"Name" : "Mix", "MolarFrac" : 1.0 }]
+      },
+      "bodyForce" : [0.0, 0.0, 0.0],
+      "turbForcing" : {
+         "type" : "HIT",
+         "Gain" : 1.0,
+         "t_o"  : 1.0,
+         "K_o"  : 1.0
+      },
+      "laser" : { "type" : "Off" }
+   },
+
+   "IO" : {
+      "wrtRestart" : true,
+      "restartEveryTimeSteps" : 2000,
+      "probesSamplingInterval" : 10,
+      "probes" : [],
+      "AveragesSamplingInterval" : 10,
+      "ResetAverages" : false,
+      "YZAverages" : [],
+      "XZAverages" : [],
+      "XYAverages" : [],
+      "XAverages" : [],
+      "YAverages" : [],
+      "ZAverages" : [],
+      "volumeProbes" : []
+   },
+
+   "Efield" : { "type" : "Off" }
+}

@@ -57,6 +57,12 @@ Exports.RK_C = {
    [3] = {1.0/3.0, 2.0/3.0, 2.0/3.0},
 }
 
+Exports.RK_T = {
+   [1] = 1.0,
+   [2] = 0.5,
+   [3] = 1.0,
+}
+
 -- Common groups of variables
 Exports.Primitives = terralib.newlist({
    'pressure',
